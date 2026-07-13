@@ -69,7 +69,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — Store multi-select, rename, duplicate, batch remove + keyboard multi-delete
+- [x] 03-01-PLAN.md — Store multi-select, rename, duplicate, batch remove + keyboard multi-delete
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -100,7 +100,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Block & Wire Selection + Deletion | 1/1 | Complete   | 2026-07-13 |
 | 2. Interactive Wiring + Palette Drag-Drop | 1/1 | Complete    | 2026-07-13 |
-| 3. Context Menu + Block Management | 0/2 | Not started | - |
+| 3. Context Menu + Block Management | 1/2 | In Progress|  |
 | 4. Runtime Feedback + Deploy Polish | 0/? | Not started | - |
 | 5. Tabbed Workspace Layout | 0/? | Not started | - |
 

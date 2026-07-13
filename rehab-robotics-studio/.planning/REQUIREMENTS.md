@@ -18,12 +18,12 @@ Requirements for completing all frontend interactivity. Each maps to roadmap pha
 
 - [ ] **CTX-01**: User can right-click a block to see a context menu with Delete, Duplicate, and Rename options
 - [ ] **CTX-02**: User can right-click a wire to see a context menu with Delete option
-- [ ] **CTX-03**: User can right-click canvas background to see a context menu with Select All option
+- [x] **CTX-03**: User can right-click canvas background to see a context menu with Select All option
 
 ### Block Management
 
-- [ ] **BLK-01**: User can rename a block inline from the properties panel
-- [ ] **BLK-02**: User can duplicate a block via context menu, placing the copy offset from the original
+- [x] **BLK-01**: User can rename a block inline from the properties panel
+- [x] **BLK-02**: User can duplicate a block via context menu, placing the copy offset from the original
 
 ### Runtime Feedback
 
@@ -67,9 +67,9 @@ Requirements for completing all frontend interactivity. Each maps to roadmap pha
 | GRAPH-04 | Phase 2 | Complete |
 | CTX-01 | Phase 3 | Pending |
 | CTX-02 | Phase 3 | Pending |
-| CTX-03 | Phase 3 | Pending |
-| BLK-01 | Phase 3 | Pending |
-| BLK-02 | Phase 3 | Pending |
+| CTX-03 | Phase 3 | Complete |
+| BLK-01 | Phase 3 | Complete |
+| BLK-02 | Phase 3 | Complete |
 | RT-01 | Phase 4 | Pending |
 | RT-02 | Phase 4 | Pending |
 | DEP-01 | Phase 4 | Pending |
