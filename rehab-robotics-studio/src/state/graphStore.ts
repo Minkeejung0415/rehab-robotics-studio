@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import type { BlockInstance, BlockStatus, EdgeDefinition, ParamValue } from '../types/blocks';
 import type { SignalType } from '../types/signals';
-import { BLOCK_DEFS, defaultParams } from '../graph/blockDefinitions';
+import { BLOCK_DEFS } from '../graph/blockDefinitions';
+import { getCustomDef, defaultParamsFromDef } from './blockRegistryStore';
 import { deserializeGraph, serializeGraph } from '../graph/GraphModel';
 import { validateGraph, type ValidationIssue } from '../graph/validation';
 
@@ -20,12 +21,13 @@ const NODE_WIDTH = 220;
 
 /** Build a node instance with default params from its definition. */
 function makeNode(id: string, type: string, x: number, y: number): BlockInstance {
+  const def = BLOCK_DEFS[type] ?? getCustomDef(type);
   return {
     id,
     type,
-    name: BLOCK_DEFS[type]?.name ?? type,
+    name: def?.name ?? type,
     position: { x, y },
-    params: defaultParams(type),
+    params: def ? defaultParamsFromDef(def) : {},
     status: 'idle',
   };
 }
