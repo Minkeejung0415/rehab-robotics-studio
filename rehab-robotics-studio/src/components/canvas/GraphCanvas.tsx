@@ -31,6 +31,7 @@ export function GraphCanvas() {
           width={CANVAS_WIDTH}
           height={CANVAS_HEIGHT}
           viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
+          onMouseDown={(event) => event.currentTarget === event.target && select(null)}
         >
           {edges.map((edge) => {
             const source = byId.get(edge.sourceBlockId);
