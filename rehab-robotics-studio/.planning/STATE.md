@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 04-02-PLAN.md
-last_updated: "2026-07-13T21:29:40.318Z"
+status: complete
+stopped_at: Completed 05-01-PLAN.md
+last_updated: "2026-07-13"
 last_activity: 2026-07-13
 progress:
   total_phases: 5
-  completed_phases: 4
-  total_plans: 6
-  completed_plans: 6
-  percent: 80
+  completed_phases: 5
+  total_plans: 7
+  completed_plans: 7
+  percent: 100
 ---
 
 # Project State
@@ -21,78 +21,59 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-13)
 
 **Core value:** Every UI element that exists must actually work — the frontend should feel like a complete, interactive application even without a real backend.
-**Current focus:** Phase 4 — Runtime Feedback + Deploy Polish
+**Current focus:** All phases complete — milestone done
 
 ## Current Position
 
-Phase: 4
-Plan: 2 of 2
-Status: Phase complete — ready for verification
+Phase: 5 (complete)
+Plan: 1 of 1
+Status: All phases complete
 Last activity: 2026-07-13
 
 Progress: [██████████] 100%
 
 ## Performance Metrics
 
-**Velocity:**
-
-- Total plans completed: 2
-- Average duration: -
-- Total execution time: 0 hours
-
 **By Phase:**
 
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 01 | 1 | - | - |
-| 2 | 1 | - | - |
-
-**Recent Trend:**
-
-- Last 5 plans: -
-- Trend: -
-
-*Updated after each plan completion*
-| Phase 03 P01 | 2min | 2 tasks | 3 files |
-| Phase 03 P02 | 12min | 3 tasks | 6 files |
-| Phase 04 P01 | 2min | 2 tasks | 2 files |
-| Phase 04 P02 | 2min | 3 tasks | 3 files |
+| Phase | Plans | Notes |
+|-------|-------|-------|
+| 01 | 1 | Keyboard delete + wire selection |
+| 02 | 1 | Interactive wiring + palette drag-drop |
+| 03 | 2 | Context menu + block management |
+| 04 | 2 | Runtime badges + Rec toggle + Deploy toast |
+| 05 | 1 | Tabbed workspace (Block Diagram / Front Panel) |
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
-
-- Init: All store methods for missing interactions already exist (removeNode, removeEdge, startWire, finishWire, cancelWire, setRecording) — implementation is UI wiring only, no new store logic needed
-- Init: PendingWireOverlay already exists in Wire.tsx but is never rendered — Phase 2 just needs to mount it
-- Init: Wire component already accepts onClick/selected props but GraphCanvas never passes them — Phase 1 just needs to thread these through
-- [Phase ?]: selectAll keeps previous selectedId if still present, else first node id (A1)
+- Init: All store methods for missing interactions already exist — implementation is UI wiring only
+- Init: PendingWireOverlay already exists in Wire.tsx but was never rendered
+- Init: Wire component already accepts onClick/selected props but GraphCanvas never passed them
+- [Phase 03]: selectAll keeps previous selectedId if still present, else first node id
 - [Phase 03]: Keyboard Delete prefers selectedIds via removeNodes before edge delete
-- [Phase 03]: removeNodes clears all selection fields after batch delete
-- [Phase 03]: Dedicated renameNode rather than generic updateNode
-- [Phase 03]: Portal to document.body so graph-canvas overflow cannot clip the menu
-- [Phase 03]: Rename uses double requestAnimationFrame to focus #block-name-input after menu close
+- [Phase 03]: Portal to document.body so graph-canvas overflow cannot clip context menu
 - [Phase 03]: Delete menu items use is-danger chrome matching .btn-estop palette
-- [Phase 04]: API name setAllNodeStatuses per UI-SPEC / D-discretion
+- [Phase 04]: API name setAllNodeStatuses per UI-SPEC
 - [Phase 04]: resume re-asserts running badges; pause does not touch statuses
-- [Phase 04]: raiseFault also sets idle badges for estop consistency
 - [Phase 04]: Toast hosted in Toolbar with toastKey remount for replace-on-retrigger
 - [Phase 04]: Rec disabled when estopped/fault; On uses btn-rec-on fault chrome
-- [Phase 04]: Browser checkpoint deferred to SUMMARY checklist (autonomous execute)
+- [Phase 05]: Tab state in App.tsx useState — no store needed
+- [Phase 05]: Dashboard moved out of diagram workspace entirely; gets full width in own tab
+- [Phase 05]: Narrow-screen media query updated to 3-column only (no dashboard to hide)
 
 ### Roadmap Evolution
 
-- Phase 5 added: Tabbed Workspace Layout
+- Phase 5 added: Tabbed Workspace Layout (added after Phase 4 completion)
 
 ### Pending Todos
 
-None yet.
+None.
 
 ### Blockers/Concerns
 
-None yet.
+None.
 
 ## Deferred Items
 
@@ -106,6 +87,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-13T21:29:40.310Z
-Stopped at: Completed 04-02-PLAN.md
+Last session: 2026-07-13
+Stopped at: Completed 05-01-PLAN.md — all phases complete
 Resume file: None

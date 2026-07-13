@@ -25,7 +25,7 @@ select {
 
 .app-shell {
   display: grid;
-  grid-template-rows: 42px minmax(0, 1fr) 30px;
+  grid-template-rows: 42px 30px minmax(0, 1fr) 30px;
   height: 100%;
   background: #15181a;
 }
@@ -138,8 +138,13 @@ select {
 
 .workspace {
   display: grid;
-  grid-template-columns: 248px minmax(680px, 1fr) 286px 320px;
+  grid-template-columns: 248px minmax(680px, 1fr) 286px;
   min-height: 0;
+}
+
+.workspace--front-panel {
+  display: block;
+  overflow: auto;
 }
 
 .library,
@@ -671,14 +676,45 @@ select {
   font-family: ui-monospace, 'Cascadia Code', monospace;
 }
 
-@media (max-width: 1300px) {
+@media (max-width: 1100px) {
   .workspace {
-    grid-template-columns: 220px minmax(620px, 1fr) 260px;
+    grid-template-columns: 220px minmax(0, 1fr) 260px;
   }
+}
 
-  .dashboard {
-    display: none;
-  }
+.tab-strip {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid #23292d;
+  background: #1a1f23;
+  padding: 0 10px;
+}
+
+.tab {
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #5e686d;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 14px;
+  cursor: pointer;
+  height: 100%;
+  letter-spacing: 0;
+}
+
+.tab:hover {
+  color: #aab4ba;
+}
+
+.tab.is-active {
+  color: #dfe6ea;
+  border-bottom-color: #4a90d6;
+}
+
+.workspace--front-panel .dashboard {
+  max-width: 960px;
+  margin: 0 auto;
 }
 
 .context-menu {

@@ -19,6 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Interactive Wiring + Palette Drag-Drop** - Users can draw new wires by dragging port-to-port and place blocks by dragging from the palette (completed 2026-07-13)
 - [x] **Phase 3: Context Menu + Block Management** - Right-click menus on blocks, wires, and canvas; inline rename and duplicate from properties panel (completed 2026-07-13)
 - [x] **Phase 4: Runtime Feedback + Deploy Polish** - Block status badges reflect execution state; recording toggle and deploy confirmation work end-to-end (completed 2026-07-13)
+- [x] **Phase 5: Tabbed Workspace Layout** - LabVIEW-style tab bar switches between Block Diagram (graph editor) and Front Panel (live dashboard) views (completed 2026-07-13)
 
 ## Phase Details
 
@@ -111,15 +112,15 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 2. Interactive Wiring + Palette Drag-Drop | 1/1 | Complete    | 2026-07-13 |
 | 3. Context Menu + Block Management | 2/2 | Complete   | 2026-07-13 |
 | 4. Runtime Feedback + Deploy Polish | 2/2 | Complete   | 2026-07-13 |
-| 5. Tabbed Workspace Layout | 0/? | Not started | - |
+| 5. Tabbed Workspace Layout | 1/1 | Complete | 2026-07-13 |
 
 ### Phase 5: Tabbed Workspace Layout
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Add a LabVIEW-style tab bar to switch between Block Diagram (graph editor) and Front Panel (live dashboard)
+**Requirements**: TAB-01, TAB-02, TAB-03, TAB-04, TAB-05
 **Depends on:** Phase 4
-**Plans:** 0 plans
+**Plans:** 1 plan
 
 Plans:
 
-- [ ] TBD (run /gsd-plan-phase 5 to break down)
+- [x] 05-01-PLAN.md — Tab strip + App.tsx conditional workspace rendering + CSS
