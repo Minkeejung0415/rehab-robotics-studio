@@ -92,7 +92,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 04-01-PLAN.md — graphStore setAllNodeStatuses + runtimeStore badge sync (RT-01)
+- [x] 04-01-PLAN.md — graphStore setAllNodeStatuses + runtimeStore badge sync (RT-01)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -110,7 +110,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Block & Wire Selection + Deletion | 1/1 | Complete   | 2026-07-13 |
 | 2. Interactive Wiring + Palette Drag-Drop | 1/1 | Complete    | 2026-07-13 |
 | 3. Context Menu + Block Management | 2/2 | Complete   | 2026-07-13 |
-| 4. Runtime Feedback + Deploy Polish | 0/2 | Not started | - |
+| 4. Runtime Feedback + Deploy Polish | 1/2 | In Progress|  |
 | 5. Tabbed Workspace Layout | 0/? | Not started | - |
 
 ### Phase 5: Tabbed Workspace Layout

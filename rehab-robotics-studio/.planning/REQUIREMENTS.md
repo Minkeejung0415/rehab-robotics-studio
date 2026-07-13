@@ -27,7 +27,7 @@ Requirements for completing all frontend interactivity. Each maps to roadmap pha
 
 ### Runtime Feedback
 
-- [ ] **RT-01**: Block status badges update to "running" when execution starts and back to "idle" when stopped
+- [x] **RT-01**: Block status badges update to "running" when execution starts and back to "idle" when stopped
 - [ ] **RT-02**: User can toggle recording on/off from a toolbar button, which updates the Recording status strip indicator
 
 ### Deploy
@@ -70,7 +70,7 @@ Requirements for completing all frontend interactivity. Each maps to roadmap pha
 | CTX-03 | Phase 3 | Complete |
 | BLK-01 | Phase 3 | Complete |
 | BLK-02 | Phase 3 | Complete |
-| RT-01 | Phase 4 | Pending |
+| RT-01 | Phase 4 | Complete |
 | RT-02 | Phase 4 | Pending |
 | DEP-01 | Phase 4 | Pending |
 

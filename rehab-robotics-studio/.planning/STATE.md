@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: ready_for_next_phase
-stopped_at: Completed-03-02-PLAN.md
-last_updated: "2026-07-13T19:33:07.837Z"
-last_activity: 2026-07-13 -- Phase 3 human validation passed via Playwright; ready for Phase 4
+status: executing
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-07-13T21:27:25.925Z"
+last_activity: 2026-07-13
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 6
+  completed_plans: 5
   percent: 60
 ---
 
@@ -26,12 +26,11 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 4
-Plan: 0 (not started)
-Status: Ready for next phase — Phase 3 verified (Playwright 10/10)
-Last activity: 2026-07-13 -- Phase 3 human validation passed via Playwright `scripts/phase3-qa.mjs`
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-07-13
 
-Progress: [##########] 60% (3/5 phases)
-
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
@@ -56,6 +55,7 @@ Progress: [##########] 60% (3/5 phases)
 *Updated after each plan completion*
 | Phase 03 P01 | 2min | 2 tasks | 3 files |
 | Phase 03 P02 | 12min | 3 tasks | 6 files |
+| Phase 04 P01 | 2min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -74,6 +74,9 @@ Recent decisions affecting current work:
 - [Phase 03]: Portal to document.body so graph-canvas overflow cannot clip the menu
 - [Phase 03]: Rename uses double requestAnimationFrame to focus #block-name-input after menu close
 - [Phase 03]: Delete menu items use is-danger chrome matching .btn-estop palette
+- [Phase 04]: API name setAllNodeStatuses per UI-SPEC / D-discretion
+- [Phase 04]: resume re-asserts running badges; pause does not touch statuses
+- [Phase 04]: raiseFault also sets idle badges for estop consistency
 
 ### Roadmap Evolution
 
@@ -99,6 +102,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-13T19:08:51.771Z
-Stopped at: Completed-03-02-PLAN.md
+Last session: 2026-07-13T21:27:25.915Z
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None
