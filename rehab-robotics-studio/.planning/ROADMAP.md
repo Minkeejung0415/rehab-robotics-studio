@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Block & Wire Selection + Deletion** - Keyboard Delete/Backspace removes selected blocks and wires from the canvas (completed 2026-07-13)
 - [x] **Phase 2: Interactive Wiring + Palette Drag-Drop** - Users can draw new wires by dragging port-to-port and place blocks by dragging from the palette (completed 2026-07-13)
 - [x] **Phase 3: Context Menu + Block Management** - Right-click menus on blocks, wires, and canvas; inline rename and duplicate from properties panel (completed 2026-07-13)
-- [ ] **Phase 4: Runtime Feedback + Deploy Polish** - Block status badges reflect execution state; recording toggle and deploy confirmation work end-to-end
+- [x] **Phase 4: Runtime Feedback + Deploy Polish** - Block status badges reflect execution state; recording toggle and deploy confirmation work end-to-end (completed 2026-07-13)
 
 ## Phase Details
 
@@ -96,7 +96,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 04-02-PLAN.md — Rec toolbar toggle + Deploy Mock portal toast (RT-02, DEP-01)
+- [x] 04-02-PLAN.md — Rec toolbar toggle + Deploy Mock portal toast (RT-02, DEP-01)
 
 **UI hint**: yes
 
@@ -110,7 +110,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Block & Wire Selection + Deletion | 1/1 | Complete   | 2026-07-13 |
 | 2. Interactive Wiring + Palette Drag-Drop | 1/1 | Complete    | 2026-07-13 |
 | 3. Context Menu + Block Management | 2/2 | Complete   | 2026-07-13 |
-| 4. Runtime Feedback + Deploy Polish | 1/2 | In Progress|  |
+| 4. Runtime Feedback + Deploy Polish | 2/2 | Complete   | 2026-07-13 |
 | 5. Tabbed Workspace Layout | 0/? | Not started | - |
 
 ### Phase 5: Tabbed Workspace Layout
