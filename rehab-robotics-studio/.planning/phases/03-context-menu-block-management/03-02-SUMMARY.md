@@ -74,7 +74,7 @@ Each task was committed atomically:
 2. **Task 2: Wire context menus, properties Name field, and Rename focus** - `39d1628` (feat)
 3. **Task 3: Browser-verify context menus and block management** - deferred-to-verify (autonomous mode; checklist below)
 
-**Plan metadata:** (pending final docs commit)
+**Plan metadata:** `2f98fbb` (docs: complete plan)
 
 ## Files Created/Modified
 
