@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { BlockInstance, EdgeDefinition, ParamValue } from '../types/blocks';
+import type { BlockInstance, BlockStatus, EdgeDefinition, ParamValue } from '../types/blocks';
 import type { SignalType } from '../types/signals';
 import { BLOCK_DEFS, defaultParams } from '../graph/blockDefinitions';
 import { deserializeGraph, serializeGraph } from '../graph/GraphModel';
@@ -96,6 +96,7 @@ interface GraphStore {
   startWire(blockId: string, portId: string, signalType: SignalType, x: number, y: number): void;
   finishWire(targetBlockId: string, targetPortId: string): void;
   cancelWire(): void;
+  setAllNodeStatuses(status: BlockStatus): void;
 
   validate(): ValidationIssue[];
   serialize(): string;
@@ -238,6 +239,12 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   },
 
   cancelWire: () => set({ pendingWire: null }),
+
+  setAllNodeStatuses: (status) =>
+    set((s) => {
+      if (s.nodes.length === 0) return s;
+      return { nodes: s.nodes.map((n) => ({ ...n, status })) };
+    }),
 
   validate: () => {
     const { nodes, edges } = get();
