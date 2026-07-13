@@ -18,7 +18,7 @@ export function GraphCanvas() {
   const [isPaletteDragOver, setIsPaletteDragOver] = useState(false);
   const nodes = useGraphStore((s) => s.nodes);
   const edges = useGraphStore((s) => s.edges);
-  const selectedId = useGraphStore((s) => s.selectedId);
+  const selectedIds = useGraphStore((s) => s.selectedIds);
   const selectedEdgeId = useGraphStore((s) => s.selectedEdgeId);
   const select = useGraphStore((s) => s.select);
   const selectEdge = useGraphStore((s) => s.selectEdge);
@@ -166,7 +166,7 @@ export function GraphCanvas() {
           <BlockNode
             key={node.id}
             node={node}
-            selected={node.id === selectedId}
+            selected={selectedIds.includes(node.id)}
             onSelect={select}
             onMove={(id, x, y) => moveNode(id, Math.max(8, Math.min(CANVAS_WIDTH - NODE_WIDTH - 8, x)), Math.max(8, Math.min(CANVAS_HEIGHT - 140, y)))}
             onWireStart={handleWireStart}

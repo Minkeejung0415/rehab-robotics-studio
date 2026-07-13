@@ -9,10 +9,10 @@ export function useKeyboardDelete(): void {
       const tag = (event.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
-      const { selectedId, selectedEdgeId, removeNode, removeEdge } = useGraphStore.getState();
-      if (selectedId) {
+      const { selectedIds, selectedEdgeId, removeNodes, removeEdge } = useGraphStore.getState();
+      if (selectedIds.length > 0) {
         event.preventDefault();
-        removeNode(selectedId);
+        removeNodes(selectedIds);
         return;
       }
 
