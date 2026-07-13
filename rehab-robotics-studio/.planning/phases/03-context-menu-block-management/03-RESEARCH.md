@@ -497,22 +497,25 @@ Duplicate display name: `` `${originalName} copy` `` (single space + literal `co
 | A5 | Portal to `document.body` preferred over in-canvas absolute | Stack / Structure | Sibling mount also OK if outside overflow container |
 | A6 | Batch `removeNodes` preferred for multi-delete | Pitfall 3 | Looping `removeNode` can work if each reads fresh state |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Primary selection after Select All**
    - What we know: UI-SPEC allows `selectedId` or first of `selectedIds` for Name edits.
    - What's unclear: Whether Select All should force a primary or leave `selectedId` null until click.
    - Recommendation: Keep/set primary (Assumption A1) so properties stay populated.
+   - **RESOLVED:** Plan 03-01 — `selectAll` keeps existing `selectedId` if still in the set, otherwise sets primary to the first block id so Properties stays populated.
 
 2. **Context Delete with multi-select already active**
    - What we know: Right-click selects target first (single-select), so block menu Delete typically deletes one.
    - What's unclear: If future UX opens menu without collapsing multi-select.
    - Recommendation: After select-before-open, Delete removes the menu target (single). Keyboard Delete remains the multi path.
+   - **RESOLVED:** Plan 03-02 — select-before-open collapses to the menu target; context Delete removes that single target. Keyboard Delete/Backspace via `removeNodes(selectedIds)` handles multi-delete after Select All.
 
 3. **UI-SPEC checker still pending**
    - What we know: `03-UI-SPEC.md` is draft; checker sign-off unchecked.
    - What's unclear: Whether spacing exceptions change during check.
    - Recommendation: Planner treat UI-SPEC as source of truth unless checker amends it.
+   - **RESOLVED:** UI-SPEC checker returned APPROVED (2026-07-13). Lock `03-UI-SPEC.md` as the design contract for planning/execution; FLAG notes (focal point, tight type scale) are non-blocking LabVIEW chrome parity.
 
 ## Environment Availability
 
