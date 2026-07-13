@@ -68,7 +68,7 @@ Each task was committed atomically:
 2. **Task 2: Wire Rec button and Deploy toast in Toolbar** - `d6a88b7` (feat)
 3. **Task 3: Browser-verify** - deferred (see checklist; no code commit)
 
-**Plan metadata:** (pending docs commit)
+**Plan metadata:** `f66365a` (docs: complete plan)
 
 ## Files Created/Modified
 - `src/components/common/Toast.tsx` - reusable portal toast
