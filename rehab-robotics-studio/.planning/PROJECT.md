@@ -24,10 +24,10 @@ Every UI element that exists must actually work — the frontend should feel lik
 - ✓ Graph validation — existing
 - ✓ Status strip with system indicators — existing
 
+- Block/wire keyboard deletion and wire selection were validated in Phase 01.
+
 ### Active
 
-- [ ] Delete blocks from canvas (keyboard + context menu)
-- [ ] Delete wires (click to select, then delete)
 - [ ] Interactive port-to-port wiring (drag from output to input)
 - [ ] Drag-and-drop blocks from palette onto canvas
 - [ ] Right-click context menu on blocks and wires
@@ -64,7 +64,8 @@ Every UI element that exists must actually work — the frontend should feel lik
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | Mock-only frontend completion | User wants interactable UI before wiring backend | — Pending |
-| Use existing store methods | removeNode, removeEdge, wiring methods already implemented | — Pending |
+| Use existing store methods | removeNode, removeEdge, wiring methods already implemented | validated in Phase 01 for keyboard deletion |
+| Default port IDs follow port names | Default graph edges use semantic port IDs, so omitted port IDs must match displayed port names | validated in Phase 01 for default wire rendering |
 
 ## Evolution
 
@@ -84,4 +85,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-13 after initialization*
+*Last updated: 2026-07-13 after Phase 01 completion*
