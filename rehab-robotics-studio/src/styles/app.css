@@ -327,6 +327,49 @@ select {
   background: #15181a;
 }
 
+.canvas-panel .panel-heading {
+  justify-content: space-between;
+}
+
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.zoom-controls button {
+  width: 20px;
+  height: 20px;
+  background: #1e2428;
+  border: 1px solid #2d363b;
+  color: #8b969c;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 2px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.zoom-controls button:hover {
+  border-color: #4a90d6;
+  color: #c8d0d5;
+}
+
+.zoom-controls .zoom-pct {
+  width: 38px;
+  font-size: 10px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  letter-spacing: 0;
+  color: #5e686d;
+}
+
+.zoom-controls .zoom-pct:hover {
+  color: #aab4ba;
+}
+
 .graph-canvas {
   position: relative;
   overflow: auto;

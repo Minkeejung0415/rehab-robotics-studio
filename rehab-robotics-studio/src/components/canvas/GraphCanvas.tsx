@@ -22,6 +22,11 @@ export function GraphCanvas() {
   const [pointer, setPointer] = useState({ x: 0, y: 0 });
   const [isPaletteDragOver, setIsPaletteDragOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
+  const [zoom, setZoom] = useState(1.0);
+
+  const changeZoom = useCallback((delta: number) => {
+    setZoom((z) => Math.max(0.25, Math.min(2.0, Math.round((z + delta) * 10) / 10)));
+  }, []);
   const nodes = useGraphStore((s) => s.nodes);
   const edges = useGraphStore((s) => s.edges);
   const selectedIds = useGraphStore((s) => s.selectedIds);
@@ -43,13 +48,25 @@ export function GraphCanvas() {
 
   const byId = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
 
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: globalThis.WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      changeZoom(e.deltaY < 0 ? 0.1 : -0.1);
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, [changeZoom]);
+
   const toCanvasPoint = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
     return {
-      x: clientX - rect.left + canvas.scrollLeft,
-      y: clientY - rect.top + canvas.scrollTop,
+      x: (clientX - rect.left + canvas.scrollLeft) / zoom,
+      y: (clientY - rect.top + canvas.scrollTop) / zoom,
     };
   };
 
@@ -194,7 +211,14 @@ export function GraphCanvas() {
 
   return (
     <section className="canvas-panel">
-      <div className="panel-heading">BLOCK DIAGRAM</div>
+      <div className="panel-heading">
+        BLOCK DIAGRAM
+        <div className="zoom-controls">
+          <button onClick={() => changeZoom(-0.1)} title="Zoom out (Ctrl+Scroll)">−</button>
+          <button className="zoom-pct" onClick={() => setZoom(1.0)} title="Reset zoom">{Math.round(zoom * 100)}%</button>
+          <button onClick={() => changeZoom(0.1)} title="Zoom in (Ctrl+Scroll)">+</button>
+        </div>
+      </div>
       <div
         ref={canvasRef}
         className={`graph-canvas${isPaletteDragOver ? ' is-palette-drop-target' : ''}`}
@@ -206,63 +230,70 @@ export function GraphCanvas() {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <svg
-          className="wire-layer"
-          style={{ pointerEvents: 'all' }}
-          width={CANVAS_WIDTH}
-          height={CANVAS_HEIGHT}
-          viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
-          onMouseDown={(event) => event.currentTarget === event.target && select(null)}
-          onContextMenu={handleCanvasContextMenu}
-        >
-          {edges.map((edge) => {
-            const source = byId.get(edge.sourceBlockId);
-            const target = byId.get(edge.targetBlockId);
-            const sourceOutputs = source ? getDef(source.type)?.outputs ?? [] : [];
-            const targetInputs = target ? getDef(target.type)?.inputs ?? [] : [];
-            const sourcePortIndex = sourceOutputs.findIndex((port) => port.id === edge.sourcePortId);
-            const targetPortIndex = targetInputs.findIndex((port) => port.id === edge.targetPortId);
-            const sourcePort = sourceOutputs[sourcePortIndex];
-            const targetPort = targetInputs[targetPortIndex];
-            if (!source || !target || !sourcePort || !targetPort) return null;
-            return (
-              <Wire
-                key={edge.id}
-                edge={edge}
-                source={source}
-                target={target}
-                sourcePort={sourcePort}
-                targetPort={targetPort}
-                sourcePortIndex={sourcePortIndex}
-                targetPortIndex={targetPortIndex}
-                selected={edge.id === selectedEdgeId}
-                onClick={selectEdge}
-                onContextMenu={handleWireContextMenu}
+        {/* Outer div: inflates scrollable area to match zoomed content size */}
+        <div style={{ position: 'relative', width: CANVAS_WIDTH * zoom, height: CANVAS_HEIGHT * zoom, flexShrink: 0 }}>
+          {/* Inner div: applies CSS scale transform */}
+          <div style={{ position: 'absolute', top: 0, left: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT, transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
+            <svg
+              className="wire-layer"
+              style={{ pointerEvents: 'all' }}
+              width={CANVAS_WIDTH}
+              height={CANVAS_HEIGHT}
+              viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
+              onMouseDown={(event) => event.currentTarget === event.target && select(null)}
+              onContextMenu={handleCanvasContextMenu}
+            >
+              {edges.map((edge) => {
+                const source = byId.get(edge.sourceBlockId);
+                const target = byId.get(edge.targetBlockId);
+                const sourceOutputs = source ? getDef(source.type)?.outputs ?? [] : [];
+                const targetInputs = target ? getDef(target.type)?.inputs ?? [] : [];
+                const sourcePortIndex = sourceOutputs.findIndex((port) => port.id === edge.sourcePortId);
+                const targetPortIndex = targetInputs.findIndex((port) => port.id === edge.targetPortId);
+                const sourcePort = sourceOutputs[sourcePortIndex];
+                const targetPort = targetInputs[targetPortIndex];
+                if (!source || !target || !sourcePort || !targetPort) return null;
+                return (
+                  <Wire
+                    key={edge.id}
+                    edge={edge}
+                    source={source}
+                    target={target}
+                    sourcePort={sourcePort}
+                    targetPort={targetPort}
+                    sourcePortIndex={sourcePortIndex}
+                    targetPortIndex={targetPortIndex}
+                    selected={edge.id === selectedEdgeId}
+                    onClick={selectEdge}
+                    onContextMenu={handleWireContextMenu}
+                  />
+                );
+              })}
+              {pendingWire && (
+                <PendingWireOverlay
+                  sx={pendingWire.x}
+                  sy={pendingWire.y}
+                  tx={pointer.x}
+                  ty={pointer.y}
+                  color={signalColor[pendingWire.signalType]}
+                />
+              )}
+            </svg>
+            {nodes.map((node) => (
+              <BlockNode
+                key={node.id}
+                node={node}
+                zoom={zoom}
+                selected={selectedIds.includes(node.id)}
+                onSelect={select}
+                onMove={(id, x, y) => moveNode(id, Math.max(8, Math.min(CANVAS_WIDTH - NODE_WIDTH - 8, x)), Math.max(8, Math.min(CANVAS_HEIGHT - 140, y)))}
+                onWireStart={handleWireStart}
+                onWireFinish={handleWireFinish}
+                onContextMenu={handleBlockContextMenu}
               />
-            );
-          })}
-          {pendingWire && (
-            <PendingWireOverlay
-              sx={pendingWire.x}
-              sy={pendingWire.y}
-              tx={pointer.x}
-              ty={pointer.y}
-              color={signalColor[pendingWire.signalType]}
-            />
-          )}
-        </svg>
-        {nodes.map((node) => (
-          <BlockNode
-            key={node.id}
-            node={node}
-            selected={selectedIds.includes(node.id)}
-            onSelect={select}
-            onMove={(id, x, y) => moveNode(id, Math.max(8, Math.min(CANVAS_WIDTH - NODE_WIDTH - 8, x)), Math.max(8, Math.min(CANVAS_HEIGHT - 140, y)))}
-            onWireStart={handleWireStart}
-            onWireFinish={handleWireFinish}
-            onContextMenu={handleBlockContextMenu}
-          />
-        ))}
+            ))}
+          </div>
+        </div>
       </div>
       {contextMenu && contextMenuItems.length > 0 && (
         <ContextMenu

@@ -10,6 +10,7 @@ import { NODE_HEADER_HEIGHT, NODE_WIDTH, PORT_ROW_HEIGHT, portTop } from './Wire
 
 interface Props {
   node: BlockInstance;
+  zoom: number;
   selected: boolean;
   onSelect: (id: string) => void;
   onMove: (id: string, x: number, y: number) => void;
@@ -41,7 +42,7 @@ function NodeBody({ kind }: { kind?: string }) {
   return null;
 }
 
-export function BlockNode({ node, selected, onSelect, onMove, onWireStart, onWireFinish, onContextMenu }: Props) {
+export function BlockNode({ node, zoom, selected, onSelect, onMove, onWireStart, onWireFinish, onContextMenu }: Props) {
   const def = getDef(node.type);
   const inputCount = def?.inputs.length ?? 0;
   const outputCount = def?.outputs.length ?? 0;
@@ -58,7 +59,7 @@ export function BlockNode({ node, selected, onSelect, onMove, onWireStart, onWir
     const origin = node.position;
 
     const onPointerMove = (moveEvent: globalThis.MouseEvent) => {
-      onMove(node.id, origin.x + moveEvent.clientX - startX, origin.y + moveEvent.clientY - startY);
+      onMove(node.id, origin.x + (moveEvent.clientX - startX) / zoom, origin.y + (moveEvent.clientY - startY) / zoom);
     };
     const onPointerUp = () => {
       window.removeEventListener('mousemove', onPointerMove);
