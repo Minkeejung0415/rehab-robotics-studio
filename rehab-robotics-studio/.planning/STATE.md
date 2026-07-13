@@ -65,6 +65,10 @@ Recent decisions affecting current work:
 - Init: PendingWireOverlay already exists in Wire.tsx but is never rendered — Phase 2 just needs to mount it
 - Init: Wire component already accepts onClick/selected props but GraphCanvas never passes them — Phase 1 just needs to thread these through
 
+### Roadmap Evolution
+
+- Phase 5 added: Tabbed Workspace Layout
+
 ### Pending Todos
 
 None yet.

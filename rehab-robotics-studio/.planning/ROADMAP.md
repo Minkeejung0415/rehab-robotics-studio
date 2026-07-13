@@ -6,6 +6,8 @@ The frontend exists and renders correctly, but most interactions are decorative.
 
 ## Phases
 
+This roadmap now has five phases; Phase 5 adds a tabbed workspace layout after the existing interaction and runtime work.
+
 **Phase Numbering:**
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
@@ -78,3 +80,14 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 2. Interactive Wiring + Palette Drag-Drop | 1/1 | Complete    | 2026-07-13 |
 | 3. Context Menu + Block Management | 0/? | Not started | - |
 | 4. Runtime Feedback + Deploy Polish | 0/? | Not started | - |
+| 5. Tabbed Workspace Layout | 0/? | Not started | - |
+
+### Phase 5: Tabbed Workspace Layout
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 4
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 5 to break down)
