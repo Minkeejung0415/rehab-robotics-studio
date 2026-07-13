@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import { getDef } from '../../graph/blockDefinitions';
 import { useKeyboardDelete } from '../../hooks/useKeyboardDelete';
 import { useGraphStore } from '../../state/graphStore';
@@ -108,13 +108,13 @@ export function GraphCanvas() {
     setContextMenu({ kind: 'canvas', x: event.clientX, y: event.clientY });
   };
 
-  const focusBlockNameInput = () => {
+  const focusBlockNameInput = useCallback(() => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         document.getElementById('block-name-input')?.focus();
       });
     });
-  };
+  }, []);
 
   const contextMenuItems = useMemo((): ContextMenuItem[] => {
     if (!contextMenu) return [];
@@ -164,7 +164,7 @@ export function GraphCanvas() {
       ];
     }
     return [];
-  }, [contextMenu, duplicateNode, removeEdge, removeNode, select, selectAll]);
+  }, [contextMenu, duplicateNode, focusBlockNameInput, removeEdge, removeNode, select, selectAll]);
 
   const supportsPaletteDrop = (event: DragEvent<HTMLDivElement>) => Array.from(event.dataTransfer.types).includes(BLOCK_TYPE_MIME);
 

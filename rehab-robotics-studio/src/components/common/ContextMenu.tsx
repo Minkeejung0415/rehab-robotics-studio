@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 export interface ContextMenuItem {
@@ -40,18 +40,58 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
   }, [x, y, items]);
 
   useEffect(() => {
+    menuRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') {
+        onClose();
+        return;
+      }
+
+      const el = menuRef.current;
+      if (!el) return;
+      const menuitems = Array.from(
+        el.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+      );
+      if (menuitems.length === 0) return;
+
+      const currentIndex = menuitems.indexOf(document.activeElement as HTMLElement);
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        const next = currentIndex < 0 ? 0 : (currentIndex + 1) % menuitems.length;
+        menuitems[next]?.focus();
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        const prev =
+          currentIndex < 0
+            ? menuitems.length - 1
+            : (currentIndex - 1 + menuitems.length) % menuitems.length;
+        menuitems[prev]?.focus();
+      } else if (event.key === 'Home') {
+        event.preventDefault();
+        menuitems[0]?.focus();
+      } else if (event.key === 'End') {
+        event.preventDefault();
+        menuitems[menuitems.length - 1]?.focus();
+      }
     };
     const handlePointerDown = (event: PointerEvent) => {
       const el = menuRef.current;
       if (el && !el.contains(event.target as Node)) onClose();
     };
+    const handleDismiss = () => onClose();
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('scroll', handleDismiss, true);
+    window.addEventListener('resize', handleDismiss);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('scroll', handleDismiss, true);
+      window.removeEventListener('resize', handleDismiss);
     };
   }, [onClose]);
 
@@ -60,10 +100,11 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
       ref={menuRef}
       className="context-menu"
       role="menu"
+      tabIndex={-1}
       style={{ left: x, top: y }}
     >
       {items.map((item) => (
-        <div key={item.id}>
+        <Fragment key={item.id}>
           {item.separatorBefore && <div className="context-menu-sep" role="separator" />}
           <button
             type="button"
@@ -76,7 +117,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
           >
             {item.label}
           </button>
-        </div>
+        </Fragment>
       ))}
     </div>,
     document.body,
