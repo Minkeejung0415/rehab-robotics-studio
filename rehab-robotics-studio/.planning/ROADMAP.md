@@ -13,7 +13,7 @@ The frontend exists and renders correctly, but most interactions are decorative.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Block & Wire Selection + Deletion** - Keyboard Delete/Backspace removes selected blocks and wires from the canvas (completed 2026-07-13)
-- [ ] **Phase 2: Interactive Wiring + Palette Drag-Drop** - Users can draw new wires by dragging port-to-port and place blocks by dragging from the palette
+- [x] **Phase 2: Interactive Wiring + Palette Drag-Drop** - Users can draw new wires by dragging port-to-port and place blocks by dragging from the palette (completed 2026-07-13)
 - [ ] **Phase 3: Context Menu + Block Management** - Right-click menus on blocks, wires, and canvas; inline rename and duplicate from properties panel
 - [ ] **Phase 4: Runtime Feedback + Deploy Polish** - Block status badges reflect execution state; recording toggle and deploy confirmation work end-to-end
 
@@ -75,6 +75,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Block & Wire Selection + Deletion | 1/1 | Complete   | 2026-07-13 |
-| 2. Interactive Wiring + Palette Drag-Drop | 0/? | Not started | - |
+| 2. Interactive Wiring + Palette Drag-Drop | 1/1 | Complete    | 2026-07-13 |
 | 3. Context Menu + Block Management | 0/? | Not started | - |
 | 4. Runtime Feedback + Deploy Polish | 0/? | Not started | - |

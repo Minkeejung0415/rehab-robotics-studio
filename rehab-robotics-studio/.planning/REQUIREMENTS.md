@@ -11,8 +11,8 @@ Requirements for completing all frontend interactivity. Each maps to roadmap pha
 
 - [x] **GRAPH-01**: User can delete a selected block via Delete/Backspace key
 - [x] **GRAPH-02**: User can click a wire to select it (highlighted state), then delete it via Delete/Backspace key
-- [ ] **GRAPH-03**: User can drag from an output port to an input port to create a new wire, with a dashed preview line while dragging
-- [ ] **GRAPH-04**: User can drag a block from the palette onto the canvas to place it at the drop location
+- [x] **GRAPH-03**: User can drag from an output port to an input port to create a new wire, with a dashed preview line while dragging
+- [x] **GRAPH-04**: User can drag a block from the palette onto the canvas to place it at the drop location
 
 ### Context Menu
 
@@ -63,8 +63,8 @@ Requirements for completing all frontend interactivity. Each maps to roadmap pha
 |-------------|-------|--------|
 | GRAPH-01 | Phase 1 | Complete |
 | GRAPH-02 | Phase 1 | Complete |
-| GRAPH-03 | Phase 2 | Pending |
-| GRAPH-04 | Phase 2 | Pending |
+| GRAPH-03 | Phase 2 | Complete |
+| GRAPH-04 | Phase 2 | Complete |
 | CTX-01 | Phase 3 | Pending |
 | CTX-02 | Phase 3 | Pending |
 | CTX-03 | Phase 3 | Pending |
