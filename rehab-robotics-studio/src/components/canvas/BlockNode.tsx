@@ -15,6 +15,7 @@ interface Props {
   onMove: (id: string, x: number, y: number) => void;
   onWireStart: (node: BlockInstance, port: PortDefinition, portIndex: number, event: MouseEvent<HTMLDivElement>) => void;
   onWireFinish: (node: BlockInstance, port: PortDefinition, event: MouseEvent<HTMLDivElement>) => void;
+  onContextMenu?: (nodeId: string, event: MouseEvent) => void;
 }
 
 function NodeBody({ kind }: { kind?: string }) {
@@ -40,7 +41,7 @@ function NodeBody({ kind }: { kind?: string }) {
   return null;
 }
 
-export function BlockNode({ node, selected, onSelect, onMove, onWireStart, onWireFinish }: Props) {
+export function BlockNode({ node, selected, onSelect, onMove, onWireStart, onWireFinish, onContextMenu }: Props) {
   const def = getDef(node.type);
   const inputCount = def?.inputs.length ?? 0;
   const outputCount = def?.outputs.length ?? 0;
@@ -76,6 +77,11 @@ export function BlockNode({ node, selected, onSelect, onMove, onWireStart, onWir
       role="button"
       tabIndex={0}
       onClick={() => onSelect(node.id)}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onContextMenu?.(node.id, event);
+      }}
     >
       <div className="block-header" style={{ borderTopColor: accent }}>
         <div>

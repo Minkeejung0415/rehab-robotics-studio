@@ -5,6 +5,7 @@ import { useGraphStore } from '../../state/graphStore';
 import { useSystemStore } from '../../state/systemStore';
 import type { BlockInstance, PortDefinition } from '../../types/blocks';
 import { signalColor } from '../../theme/tokens';
+import { ContextMenu, type ContextMenuItem } from '../common/ContextMenu';
 import { NODE_WIDTH, PendingWireOverlay, portTop, Wire } from './Wire';
 import { BlockNode } from './BlockNode';
 import { BLOCK_TYPE_MIME } from '../library/LibraryItem';
@@ -12,18 +13,27 @@ import { BLOCK_TYPE_MIME } from '../library/LibraryItem';
 const CANVAS_WIDTH = 980;
 const CANVAS_HEIGHT = 720;
 
+type ContextMenuState =
+  | null
+  | { kind: 'block' | 'wire' | 'canvas'; x: number; y: number; targetId?: string };
+
 export function GraphCanvas() {
   const canvasRef = useRef<HTMLDivElement>(null);
   const [pointer, setPointer] = useState({ x: 0, y: 0 });
   const [isPaletteDragOver, setIsPaletteDragOver] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const nodes = useGraphStore((s) => s.nodes);
   const edges = useGraphStore((s) => s.edges);
   const selectedIds = useGraphStore((s) => s.selectedIds);
   const selectedEdgeId = useGraphStore((s) => s.selectedEdgeId);
   const select = useGraphStore((s) => s.select);
   const selectEdge = useGraphStore((s) => s.selectEdge);
+  const selectAll = useGraphStore((s) => s.selectAll);
   const moveNode = useGraphStore((s) => s.moveNode);
   const addNode = useGraphStore((s) => s.addNode);
+  const duplicateNode = useGraphStore((s) => s.duplicateNode);
+  const removeNode = useGraphStore((s) => s.removeNode);
+  const removeEdge = useGraphStore((s) => s.removeEdge);
   const pendingWire = useGraphStore((s) => s.pendingWire);
   const startWire = useGraphStore((s) => s.startWire);
   const finishWire = useGraphStore((s) => s.finishWire);
@@ -80,6 +90,82 @@ export function GraphCanvas() {
     if (event.currentTarget === event.target) cancelWire();
   };
 
+  const closeContextMenu = () => setContextMenu(null);
+
+  const handleBlockContextMenu = (nodeId: string, event: MouseEvent) => {
+    select(nodeId);
+    setContextMenu({ kind: 'block', x: event.clientX, y: event.clientY, targetId: nodeId });
+  };
+
+  const handleWireContextMenu = (edgeId: string, event: MouseEvent) => {
+    selectEdge(edgeId);
+    setContextMenu({ kind: 'wire', x: event.clientX, y: event.clientY, targetId: edgeId });
+  };
+
+  const handleCanvasContextMenu = (event: MouseEvent<HTMLDivElement | SVGSVGElement>) => {
+    if (event.currentTarget !== event.target) return;
+    event.preventDefault();
+    setContextMenu({ kind: 'canvas', x: event.clientX, y: event.clientY });
+  };
+
+  const focusBlockNameInput = () => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.getElementById('block-name-input')?.focus();
+      });
+    });
+  };
+
+  const contextMenuItems = useMemo((): ContextMenuItem[] => {
+    if (!contextMenu) return [];
+    if (contextMenu.kind === 'block' && contextMenu.targetId) {
+      const targetId = contextMenu.targetId;
+      return [
+        {
+          id: 'duplicate',
+          label: 'Duplicate',
+          onSelect: () => duplicateNode(targetId),
+        },
+        {
+          id: 'rename',
+          label: 'Rename',
+          onSelect: () => {
+            select(targetId);
+            focusBlockNameInput();
+          },
+        },
+        {
+          id: 'delete',
+          label: 'Delete',
+          danger: true,
+          separatorBefore: true,
+          onSelect: () => removeNode(targetId),
+        },
+      ];
+    }
+    if (contextMenu.kind === 'wire' && contextMenu.targetId) {
+      const targetId = contextMenu.targetId;
+      return [
+        {
+          id: 'delete-wire',
+          label: 'Delete',
+          danger: true,
+          onSelect: () => removeEdge(targetId),
+        },
+      ];
+    }
+    if (contextMenu.kind === 'canvas') {
+      return [
+        {
+          id: 'select-all',
+          label: 'Select All',
+          onSelect: () => selectAll(),
+        },
+      ];
+    }
+    return [];
+  }, [contextMenu, duplicateNode, removeEdge, removeNode, select, selectAll]);
+
   const supportsPaletteDrop = (event: DragEvent<HTMLDivElement>) => Array.from(event.dataTransfer.types).includes(BLOCK_TYPE_MIME);
 
   const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
@@ -115,6 +201,7 @@ export function GraphCanvas() {
         onMouseDown={(event) => event.currentTarget === event.target && select(null)}
         onMouseUp={handleCanvasMouseUp}
         onMouseLeave={() => pendingWire && cancelWire()}
+        onContextMenu={handleCanvasContextMenu}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -126,6 +213,7 @@ export function GraphCanvas() {
           height={CANVAS_HEIGHT}
           viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
           onMouseDown={(event) => event.currentTarget === event.target && select(null)}
+          onContextMenu={handleCanvasContextMenu}
         >
           {edges.map((edge) => {
             const source = byId.get(edge.sourceBlockId);
@@ -149,6 +237,7 @@ export function GraphCanvas() {
                 targetPortIndex={targetPortIndex}
                 selected={edge.id === selectedEdgeId}
                 onClick={selectEdge}
+                onContextMenu={handleWireContextMenu}
               />
             );
           })}
@@ -171,9 +260,18 @@ export function GraphCanvas() {
             onMove={(id, x, y) => moveNode(id, Math.max(8, Math.min(CANVAS_WIDTH - NODE_WIDTH - 8, x)), Math.max(8, Math.min(CANVAS_HEIGHT - 140, y)))}
             onWireStart={handleWireStart}
             onWireFinish={handleWireFinish}
+            onContextMenu={handleBlockContextMenu}
           />
         ))}
       </div>
+      {contextMenu && contextMenuItems.length > 0 && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenuItems}
+          onClose={closeContextMenu}
+        />
+      )}
     </section>
   );
 }
