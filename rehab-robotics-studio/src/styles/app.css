@@ -220,6 +220,11 @@ select {
   background: #1a1f23;
   padding: 5px;
   margin-bottom: 5px;
+  cursor: grab;
+}
+
+.palette-item:active {
+  cursor: grabbing;
 }
 
 .palette-icon {
@@ -301,6 +306,11 @@ select {
     linear-gradient(#1a2226 1px, transparent 1px),
     linear-gradient(90deg, #1a2226 1px, transparent 1px);
   background-size: 80px 80px, 80px 80px, 16px 16px, 16px 16px;
+}
+
+.graph-canvas.is-palette-drop-target {
+  outline: 2px dashed #2bb89a;
+  outline-offset: -4px;
 }
 
 .wire-layer {

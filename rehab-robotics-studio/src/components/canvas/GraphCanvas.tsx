@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import { getDef } from '../../graph/blockDefinitions';
 import { useKeyboardDelete } from '../../hooks/useKeyboardDelete';
 import { useGraphStore } from '../../state/graphStore';
+import { useSystemStore } from '../../state/systemStore';
 import type { BlockInstance, PortDefinition } from '../../types/blocks';
 import { signalColor } from '../../theme/tokens';
 import { NODE_WIDTH, PendingWireOverlay, portTop, Wire } from './Wire';
 import { BlockNode } from './BlockNode';
+import { BLOCK_TYPE_MIME } from '../library/LibraryItem';
 
 const CANVAS_WIDTH = 980;
 const CANVAS_HEIGHT = 720;
@@ -13,6 +15,7 @@ const CANVAS_HEIGHT = 720;
 export function GraphCanvas() {
   const canvasRef = useRef<HTMLDivElement>(null);
   const [pointer, setPointer] = useState({ x: 0, y: 0 });
+  const [isPaletteDragOver, setIsPaletteDragOver] = useState(false);
   const nodes = useGraphStore((s) => s.nodes);
   const edges = useGraphStore((s) => s.edges);
   const selectedId = useGraphStore((s) => s.selectedId);
@@ -20,6 +23,7 @@ export function GraphCanvas() {
   const select = useGraphStore((s) => s.select);
   const selectEdge = useGraphStore((s) => s.selectEdge);
   const moveNode = useGraphStore((s) => s.moveNode);
+  const addNode = useGraphStore((s) => s.addNode);
   const pendingWire = useGraphStore((s) => s.pendingWire);
   const startWire = useGraphStore((s) => s.startWire);
   const finishWire = useGraphStore((s) => s.finishWire);
@@ -76,15 +80,44 @@ export function GraphCanvas() {
     if (event.currentTarget === event.target) cancelWire();
   };
 
+  const supportsPaletteDrop = (event: DragEvent<HTMLDivElement>) => Array.from(event.dataTransfer.types).includes(BLOCK_TYPE_MIME);
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!supportsPaletteDrop(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setIsPaletteDragOver(true);
+  };
+
+  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    if (event.currentTarget === event.target) setIsPaletteDragOver(false);
+  };
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!supportsPaletteDrop(event)) return;
+    event.preventDefault();
+    setIsPaletteDragOver(false);
+    const type = event.dataTransfer.getData(BLOCK_TYPE_MIME);
+    if (!getDef(type)) return;
+    const point = toCanvasPoint(event.clientX, event.clientY);
+    const x = Math.max(8, Math.min(CANVAS_WIDTH - NODE_WIDTH - 8, point.x));
+    const y = Math.max(8, Math.min(CANVAS_HEIGHT - 140, point.y));
+    addNode(type, x, y);
+    useSystemStore.getState().addLog('INFO', `Added block: ${getDef(type)?.name ?? type}`);
+  };
+
   return (
     <section className="canvas-panel">
       <div className="panel-heading">BLOCK DIAGRAM</div>
       <div
         ref={canvasRef}
-        className="graph-canvas"
+        className={`graph-canvas${isPaletteDragOver ? ' is-palette-drop-target' : ''}`}
         onMouseDown={(event) => event.currentTarget === event.target && select(null)}
         onMouseUp={handleCanvasMouseUp}
         onMouseLeave={() => pendingWire && cancelWire()}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       >
         <svg
           className="wire-layer"
