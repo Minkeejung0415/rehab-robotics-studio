@@ -55,7 +55,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Right-clicking the canvas background shows a context menu with Select All that selects every block on the canvas
   4. User can edit the block name field in the properties panel and the block's label on the canvas updates to match
   5. Selecting Duplicate from a block's context menu creates an offset copy of that block on the canvas
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 03-01-PLAN.md — Store multi-select, rename, duplicate, batch remove + keyboard multi-delete
+- [ ] 03-02-PLAN.md — Context menu UI, properties Name field, canvas/block/wire wiring
 **UI hint**: yes
 
 ### Phase 4: Runtime Feedback + Deploy Polish
@@ -78,7 +81,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Block & Wire Selection + Deletion | 1/1 | Complete   | 2026-07-13 |
 | 2. Interactive Wiring + Palette Drag-Drop | 1/1 | Complete    | 2026-07-13 |
-| 3. Context Menu + Block Management | 0/? | Not started | - |
+| 3. Context Menu + Block Management | 0/2 | Not started | - |
 | 4. Runtime Feedback + Deploy Polish | 0/? | Not started | - |
 | 5. Tabbed Workspace Layout | 0/? | Not started | - |
 
