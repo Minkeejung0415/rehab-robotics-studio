@@ -73,7 +73,7 @@ Each task was committed atomically:
 1. **Task 1: Extend graphStore for multi-select, rename, duplicate, batch remove** - `7928d58` (feat)
 2. **Task 2: Multi-delete keyboard path and selectedIds canvas chrome** - `85e9d59` (feat)
 
-**Plan metadata:** (pending docs commit)
+**Plan metadata:** `caa813b` (docs: complete plan)
 
 ## Files Created/Modified
 
