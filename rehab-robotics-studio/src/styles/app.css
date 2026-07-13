@@ -728,3 +728,28 @@ select {
   margin: 4px 0;
   background: #23292d;
 }
+
+.toast {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  max-width: 480px;
+  padding: 8px 12px;
+  border: 1px solid #30383d;
+  border-radius: 0;
+  background: #1a1f23;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.25);
+  color: #dfe6ea;
+  font-size: 12px;
+  font-weight: 400;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  cursor: pointer;
+}
+
+.btn-rec-on {
+  border-color: #7a3030;
+  background: #3a2020;
+  color: #ffd9d9;
+}
