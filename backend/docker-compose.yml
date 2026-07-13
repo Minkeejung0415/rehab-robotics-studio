@@ -1,0 +1,44 @@
+version: "3.9"
+
+# Rehab Robotics ROS2 Backend — Docker dev environment
+#
+# Quick start:
+#   docker compose up
+#
+# GUI connects to: ws://localhost:9090
+#
+# To configure nodes, edit config/nodes.yaml before starting.
+
+services:
+  ros2_backend:
+    image: ros:humble
+    network_mode: host          # ESP32 WiFi visible on host network
+    volumes:
+      - .:/ws/src/rehab_robotics_bridge:ro
+      - ./config:/ws/config
+    working_dir: /ws
+    environment:
+      - ROS_DOMAIN_ID=0
+    command: >
+      bash -c "
+        apt-get update -qq &&
+        apt-get install -y -qq python3-pip ros-humble-rosbridge-suite ros-humble-sensor-msgs &&
+        pip3 install pyserial PyYAML numpy --quiet &&
+        source /opt/ros/humble/setup.bash &&
+        cd /ws &&
+        colcon build --packages-select rehab_robotics_bridge --symlink-install 2>&1 | tail -5 &&
+        source install/setup.bash &&
+        ros2 launch rehab_robotics_bridge rehab_robotics.launch.py
+      "
+    ports:
+      - "9090:9090"   # rosbridge WebSocket → GUI
+
+  # Optional: run serial TCP bridge as sidecar when using USB
+  # serial_bridge:
+  #   image: python:3.11-slim
+  #   network_mode: host
+  #   devices:
+  #     - /dev/ttyUSB0:/dev/ttyUSB0
+  #   volumes:
+  #     - ../esp32/host:/host:ro
+  #   command: python3 /host/serial_tcp_bridge.py /dev/ttyUSB0 --plugin

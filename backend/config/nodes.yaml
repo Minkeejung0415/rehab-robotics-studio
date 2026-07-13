@@ -1,0 +1,24 @@
+# ESP32 node configuration for Rehab Robotics Bridge
+#
+# Each entry specifies a node to connect to.
+# - id:   Unique name, used as the ROS2 topic prefix: /esp32/{id}/imu
+# - host: IP address or hostname of the ESP32 (WiFi) or 127.0.0.1 (USB via serial_tcp_bridge.py)
+# - port: TCP port (default 5000 for both WiFi and USB bridge)
+#
+# To use USB instead of WiFi:
+#   1. Run: python3 ../esp32/host/serial_tcp_bridge.py COM5 --plugin
+#   2. Set host to 127.0.0.1 below
+
+nodes:
+  - id: master
+    host: 192.168.4.1   # Change to 127.0.0.1 if using USB bridge
+    port: 5000
+
+  # Uncomment to add slave nodes:
+  # - id: slave_1
+  #   host: 192.168.4.2
+  #   port: 5000
+  #
+  # - id: slave_2
+  #   host: 192.168.4.3
+  #   port: 5000
