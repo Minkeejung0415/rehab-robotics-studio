@@ -65,7 +65,7 @@ Each task was committed atomically:
 1. **Task 1: Add setAllNodeStatuses to graphStore** - `abab9c6` (feat)
 2. **Task 2: Sync runtimeStore transitions to node badges** - `681657f` (feat)
 
-**Plan metadata:** (pending docs commit)
+**Plan metadata:** `22a8681` (docs: complete plan)
 
 ## Files Created/Modified
 - `src/state/graphStore.ts` - `setAllNodeStatuses` on interface + create() implementation
