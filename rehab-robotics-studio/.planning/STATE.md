@@ -1,92 +1,90 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: complete
-stopped_at: Completed 05-01-PLAN.md
-last_updated: "2026-07-13"
-last_activity: 2026-07-13
+milestone: v2.0
+milestone_name: ROS2 Backend + ESP32 Hardware Integration
+status: in_progress
+stopped_at: Phase 06 scaffold complete — needs build verification
+last_updated: "2026-07-14"
+last_activity: 2026-07-14
 progress:
   total_phases: 5
-  completed_phases: 5
-  total_plans: 7
-  completed_plans: 7
-  percent: 100
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
-# Project State
+# Project State — v2.0
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-13)
+See: `.planning/PROJECT.md` (updated 2026-07-14)
 
-**Core value:** Every UI element that exists must actually work — the frontend should feel like a complete, interactive application even without a real backend.
-**Current focus:** All phases complete — milestone done
+**Core value:** Real IMU data from wearable ESP32 nodes flows into the visual programming canvas in real-time.
+**Current focus:** Phase 06 — verify `colcon build` and `docker compose up`
 
 ## Current Position
 
-Phase: 5 (complete)
-Plan: 1 of 1
-Status: All phases complete
-Last activity: 2026-07-13
+Phase: 06 (in progress — scaffolded, needs verification)
+Plan: none yet
+Status: Code scaffold committed; build not yet verified on target OS
 
-Progress: [██████████] 100%
+Progress: [__________] 0%
 
-## Performance Metrics
+## Phase Status
 
-**By Phase:**
-
-| Phase | Plans | Notes |
-|-------|-------|-------|
-| 01 | 1 | Keyboard delete + wire selection |
-| 02 | 1 | Interactive wiring + palette drag-drop |
-| 03 | 2 | Context menu + block management |
-| 04 | 2 | Runtime badges + Rec toggle + Deploy toast |
-| 05 | 1 | Tabbed workspace (Block Diagram / Front Panel) |
+| Phase | Name | Status |
+|-------|------|--------|
+| 06 | Package Scaffold & Dev Env | Scaffolded — build unverified |
+| 07 | ESP32 Bridge Node | Scaffolded — hardware test pending |
+| 08 | Multi-Node Support | Scaffolded — hardware test pending |
+| 09 | rosbridge WebSocket | Planned |
+| 10 | GUI DataSource | Planned |
 
 ## Accumulated Context
 
-### Decisions
+### Architecture Decisions
 
-- Init: All store methods for missing interactions already exist — implementation is UI wiring only
-- Init: PendingWireOverlay already exists in Wire.tsx but was never rendered
-- Init: Wire component already accepts onClick/selected props but GraphCanvas never passed them
-- [Phase 03]: selectAll keeps previous selectedId if still present, else first node id
-- [Phase 03]: Keyboard Delete prefers selectedIds via removeNodes before edge delete
-- [Phase 03]: Portal to document.body so graph-canvas overflow cannot clip context menu
-- [Phase 03]: Delete menu items use is-danger chrome matching .btn-estop palette
-- [Phase 04]: API name setAllNodeStatuses per UI-SPEC
-- [Phase 04]: resume re-asserts running badges; pause does not touch statuses
-- [Phase 04]: Toast hosted in Toolbar with toastKey remount for replace-on-retrigger
-- [Phase 04]: Rec disabled when estopped/fault; On uses btn-rec-on fault chrome
-- [Phase 05]: Tab state in App.tsx useState — no store needed
-- [Phase 05]: Dashboard moved out of diagram workspace entirely; gets full width in own tab
-- [Phase 05]: Narrow-screen media query updated to 3-column only (no dashboard to hide)
+- [v2.0 init]: Plugin repo firmware (step_node v1.8) is untouched — we consume its TCP stream
+- [v2.0 init]: We do NOT run Open Ephys software — our backend replaces it as the TCP consumer
+- [v2.0 init]: ROS2 Humble/Iron chosen for multi-node pipeline support and future IK extensibility
+- [v2.0 init]: backend/ at repo root alongside rehab-robotics-studio/ — co-located, separate concerns
+- [v2.0 init]: Docker Compose as zero-install fallback for users without ROS2 native install
+- [v2.0 init]: VITE_BACKEND env var switches signalBus between mock and live — one-line change
 
-### Roadmap Evolution
+### ESP32 Protocol Facts
 
-- Phase 5 added: Tabbed Workspace Layout (added after Phase 4 completion)
+- 14-channel OE binary over TCP :5000 (REDPITAYA/START handshake)
+- ch[0-2]  accel X/Y/Z   int16, ÷16384 × 9.80665 m/s² (±2g default)
+- ch[3-5]  gyro  X/Y/Z   int16, ÷131.072 × π/180 rad/s (±250dps default)
+- ch[6-8]  mag   X/Y/Z   int16 (0 if no magnetometer)
+- ch[9-12] quat  W/X/Y/Z Q15 int16 → ÷32767 (VQF-fused)
+- ch[13]   DIO            packed int16
+- WiFi: join STEP_ESP32 (pass: step1234), master at 192.168.4.1:5000
+- USB: run Plugin repo serial_tcp_bridge.py → 127.0.0.1:5000
 
-### Pending Todos
+### Scaffolded Files
 
-None.
-
-### Blockers/Concerns
-
-None.
+| File | Status |
+|------|--------|
+| `backend/package.xml` | Written — needs colcon verify |
+| `backend/setup.py` | Written — needs colcon verify |
+| `backend/docker-compose.yml` | Written — needs docker test |
+| `backend/rehab_robotics_bridge/esp32_bridge_node.py` | Written — needs hardware test |
+| `backend/rehab_robotics_bridge/imu_aggregator_node.py` | Written — needs hardware test |
+| `backend/config/nodes.yaml` | Written |
+| `backend/launch/rehab_robotics.launch.py` | Written |
 
 ## Deferred Items
 
-| Category | Item | Status | Deferred At |
-|----------|------|--------|-------------|
-| v2 | Undo/redo (EDIT-01) | Deferred | Init |
-| v2 | Copy/paste blocks (EDIT-02) | Deferred | Init |
-| v2 | Multi-select (EDIT-03) | Deferred | Init |
-| v2 | Animated data flow on wires (VIS-01) | Deferred | Init |
-| v2 | Block grouping / sub-graph nesting (VIS-02) | Deferred | Init |
+| Category | Item | Deferred At |
+|----------|------|-------------|
+| v3 | OpenSim IK node (subscribe to /imu, publish joint angles) | v2.0 init |
+| v3 | Recording pipeline integration | v2.0 init |
+| v1.0 | Undo/redo, copy/paste, multi-select | v1.0 init |
 
 ## Session Continuity
 
-Last session: 2026-07-13
-Stopped at: Completed 05-01-PLAN.md — all phases complete
-Resume file: None
+Last session: 2026-07-14
+Stopped at: v2.0 milestone created, Phase 06 scaffold in place
+Next: Run `/gsd-plan-phase 06` to plan build verification for the scaffolded package

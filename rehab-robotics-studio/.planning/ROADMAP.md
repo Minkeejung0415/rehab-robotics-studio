@@ -1,126 +1,110 @@
-# Roadmap: Rehab Robotics Studio
+# Roadmap: Rehab Robotics Studio — v2.0
+
+**Milestone:** v2.0 — ROS2 Backend + ESP32 Hardware Integration
+**Created:** 2026-07-14
+**Phases:** 5
+**Requirement coverage:** 17/17 v2.0 requirements mapped
+
+> v1.0 roadmap archived at: `.planning/milestones/v1.0/ROADMAP.md`
 
 ## Overview
 
-The frontend exists and renders correctly, but most interactions are decorative. This roadmap wires up every non-functional UI element — from keyboard-driven block deletion through interactive wiring to runtime status feedback — so the application feels complete and usable without any backend. Four phases, each delivering a coherent and independently verifiable set of interactions, working from the lowest-friction fixes (keyboard shortcuts) up to the highest-fidelity feedback (runtime badges and deploy toast).
+| # | Phase | Goal | Requirements | Status |
+|---|-------|------|--------------|--------|
+| 06 | Package Scaffold & Dev Env | Runnable ROS2 package + Docker zero-install path | PKG-01, PKG-02, OPS-01, OPS-02 | Scaffolded |
+| 07 | ESP32 Bridge Node | TCP → sensor_msgs/Imu for master node | BRIDGE-01–05 | Scaffolded |
+| 08 | Multi-Node Support | Master + slave fan-out via nodes.yaml | MULTI-01–03 | Scaffolded |
+| 09 | rosbridge WebSocket | Browser can subscribe to ROS2 topics | WS-01–03 | Planned |
+| 10 | GUI DataSource | RosBridgeDataSource.ts + VITE_BACKEND switch | GUI-01–04, PERF-01 | Planned |
 
-## Phases
+> **Scaffolded** = code skeleton exists in `backend/`, needs build verification and testing.
+> **Planned** = not yet started.
 
-This roadmap now has five phases; Phase 5 adds a tabbed workspace layout after the existing interaction and runtime work.
-
-**Phase Numbering:**
-
-- Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
-
-Decimal phases appear between their surrounding integers in numeric order.
-
-- [x] **Phase 1: Block & Wire Selection + Deletion** - Keyboard Delete/Backspace removes selected blocks and wires from the canvas (completed 2026-07-13)
-- [x] **Phase 2: Interactive Wiring + Palette Drag-Drop** - Users can draw new wires by dragging port-to-port and place blocks by dragging from the palette (completed 2026-07-13)
-- [x] **Phase 3: Context Menu + Block Management** - Right-click menus on blocks, wires, and canvas; inline rename and duplicate from properties panel (completed 2026-07-13)
-- [x] **Phase 4: Runtime Feedback + Deploy Polish** - Block status badges reflect execution state; recording toggle and deploy confirmation work end-to-end (completed 2026-07-13)
-- [x] **Phase 5: Tabbed Workspace Layout** - LabVIEW-style tab bar switches between Block Diagram (graph editor) and Front Panel (live dashboard) views (completed 2026-07-13)
+---
 
 ## Phase Details
 
-### Phase 1: Block & Wire Selection + Deletion
+### Phase 06: Package Scaffold & Dev Environment
 
-**Goal**: Users can remove blocks and wires from the canvas using the keyboard
-**Depends on**: Nothing (first phase)
-**Requirements**: GRAPH-01, GRAPH-02
-**Success Criteria** (what must be TRUE):
+**Goal:** `colcon build` succeeds and `docker compose up` brings up a working ROS2 environment.
 
-  1. User can click a block on the canvas, press Delete or Backspace, and the block disappears along with all its connected wires
-  2. User can click a wire and it visually highlights to indicate selection
-  3. User can press Delete or Backspace after selecting a wire and the wire is removed from the canvas
-  4. Clicking empty canvas space deselects any selected block or wire
+**Success Criteria:**
+1. `cd backend && colcon build --packages-select rehab_robotics_bridge` exits 0
+2. `ros2 run rehab_robotics_bridge esp32_bridge_node --help` (or `--ros-args -h`) runs without import errors
+3. `docker compose up` pulls image, installs deps, builds, and starts the launch file — no manual steps
+4. `docker compose up` exposes port 9090 (rosbridge) — `nc -z localhost 9090` succeeds
 
-**Plans**: TBD
-**UI hint**: yes
+**Key files:** `backend/package.xml`, `backend/setup.py`, `backend/docker-compose.yml`
 
-### Phase 2: Interactive Wiring + Palette Drag-Drop
+**Scaffolded files to verify:** [package.xml](../../../backend/package.xml), [setup.py](../../../backend/setup.py), [docker-compose.yml](../../../backend/docker-compose.yml)
 
-**Goal**: Users can build and extend the node graph interactively by drawing wires and placing blocks
-**Depends on**: Phase 1
-**Requirements**: GRAPH-03, GRAPH-04
-**Success Criteria** (what must be TRUE):
+---
 
-  1. User can click and drag from an output port and a dashed preview line follows the cursor
-  2. Releasing the drag over a compatible input port creates a permanent wire between the two ports
-  3. Pressing Escape or releasing the drag over empty canvas cancels the wire preview without creating a connection
-  4. User can drag a block type from the palette sidebar and drop it onto the canvas; the block appears at the cursor drop position
+### Phase 07: ESP32 Bridge Node
 
-**Plans**: TBD
-**UI hint**: yes
+**Goal:** `esp32_bridge_node` connects to the ESP32, parses 14-ch frames, and publishes live IMU topics.
 
-### Phase 3: Context Menu + Block Management
+**Success Criteria:**
+1. Node connects to 192.168.4.1:5000 (WiFi) or 127.0.0.1:5000 (USB bridge) and logs "connected"
+2. REDPITAYA/START handshake completes — firmware responds with STARTED + SENSORS
+3. `ros2 topic echo /esp32/master/imu` shows quaternion values changing in real time
+4. `ros2 topic hz /esp32/master/imu` reports ~100 Hz matching firmware sample rate
+5. Accel units are m/s² (not raw ADC), gyro is rad/s, quat is unit-length float
 
-**Goal**: Users can manage blocks and wires through right-click menus and the properties panel
-**Depends on**: Phase 2
-**Requirements**: CTX-01, CTX-02, CTX-03, BLK-01, BLK-02
-**Success Criteria** (what must be TRUE):
+**Key files:** [backend/rehab_robotics_bridge/esp32_bridge_node.py](../../../backend/rehab_robotics_bridge/esp32_bridge_node.py)
 
-  1. Right-clicking a block shows a context menu with Delete, Duplicate, and Rename options, each of which executes correctly
-  2. Right-clicking a wire shows a context menu with a Delete option that removes the wire
-  3. Right-clicking the canvas background shows a context menu with Select All that selects every block on the canvas
-  4. User can edit the block name field in the properties panel and the block's label on the canvas updates to match
-  5. Selecting Duplicate from a block's context menu creates an offset copy of that block on the canvas
+---
 
-**Plans**: 2 plans
-Plans:
-**Wave 1**
+### Phase 08: Multi-Node Support
 
-- [x] 03-01-PLAN.md — Store multi-select, rename, duplicate, batch remove + keyboard multi-delete
+**Goal:** Master + up to 3 slave nodes each publish on their own topic, with reconnect on loss.
 
-**Wave 2** *(blocked on Wave 1 completion)*
+**Success Criteria:**
+1. `nodes.yaml` with 2 entries → `ros2 topic list` shows both `/esp32/master/imu` and `/esp32/slave_1/imu`
+2. Disconnecting one node logs a warning; reconnect attempt fires after 5 s
+3. Reconnected node resumes publishing without restarting the aggregator
+4. `launch/rehab_robotics.launch.py` starts both aggregator and rosbridge in one command
 
-- [x] 03-02-PLAN.md — Context menu UI, properties Name field, canvas/block/wire wiring
+**Key files:** [backend/rehab_robotics_bridge/imu_aggregator_node.py](../../../backend/rehab_robotics_bridge/imu_aggregator_node.py), [backend/config/nodes.yaml](../../../backend/config/nodes.yaml), [backend/launch/rehab_robotics.launch.py](../../../backend/launch/rehab_robotics.launch.py)
 
-**UI hint**: yes
+---
 
-### Phase 4: Runtime Feedback + Deploy Polish
+### Phase 09: rosbridge WebSocket Integration
 
-**Goal**: Users receive live visual feedback during execution, recording, and deployment actions
-**Depends on**: Phase 3
-**Requirements**: RT-01, RT-02, DEP-01
-**Success Criteria** (what must be TRUE):
+**Goal:** Browser connects to ws://localhost:9090 and receives live IMU messages via roslibjs.
 
-  1. When the user clicks Run, every block on the canvas shows a "running" status badge; when the user clicks Stop, badges return to "idle"
-  2. A recording button is visible in the toolbar; clicking it toggles the Recording indicator in the status strip between active and inactive states
-  3. Clicking the Deploy Mock button shows a brief toast or banner confirmation that the deploy action was triggered, in addition to the existing log entry
+**Success Criteria:**
+1. Open a test HTML page with roslibjs — subscribes to `/esp32/master/imu`, logs orientation.w to console
+2. Messages arrive at ~100 Hz without dropped connections
+3. Disconnecting the backend → browser gets an error event; reconnecting resumes messages
+4. Status strip in GUI shows "ROS Connected" / "ROS Disconnected" based on WebSocket state
 
-**Plans**: 2 plans
-Plans:
-**Wave 1**
+**Key files:** `rehab-robotics-studio/src/components/chrome/StatusStrip.tsx`, new `src/data/RosBridgeDataSource.ts`
 
-- [x] 04-01-PLAN.md — graphStore setAllNodeStatuses + runtimeStore badge sync (RT-01)
+---
 
-**Wave 2** *(blocked on Wave 1 completion)*
+### Phase 10: GUI DataSource — Live Hardware Stream
 
-- [x] 04-02-PLAN.md — Rec toolbar toggle + Deploy Mock portal toast (RT-02, DEP-01)
+**Goal:** Set `VITE_BACKEND=ros` and the GUI receives real IMU data from the ESP32 instead of mock signals.
 
-**UI hint**: yes
+**Success Criteria:**
+1. `src/data/RosBridgeDataSource.ts` exports a class implementing `DataSource` interface fully
+2. Connects to `ws://localhost:9090` using roslibjs (already a transitive dep via rosbridge)
+3. Maps `sensor_msgs/Imu` → `Frame.imu`: `quat=[w,x,y,z]`, `accel=[x,y,z]`, `gyro=[x,y,z]`
+4. `signalBus.ts` checks `import.meta.env.VITE_BACKEND` — `'ros'` uses `rosBridgeDataSource`, else `mockDataSource`
+5. Rotating the physical ESP32 causes visible change in the IMU block's output on the canvas
+6. Disconnecting the ESP32 → GUI logs warning, status strip shows disconnected, mock data does NOT resume automatically
+
+**Key files:** `rehab-robotics-studio/src/data/RosBridgeDataSource.ts`, `rehab-robotics-studio/src/data/signalBus.ts`
+
+---
 
 ## Progress
 
-**Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4
-
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. Block & Wire Selection + Deletion | 1/1 | Complete   | 2026-07-13 |
-| 2. Interactive Wiring + Palette Drag-Drop | 1/1 | Complete    | 2026-07-13 |
-| 3. Context Menu + Block Management | 2/2 | Complete   | 2026-07-13 |
-| 4. Runtime Feedback + Deploy Polish | 2/2 | Complete   | 2026-07-13 |
-| 5. Tabbed Workspace Layout | 1/1 | Complete | 2026-07-13 |
-
-### Phase 5: Tabbed Workspace Layout
-
-**Goal:** Add a LabVIEW-style tab bar to switch between Block Diagram (graph editor) and Front Panel (live dashboard)
-**Requirements**: TAB-01, TAB-02, TAB-03, TAB-04, TAB-05
-**Depends on:** Phase 4
-**Plans:** 1 plan
-
-Plans:
-
-- [x] 05-01-PLAN.md — Tab strip + App.tsx conditional workspace rendering + CSS
+| Phase | Name | Status |
+|-------|------|--------|
+| 06 | Package Scaffold & Dev Env | Scaffolded — needs build verification |
+| 07 | ESP32 Bridge Node | Scaffolded — needs hardware test |
+| 08 | Multi-Node Support | Scaffolded — needs hardware test |
+| 09 | rosbridge WebSocket | Planned |
+| 10 | GUI DataSource | Planned |

@@ -1,84 +1,44 @@
-# Requirements: Rehab Robotics Studio
+---
+milestone: v2.0
+title: ROS2 Backend + ESP32 Hardware Integration
+supersedes: v1.0 requirements (archived in milestones/v1.0/)
+---
 
-**Defined:** 2026-07-13
-**Core Value:** Every UI element that exists must actually work — the frontend should feel like a complete, interactive application even without a real backend.
+# Requirements: v2.0
 
-## v1 Requirements
+## Functional
 
-Requirements for completing all frontend interactivity. Each maps to roadmap phases.
+| ID | Requirement |
+|----|-------------|
+| PKG-01 | `backend/` is a valid ROS2 ament_python package — `colcon build` succeeds |
+| PKG-02 | `docker compose up` in `backend/` starts all nodes + rosbridge with no manual steps |
+| BRIDGE-01 | `esp32_bridge_node` connects to ESP32 TCP :5000 and completes REDPITAYA/START handshake |
+| BRIDGE-02 | Parses 14-channel OE binary frames correctly (accel, gyro, mag, quat, DIO) |
+| BRIDGE-03 | Publishes `sensor_msgs/Imu` to `/esp32/{node_id}/imu` with correct physical units |
+| BRIDGE-04 | Publishes `std_msgs/Float32MultiArray` to `/esp32/{node_id}/raw` (all 14 ch) |
+| BRIDGE-05 | Connection loss triggers a warning log and reconnect attempt every 5 s |
+| MULTI-01 | `nodes.yaml` config maps node IDs → host:port |
+| MULTI-02 | `imu_aggregator_node` spawns one bridge per entry in nodes.yaml |
+| MULTI-03 | Supports 2–4 simultaneous nodes (master + slaves); each on its own topic |
+| WS-01 | `rosbridge_websocket` runs on port 9090 after launch |
+| WS-02 | Browser can connect via roslibjs and receive messages from `/esp32/master/imu` |
+| WS-03 | `launch/rehab_robotics.launch.py` starts aggregator + rosbridge in one command |
+| GUI-01 | `RosBridgeDataSource.ts` implements the `DataSource` interface in full |
+| GUI-02 | Maps `sensor_msgs/Imu` orientation/accel/gyro → `Frame.imu` correctly |
+| GUI-03 | Setting env var `VITE_BACKEND=ros` switches signalBus from mock to live |
+| GUI-04 | Connection status (connected / disconnected) visible in the status strip |
 
-### Graph Interaction
+## Non-Functional
 
-- [x] **GRAPH-01**: User can delete a selected block via Delete/Backspace key
-- [x] **GRAPH-02**: User can click a wire to select it (highlighted state), then delete it via Delete/Backspace key
-- [x] **GRAPH-03**: User can drag from an output port to an input port to create a new wire, with a dashed preview line while dragging
-- [x] **GRAPH-04**: User can drag a block from the palette onto the canvas to place it at the drop location
-
-### Context Menu
-
-- [x] **CTX-01**: User can right-click a block to see a context menu with Delete, Duplicate, and Rename options
-- [x] **CTX-02**: User can right-click a wire to see a context menu with Delete option
-- [x] **CTX-03**: User can right-click canvas background to see a context menu with Select All option
-
-### Block Management
-
-- [x] **BLK-01**: User can rename a block inline from the properties panel
-- [x] **BLK-02**: User can duplicate a block via context menu, placing the copy offset from the original
-
-### Runtime Feedback
-
-- [x] **RT-01**: Block status badges update to "running" when execution starts and back to "idle" when stopped
-- [x] **RT-02**: User can toggle recording on/off from a toolbar button, which updates the Recording status strip indicator
-
-### Deploy
-
-- [x] **DEP-01**: Deploy Mock button shows a brief visual confirmation (toast/banner) in addition to logging
-
-## v2 Requirements
-
-### Advanced Editing
-
-- **EDIT-01**: User can undo/redo actions on the canvas
-- **EDIT-02**: User can copy/paste blocks across canvas
-- **EDIT-03**: User can multi-select blocks with shift-click or drag-select
-
-### Visual Enhancements
-
-- **VIS-01**: Animated data flow along wires when running
-- **VIS-02**: Block grouping / sub-graph nesting
+| ID | Requirement |
+|----|-------------|
+| PERF-01 | End-to-end latency (ESP32 → GUI update) < 100 ms at 100 Hz |
+| OPS-01 | USB path documented: run Plugin repo's serial_tcp_bridge.py + set host=127.0.0.1 |
+| OPS-02 | WiFi path documented: join STEP_ESP32, host=192.168.4.1 |
 
 ## Out of Scope
 
-| Feature | Reason |
-|---------|--------|
-| Real hardware backend | Future milestone — this is mock-only completion |
-| ROS bridge integration | Requires backend infrastructure |
-| Multi-user collaboration | Not needed for single-user tool |
-| Custom block scripting execution | Python/MATLAB blocks are mock stubs |
-| Mobile responsive layout | Desktop-only LabVIEW-style tool |
-
-## Traceability
-
-| Requirement | Phase | Status |
-|-------------|-------|--------|
-| GRAPH-01 | Phase 1 | Complete |
-| GRAPH-02 | Phase 1 | Complete |
-| GRAPH-03 | Phase 2 | Complete |
-| GRAPH-04 | Phase 2 | Complete |
-| CTX-01 | Phase 3 | Complete |
-| CTX-02 | Phase 3 | Complete |
-| CTX-03 | Phase 3 | Complete |
-| BLK-01 | Phase 3 | Complete |
-| BLK-02 | Phase 3 | Complete |
-| RT-01 | Phase 4 | Complete |
-| RT-02 | Phase 4 | Complete |
-| DEP-01 | Phase 4 | Complete |
-
-**Coverage:**
-- v1 requirements: 12 total
-- Mapped to phases: 12
-- Unmapped: 0
-
----
-*Requirements defined: 2026-07-13*
-*Last updated: 2026-07-13 after initial definition*
+- OpenSim IK (separate Python pipeline, not GUI-integrated in v2.0)
+- Recording/SD card management (Plugin repo + Open Ephys handle this)
+- Red Pitaya hardware (ESP32 only)
+- TLS / authentication on WebSocket
