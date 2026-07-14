@@ -11,7 +11,7 @@ supersedes: v1.0 requirements (archived in milestones/v1.0/)
 | ID | Requirement |
 |----|-------------|
 | PKG-01 | `backend/` is a valid ROS2 ament_python package — `colcon build` succeeds |
-| PKG-02 | `docker compose up` in `backend/` starts all nodes + rosbridge with no manual steps |
+| PKG-02 | `ros2 launch rehab_robotics_bridge rehab_robotics.launch.py` starts all nodes natively (Docker optional) |
 | BRIDGE-01 | `esp32_bridge_node` connects to ESP32 TCP :5000 and completes REDPITAYA/START handshake |
 | BRIDGE-02 | Parses 14-channel OE binary frames correctly (accel, gyro, mag, quat, DIO) |
 | BRIDGE-03 | Publishes `sensor_msgs/Imu` to `/esp32/{node_id}/imu` with correct physical units |

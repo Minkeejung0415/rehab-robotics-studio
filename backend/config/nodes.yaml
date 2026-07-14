@@ -1,24 +1,34 @@
 # ESP32 node configuration for Rehab Robotics Bridge
 #
-# Each entry specifies a node to connect to.
-# - id:   Unique name, used as the ROS2 topic prefix: /esp32/{id}/imu
-# - host: IP address or hostname of the ESP32 (WiFi) or 127.0.0.1 (USB via serial_tcp_bridge.py)
-# - port: TCP port (default 5000 for both WiFi and USB bridge)
+# All nodes share the STEP_ESP32 WiFi AP (password: step1234).
+# Host PC must be joined to STEP_ESP32 to reach these IPs.
 #
-# To use USB instead of WiFi:
-#   1. Run: python3 ../esp32/host/serial_tcp_bridge.py COM5 --plugin
-#   2. Set host to 127.0.0.1 below
+# Network topology:
+#   Master   starts Soft AP → SSID: STEP_ESP32, fixed IP: 192.168.4.1
+#   Slave 1  joins STEP_ESP32 → DHCP IP: 192.168.4.2
+#   Slave 2  joins STEP_ESP32 → DHCP IP: 192.168.4.3
+#   Host PC  joins STEP_ESP32 → connects to each node's TCP :5000 directly
+#
+# Each node runs its own TCP server on port 5000.
+# imu_aggregator_node opens one independent connection per entry.
+#
+# Topics published per node:
+#   /esp32/{id}/imu   sensor_msgs/Imu         (quat + accel + gyro)
+#   /esp32/{id}/raw   std_msgs/Float32MultiArray (14 ch, normalised)
 
 nodes:
   - id: master
-    host: 192.168.4.1   # Change to 127.0.0.1 if using USB bridge
+    host: 192.168.4.1
     port: 5000
 
-  # Uncomment to add slave nodes:
-  # - id: slave_1
-  #   host: 192.168.4.2
-  #   port: 5000
-  #
+  - id: slave_1
+    host: 192.168.4.2
+    port: 5000
+
   # - id: slave_2
   #   host: 192.168.4.3
+  #   port: 5000
+
+  # - id: slave_3
+  #   host: 192.168.4.4
   #   port: 5000

@@ -49,7 +49,8 @@ Progress: [__________] 0%
 - [v2.0 init]: We do NOT run Open Ephys software — our backend replaces it as the TCP consumer
 - [v2.0 init]: ROS2 Humble/Iron chosen for multi-node pipeline support and future IK extensibility
 - [v2.0 init]: backend/ at repo root alongside rehab-robotics-studio/ — co-located, separate concerns
-- [v2.0 init]: Docker Compose as zero-install fallback for users without ROS2 native install
+- [v2.0 init]: Docker optional — native ROS2 install is the primary path; Docker kept as convenience only
+- [v2.0 init]: ROS2 used for pub/sub transport only (topics/nodes), NOT for container orchestration
 - [v2.0 init]: VITE_BACKEND env var switches signalBus between mock and live — one-line change
 
 ### ESP32 Protocol Facts
@@ -60,8 +61,10 @@ Progress: [__________] 0%
 - ch[6-8]  mag   X/Y/Z   int16 (0 if no magnetometer)
 - ch[9-12] quat  W/X/Y/Z Q15 int16 → ÷32767 (VQF-fused)
 - ch[13]   DIO            packed int16
-- WiFi: join STEP_ESP32 (pass: step1234), master at 192.168.4.1:5000
-- USB: run Plugin repo serial_tcp_bridge.py → 127.0.0.1:5000
+- All nodes share STEP_ESP32 WiFi AP (pass: step1234); host PC joins same AP
+- Master fixed IP 192.168.4.1:5000; slaves get DHCP IPs 192.168.4.2, .3, ...
+- Each node runs its own TCP :5000; aggregator connects to each independently
+- USB fallback: Plugin repo serial_tcp_bridge.py → 127.0.0.1:5000 (single node)
 
 ### Scaffolded Files
 

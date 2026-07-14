@@ -26,17 +26,23 @@
 
 ### Phase 06: Package Scaffold & Dev Environment
 
-**Goal:** `colcon build` succeeds and `docker compose up` brings up a working ROS2 environment.
+**Goal:** ROS2 package builds natively and the launch file starts all nodes.
 
 **Success Criteria:**
 1. `cd backend && colcon build --packages-select rehab_robotics_bridge` exits 0
-2. `ros2 run rehab_robotics_bridge esp32_bridge_node --help` (or `--ros-args -h`) runs without import errors
-3. `docker compose up` pulls image, installs deps, builds, and starts the launch file — no manual steps
-4. `docker compose up` exposes port 9090 (rosbridge) — `nc -z localhost 9090` succeeds
+2. `source install/setup.bash && ros2 run rehab_robotics_bridge esp32_bridge_node` starts without import errors
+3. `ros2 launch rehab_robotics_bridge rehab_robotics.launch.py` starts aggregator + rosbridge, port 9090 open
+4. `ros2 topic list` shows `/esp32/master/imu` and `/esp32/master/raw`
 
-**Key files:** `backend/package.xml`, `backend/setup.py`, `backend/docker-compose.yml`
+**Setup (once):**
+```bash
+sudo apt install ros-humble-rosbridge-suite  # or ros-iron-rosbridge-suite
+pip3 install pyyaml
+```
 
-**Scaffolded files to verify:** [package.xml](../../../backend/package.xml), [setup.py](../../../backend/setup.py), [docker-compose.yml](../../../backend/docker-compose.yml)
+**Key files:** `backend/package.xml`, `backend/setup.py`, `backend/launch/rehab_robotics.launch.py`
+
+> Docker (`backend/docker-compose.yml`) remains available as an optional convenience but is not the primary path.
 
 ---
 
