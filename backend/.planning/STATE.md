@@ -33,8 +33,15 @@ Progress: [__________] 0%
 
 ## Key Facts
 
-- ESP32 firmware: Open Ephys binary, 11 channels (accel, gyro, DIO, quat w/x/y/z)
-- Existing bridge: `esp32/host/serial_tcp_bridge.py` + `esp32_to_opensim_bridge.py`
+- ESP32 firmware (step_node v1.8): 14-channel Open Ephys binary over TCP :5000
+  - ch[0-2]  accel X/Y/Z  (int16, ±2g default → ÷16384 × 9.80665 m/s²)
+  - ch[3-5]  gyro  X/Y/Z  (int16, ±250dps default → ÷131.072 × π/180 rad/s)
+  - ch[6-8]  mag   X/Y/Z  (int16, 0 if no mag)
+  - ch[9-12] quat  W/X/Y/Z (Q15 int16 → ÷32767, VQF-fused)
+  - ch[13]   DIO   (packed int16)
+- WiFi: join STEP_ESP32 (pass: step1234), ESP32 master at 192.168.4.1:5000
+- USB: run Plugin repo serial_tcp_bridge.py → connects to 127.0.0.1:5000
+- We do NOT run Open Ephys software — our backend replaces it
 - GUI interface: `rehab-robotics-studio/src/data/DataSource.ts`
 - rosbridge WebSocket default: ws://localhost:9090
 - Frame type GUI expects: `{ t, force: ForceData, emg: EmgData, imu: ImuData, motor: MotorState }`
