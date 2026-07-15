@@ -20,4 +20,10 @@ progress:
 Phase: Not started (defining requirements)
 Plan: —
 Status: Defining requirements
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260715-l4d | Stabilize paired ESP32 joint-angle signal with still calibration and low-pass filtering | 2026-07-15 | 40ffeba | [260715-l4d-stabilize-paired-esp32-joint-angle-signa](./quick/260715-l4d-stabilize-paired-esp32-joint-angle-signa/) |
 Last activity: 2026-07-15 — Milestone v1.0 started
