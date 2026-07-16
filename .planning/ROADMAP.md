@@ -1,63 +1,61 @@
 # Roadmap: Rehab Robotics Studio
 
-## Milestone v1.0: ROS2 Backend Alignment
+## Milestone v1.1: Acquisition Operations
 
-**Goal:** Make this repository's ROS 2 backend operate like the plugin repository's full ESP32-to-filter-to-OpenSim-to-recording pipeline.
+**Goal:** Make the GUI a trustworthy operator surface for paired ESP32 acquisition, recording, and hardware health.
 
-### Phase 1: Plugin-Compatible Ingestion
+### Phase 5: Confirmed Live Controls
 
-**Goal:** Replace the divergent local live-bridge behavior with a validated, plugin-compatible TCP-control and UDP-data bridge that emits canonical raw JSON.
+**Goal:** Expose the remaining plugin-compatible IMU controls with board acknowledgement and paired propagation.
 
-**Requirements:** INGEST-01, INGEST-02, INGEST-03
-
-**Success criteria:**
-1. A bridge performs the `REDPITAYA` and `START` handshake, rejects non-UDP transport, and reconnects with bounded backoff.
-2. UDP packets from an unexpected source or with malformed Open Ephys headers are discarded before parsing.
-3. Valid 14-channel frames publish deterministic `oe_esp32.raw.v1` JSON to a role-specific raw topic.
-4. Master and slave bridge instances can bind separate UDP ports on one host.
-
-### Phase 2: Processing and Persistence Nodes
-
-**Goal:** Implement plugin-compatible filtering, OpenSim forwarding, and JSONL recording around the canonical raw topic contract.
-
-**Requirements:** PIPE-01, PIPE-02, PIPE-03
+**Requirements:** CTRL-01, CTRL-02, CTRL-03
 
 **Success criteria:**
-1. A filter subscribes to raw JSON and publishes metadata-preserving filtered JSON.
-2. The OpenSim adapter sends the selected filtered payload to its configured UDP target.
-3. The recorder creates safe per-topic JSONL files without blocking publishers.
-4. Each node supports offline input or pure-function paths suitable for tests.
+1. An operator can set a valid hardware rate and sees the field update only after master acknowledgement.
+2. An operator can toggle the firmware filter and configure accelerometer and gyroscope ranges from the ESP32 IMU Pair block.
+3. Controls distinguish rejected, timed-out, and disconnected commands without silently changing the displayed configuration.
 
-### Phase 3: Workflow Orchestration and Health
+### Phase 6: Health And Diagnostics Data
 
-**Goal:** Ship a configurable full-workflow launch path with status reporting and rosbridge access for the GUI.
+**Goal:** Make plugin-compatible recording, pair-health, and stream diagnostics available through stable ROS/rosbridge state.
 
-**Requirements:** PIPE-04, LAUNCH-01
-
-**Success criteria:**
-1. One launch command starts master/slave bridges, filters, OpenSim, optional recording, status, and rosbridge.
-2. All network, topic, segment, filter, recording, and OpenSim settings are explicit launch arguments or declared parameters.
-3. Status output identifies configured pipeline stages and observed message activity.
-
-### Phase 4: Offline Verification
-
-**Goal:** Prove protocol compatibility and complete pipeline behavior without requiring live hardware.
-
-**Requirements:** VERIFY-01, VERIFY-02
+**Requirements:** HEALTH-01, HEALTH-02, DIAG-01
 
 **Success criteria:**
-1. Tests cover malformed and valid UDP frames, canonical JSON mapping, filtering, UDP forwarding, recorder output, and launch structure.
-2. A documented offline replay command exercises raw-to-filtered-to-OpenSim/recording behavior.
-3. Package installation and test commands run successfully in a ROS 2-capable environment.
+1. The backend publishes a structured master/slave status snapshot with recording, SD, sync, and error fields.
+2. The snapshot includes configured rate, observed stream rate, last-frame age, and reconnect state.
+3. Polling and status parsing do not interrupt live acquisition or recording.
+
+### Phase 7: Operator Surfaces And Recovery
+
+**Goal:** Add concise GUI surfaces for recording/pair health and actionable acquisition failures.
+
+**Requirements:** HEALTH-03, DIAG-02
+
+**Success criteria:**
+1. The GUI shows current recording/session metadata and master/slave health without requiring a terminal.
+2. A finalized recording shows retrieval/conversion progress and a usable result or a clear recovery instruction.
+3. A failed control or transport action identifies what failed and offers the appropriate retry/reconnect action.
+
+### Phase 8: Operations Verification
+
+**Goal:** Prove the controls and operator workflow against testable contracts and the two-ESP USB setup.
+
+**Requirements:** VERIFY-03, VERIFY-04
+
+**Success criteria:**
+1. Automated tests cover command-to-status mapping and acknowledgement-only UI updates.
+2. A documented two-ESP USB procedure verifies settings, status, recording, finalization, and post-session export.
+3. A Playwright check covers the GUI control and health states when the browser test surface is available.
 
 ## Progress
 
 | Phase | Status |
 |-------|--------|
-| 1. Plugin-Compatible Ingestion | Not started |
-| 2. Processing and Persistence Nodes | Not started |
-| 3. Workflow Orchestration and Health | Not started |
-| 4. Offline Verification | Not started |
+| 5. Confirmed Live Controls | Not started |
+| 6. Health And Diagnostics Data | Not started |
+| 7. Operator Surfaces And Recovery | Not started |
+| 8. Operations Verification | Not started |
 
 ---
-*Roadmap created: 2026-07-15*
+*Roadmap created: 2026-07-16*
