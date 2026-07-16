@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: ROS2 Backend Alignment
+milestone: v1.1
+milestone_name: Acquisition Operations
 status: planning
-last_updated: "2026-07-15T17:44:02.388Z"
-last_activity: 2026-07-15
+last_updated: "2026-07-16T18:26:08.997Z"
+last_activity: 2026-07-16
 progress:
   total_phases: 0
   completed_phases: 0
@@ -20,6 +20,7 @@ progress:
 Phase: Not started (defining requirements)
 Plan: —
 Status: Defining requirements
+Last activity: 2026-07-16 — Milestone v1.1 started
 
 ### Quick Tasks Completed
 

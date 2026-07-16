@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Rehab Robotics Studio is a local LabVIEW-style rehabilitation robotics GUI and ROS 2 backend for collecting, processing, and recording ESP32 IMU data. This milestone brings the backend in line with the plugin repository's working ROS 2 pipeline so clinicians and developers can use the GUI against real, processed biomechanical data.
+Rehab Robotics Studio is a local LabVIEW-style rehabilitation robotics GUI and ROS 2 backend for collecting, processing, and recording paired ESP32 IMU data. It provides a practical operator surface for live acquisition, SD sessions, and biomechanical monitoring.
 
 ## Core Value
 
@@ -18,29 +18,28 @@ Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline 
 
 ### Active
 
-- [ ] Align ESP32 live acquisition with the plugin backend's handshake, UDP transport, framing validation, and raw JSON ROS contract.
-- [ ] Provide the plugin-style filtering, OpenSim, recording, and status stages as a launchable ROS 2 pipeline.
-- [ ] Preserve GUI-facing ROS access while exposing the processed pipeline's data and health state.
-- [ ] Add executable verification for protocol parsing and pipeline startup behavior.
+- [ ] Expose live ESP32 hardware configuration from the IMU acquisition block, including filter, IMU ranges, and effective rates.
+- [ ] Provide an operator-facing recording and paired-device health surface with trustworthy SD session state and counters.
+- [ ] Surface live acquisition diagnostics for connection, stream rate, synchronization, and actionable errors.
 
 ### Out of Scope
 
-- Replacing the React GUI's mock data source with a production rosbridge client - this milestone provides the backend contract first.
-- Redesigning the ESP32 firmware protocol - the backend must follow the established plugin protocol.
-- Motor-control and EtherCAT integration - unrelated to the IMU acquisition and biomechanics pipeline.
+- Generic neural-acquisition functions such as impedance measurement, headstage configuration, DAC audio routing, and AUX/ADC routing - not relevant to the paired IMU workflow.
+- ESP32 firmware protocol redesign - the GUI should expose the existing plugin-compatible commands.
+- Motor-control and EtherCAT integration - unrelated to IMU acquisition operations.
 
-## Current Milestone: v1.0 ROS2 Backend Alignment
+## Current Milestone: v1.1 Acquisition Operations
 
-**Goal:** Make this repository's ROS 2 backend operate like the plugin repository's full ESP32-to-filter-to-OpenSim-to-recording pipeline.
+**Goal:** Make the GUI a trustworthy operator surface for paired ESP32 acquisition, recording, and hardware health.
 
 **Target features:**
-- Plugin-compatible ESP32 live ingestion and raw ROS topics.
-- Filter, OpenSim, recorder, and status nodes with a single launch path.
-- GUI-compatible rosbridge access and end-to-end verification.
+- Live IMU configuration: editable sample rate, filter, accel/gyro ranges, and per-sensor effective rate.
+- Recording and pair-health panel: SD session lifecycle, master/slave state, counters, and session metadata.
+- Acquisition diagnostics: connection/reconnect state, stream rate, synchronization, and actionable hardware errors.
 
 ## Context
 
-The local backend package is `rehab_robotics_bridge`; it currently publishes ROS-native `sensor_msgs/Imu` and `Float32MultiArray` messages from a TCP frame stream and launches rosbridge. The reference plugin package, `oe_esp32_bridge`, completes the ESP32 handshake over TCP, receives live frames through UDP, publishes JSON `std_msgs/String` raw topics, and includes filtering, OpenSim, recording, and status nodes. Both share the same 14-channel Open Ephys-style frame semantics, but their runtime contracts diverge after the handshake.
+The GUI already receives real paired ESP32 frames through rosbridge and can command timestamped SD recordings and an editable paired sample rate. The plugin acquisition board remains the behavioral reference for remaining runtime controls and operational observability. The ESP32 firmware already supports `FILTER`, `FREQ`, and `CFG` commands plus rec-v1 status/session metadata; the current gap is exposing those capabilities coherently in the GUI and ROS bridge.
 
 ## Constraints
 
@@ -53,9 +52,9 @@ The local backend package is `rehab_robotics_bridge`; it currently publishes ROS
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Use the plugin ROS 2 backend as the behavioral reference | The user wants equivalent operational behavior, not merely similar code | Pending |
-| Align on raw JSON ROS topics before GUI integration | This gives every downstream stage a stable, testable contract | Pending |
-| Keep rosbridge in the backend launch stack | The GUI needs a ROS-facing access path while its mock data source remains in place | Pending |
+| Use the plugin acquisition board as the hardware-operation reference | The user wants operational equivalence for the paired ESP32 workflow | Active |
+| Treat Rec as parallel SD logging, not the acquisition switch | Run/Stop and recording need independent semantics in the lab workflow | Implemented |
+| Require confirmed hardware acknowledgements before the GUI commits a setting | Prevents the UI from reporting a configuration that the board rejected | Implemented |
 
 ## Evolution
 
@@ -75,4 +74,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-15 after starting v1.0 ROS2 Backend Alignment*
+*Last updated: 2026-07-16 after starting v1.1 Acquisition Operations*
