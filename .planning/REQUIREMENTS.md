@@ -1,66 +1,76 @@
 # Requirements: Rehab Robotics Studio
 
-**Defined:** 2026-07-16
-**Milestone:** v1.1 Acquisition Operations
+**Defined:** 2026-07-23
+**Milestone:** v1.3 Acquisition Integrity
 **Core Value:** Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline into usable filtered, biomechanical, and recorded outputs.
 
-## v1.1 Requirements
+## v1.3 Requirements
 
-### Live IMU Controls
+### Measurement Integrity
 
-- [ ] **CTRL-01**: An operator can enable or disable the ESP32 firmware filter from the IMU acquisition block and sees the confirmed state.
-- [ ] **CTRL-02**: An operator can set master/slave accelerometer and gyroscope ranges from the IMU acquisition block and sees the confirmed values.
-- [ ] **CTRL-03**: An operator can set the paired hardware rate and each sensor's effective rate, with validation and acknowledgement before the GUI commits the value.
+- [ ] **DATA-01**: An operator receives acceleration and angular velocity converted with each device's confirmed active accelerometer and gyroscope ranges.
+- [ ] **DATA-02**: Published raw and live acquisition data carries sufficient range or unit metadata for backend and GUI consumers to interpret samples consistently.
+- [ ] **TIME-01**: Synchronized device acquisition time survives firmware transport, backend parsing, ROS publication, and rosbridge delivery.
+- [ ] **TIME-02**: TCP and UDP acquisition frames expose meaningful monotonic sequence values suitable for detecting gaps and reordering.
+- [ ] **ORIENT-01**: Filtered quaternions handle equivalent antipodal inputs and remain normalized, finite, and valid orientations.
 
-### Recording And Pair Health
+### Control And Recovery
 
-- [ ] **HEALTH-01**: An operator can see SD readiness, recording/finalization state, current session ID, sample counts, file size, checksum, and recording errors.
-- [ ] **HEALTH-02**: An operator can see master/slave availability, slave recording state, synchronization state, and paired-device errors in one place.
-- [ ] **HEALTH-03**: A finalized recording exposes an explicit retrieval/conversion result or a clear actionable failure state.
+- [ ] **CTRL-04**: Pausing live sample rendering does not block ROS service responses or create false control-command timeouts.
+- [ ] **RECOV-01**: After fallback to mock data, an operator can reconnect live ROS acquisition without reloading the application.
+- [ ] **RECOV-02**: Obsolete WebSocket callbacks cannot overwrite a newer connection, and established connection loss enters a controlled recovery state.
 
-### Acquisition Diagnostics
+### Fresh Health
 
-- [ ] **DIAG-01**: An operator can see live stream rate, configured hardware rate, connection/reconnect state, and the last valid frame time.
-- [ ] **DIAG-02**: Acquisition control or transport failures are surfaced in the GUI with the failed command and a recovery action.
+- [ ] **HEALTH-04**: Pair availability expires when slave-health updates exceed a defined freshness threshold.
+- [ ] **HEALTH-05**: Stream and pair indicators clear or age offline after socket loss, acquisition stop/restart, or a sustained absence of valid frames.
 
 ### Verification
 
-- [ ] **VERIFY-03**: Automated tests cover ESP control command parsing, state mapping, and GUI acknowledgement behavior.
-- [ ] **VERIFY-04**: A documented USB hardware test validates controls, recording/pair health, and diagnostic status with two connected ESP32s.
+- [ ] **VERIFY-05**: Automated regression tests cover non-default scale conversion, timestamp and sequence preservation, quaternion geometry, paused service replies, socket-generation and fallback recovery, and health expiry.
 
 ## Future Requirements
 
-- **FUTURE-01**: TTL/DIO event markers and broadcast trigger controls.
-- **FUTURE-02**: Open Ephys session metadata and event-stream integration.
-- **FUTURE-03**: OpenSim Live joint-selection and trigger workflows.
+### Block Deployment
+
+- **DEPLOY-01**: Generate a typed ROS processing-block update draft whenever a valid processing block is connected directly to a source block.
+- **DEPLOY-02**: Publish a finalized processing-block update when the operator deploys the graph.
+- **DEPLOY-03**: Package one language-neutral source entry file with manifest YAML, dependencies, graph identity, revision, checksum, and deployment metadata.
+- **DEPLOY-04**: Provide a local ROS observer or inspection path that verifies generated messages while the Jetson is disconnected.
 
 ## Out Of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Neural headstage, impedance, AUX/ADC, or DAC/audio controls | These generic acquisition-board functions do not apply to the paired ESP32 IMU system. |
-| ESP32 firmware protocol redesign | This milestone exposes existing plugin-compatible commands. |
-| Motor control and EtherCAT | Separate rehabilitation-control scope. |
+| Physical E-STOP and motor-driver integration | Audit finding 1 is safety-critical but requires a separately approved hardware and fail-safe scope. |
+| Graph-load validation and ID restoration | Audit finding 8 is deferred until acquisition correctness and recovery are stable. |
+| Docker packaging, stale aggregator, and documentation cleanup | Audit findings 9-10 are deferred from v1.3. |
+| General streaming and GUI performance optimization | v1.3 addresses confirmed correctness defects; optimization follows measurement and recovery verification. |
+| Block Deployment implementation | The former v1.2 scope is preserved as future work and will resume after acquisition integrity. |
 
 ## Traceability
 
+Roadmap phase mappings will be populated during roadmap creation.
+
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CTRL-01 | Phase 5 | Pending |
-| CTRL-02 | Phase 5 | Pending |
-| CTRL-03 | Phase 5 | Pending |
-| HEALTH-01 | Phase 6 | Pending |
-| HEALTH-02 | Phase 6 | Pending |
-| HEALTH-03 | Phase 7 | Pending |
-| DIAG-01 | Phase 6 | Pending |
-| DIAG-02 | Phase 7 | Pending |
-| VERIFY-03 | Phase 8 | Pending |
-| VERIFY-04 | Phase 8 | Pending |
+| DATA-01 | TBD | Pending |
+| DATA-02 | TBD | Pending |
+| TIME-01 | TBD | Pending |
+| TIME-02 | TBD | Pending |
+| ORIENT-01 | TBD | Pending |
+| CTRL-04 | TBD | Pending |
+| RECOV-01 | TBD | Pending |
+| RECOV-02 | TBD | Pending |
+| HEALTH-04 | TBD | Pending |
+| HEALTH-05 | TBD | Pending |
+| VERIFY-05 | TBD | Pending |
 
 **Coverage:**
-- v1.1 requirements: 10 total
-- Mapped to phases: 10
-- Unmapped: 0
+- v1.3 requirements: 11 total
+- Mapped to phases: 0
+- Unmapped: 11
 
 ---
-*Requirements defined: 2026-07-16*
+*Requirements defined: 2026-07-23*
+*Last updated: 2026-07-23 after diagnosis of audit findings 2-7*
