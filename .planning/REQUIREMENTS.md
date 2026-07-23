@@ -50,27 +50,25 @@
 
 ## Traceability
 
-Roadmap phase mappings will be populated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DATA-01 | TBD | Pending |
-| DATA-02 | TBD | Pending |
-| TIME-01 | TBD | Pending |
-| TIME-02 | TBD | Pending |
-| ORIENT-01 | TBD | Pending |
-| CTRL-04 | TBD | Pending |
-| RECOV-01 | TBD | Pending |
-| RECOV-02 | TBD | Pending |
-| HEALTH-04 | TBD | Pending |
-| HEALTH-05 | TBD | Pending |
-| VERIFY-05 | TBD | Pending |
+| DATA-01 | Phase 9 | Pending |
+| DATA-02 | Phase 9 | Pending |
+| TIME-01 | Phase 10 | Pending |
+| TIME-02 | Phase 10 | Pending |
+| ORIENT-01 | Phase 10 | Pending |
+| CTRL-04 | Phase 11 | Pending |
+| RECOV-01 | Phase 11 | Pending |
+| RECOV-02 | Phase 11 | Pending |
+| HEALTH-04 | Phase 12 | Pending |
+| HEALTH-05 | Phase 12 | Pending |
+| VERIFY-05 | Phase 13 | Pending |
 
 **Coverage:**
 - v1.3 requirements: 11 total
-- Mapped to phases: 0
-- Unmapped: 11
+- Mapped to phases: 11
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-23*
-*Last updated: 2026-07-23 after diagnosis of audit findings 2-7*
+*Last updated: 2026-07-23 after v1.3 roadmap creation*
