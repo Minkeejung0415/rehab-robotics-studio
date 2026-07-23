@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Block Deployment
+milestone: v1.3
+milestone_name: Acquisition Integrity
 status: planning
-last_updated: "2026-07-20T18:52:26.027Z"
-last_activity: 2026-07-20
+last_updated: "2026-07-23T20:21:34.944Z"
+last_activity: 2026-07-23
 progress:
   total_phases: 0
   completed_phases: 0
@@ -20,7 +20,7 @@ progress:
 Phase: Not started (defining requirements)
 Plan: —
 Status: Defining requirements
-Last activity: 2026-07-20 — Milestone v1.2 started
+Last activity: 2026-07-23 — Milestone v1.3 started
 
 ### Quick Tasks Completed
 

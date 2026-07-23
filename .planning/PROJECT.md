@@ -18,29 +18,33 @@ Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline 
 
 ### Active
 
-- [ ] Generate a typed ROS processing-block update draft whenever a valid processing block is connected directly to a source block.
-- [ ] Publish a finalized processing-block update when the operator deploys the graph.
-- [ ] Package one language-neutral source entry file with manifest YAML, dependencies, graph identity, revision, checksum, and deployment metadata.
-- [ ] Provide a local ROS observer or inspection path that verifies generated messages while the Jetson is disconnected.
+- [ ] Decode accelerometer and gyroscope samples using the ranges confirmed by the ESP32 rather than fixed default scale factors.
+- [ ] Preserve device timing and monotonic sequence information through the TCP/UDP, ROS, and rosbridge acquisition path.
+- [ ] Filter quaternion samples without producing non-unit or zero orientations.
+- [ ] Continue resolving ROS service responses while live-frame rendering is paused.
+- [ ] Recover from ROSbridge fallback, close, and restart events without stale sockets or a forced page reload.
+- [ ] Expire stale master/slave and stream-health state so disconnected hardware cannot remain falsely online.
 
 ### Out of Scope
 
 - Generic neural-acquisition functions such as impedance measurement, headstage configuration, DAC audio routing, and AUX/ADC routing - not relevant to the paired IMU workflow.
 - ESP32 firmware protocol redesign - the GUI should expose the existing plugin-compatible commands.
 - Motor-control and EtherCAT integration - unrelated to IMU acquisition operations.
+- Block Deployment work previously scoped as v1.2 - parked intact for a later milestone while acquisition integrity is corrected.
+- Audit findings 1 and 8-10 - physical E-STOP integration, graph persistence, Docker packaging, stale aggregator/documentation, and broader performance work are deferred.
 
-## Current Milestone: v1.2 Block Deployment
+## Current Milestone: v1.3 Acquisition Integrity
 
-**Goal:** Turn source-connected processing blocks into reproducible, inspectable ROS deployment messages that a future Jetson updater can consume.
+**Goal:** Make live paired-ESP32 measurements, timing, transport recovery, command handling, and health reporting correct and trustworthy end to end.
 
 **Target features:**
-- Draft-on-connect message generation for processing blocks wired directly to acquisition sources such as EMG or load-cell blocks.
-- Final-on-Deploy typed ROS publication with manifest YAML, one language-neutral source entry file, dependencies, identity, revision, and integrity metadata.
-- Local message inspection and validation without requiring a connected Jetson or Tailscale route.
+- Range-aware IMU conversion, preserved device timestamps/sequences, and geometry-safe quaternion filtering.
+- Pause-safe service responses plus race-free ROSbridge fallback, restart, and hardware reconnection.
+- Time-bounded master/slave and stream health that turns offline when valid updates stop.
 
 ## Context
 
-The GUI already has a typed block graph, custom block-folder loading through `block.json`, graph connection events, and a mocked Deploy action. The ROS 2 backend already exposes processing primitives and rosbridge integration. Acquisition Operations v1.1 reached implementation completion, with its audit/archive still pending; v1.2 focuses only on producing the updater-facing contract and locally observable ROS messages.
+The GUI and ROS 2 backend already expose paired ESP32 controls, health, processing, recording, and rosbridge integration. A repository-wide diagnosis confirmed six acquisition-integrity defect groups spanning firmware-configured scale factors, timing metadata, quaternion filtering, paused service handling, reconnection ownership, and stale health state. The former v1.2 Block Deployment scope is parked for later; v1.3 is limited to audit findings 2-7 and their regression coverage.
 
 ## Constraints
 
@@ -61,6 +65,7 @@ The GUI already has a typed block graph, custom block-folder loading through `bl
 | Use a typed ROS processing-block update contract | Explicit fields make the future updater deterministic and versionable while still carrying YAML and code text | Active |
 | Generate drafts on connection and finalize on Deploy | Connection provides immediate feedback while Deploy remains the operator-controlled release boundary | Active |
 | Keep the source payload language-neutral and single-entry | Supports future processor languages without introducing archive handling in v1.2 | Active |
+| Park Block Deployment and prioritize acquisition integrity as v1.3 | Incorrect measurements and misleading live state undermine every downstream processing or deployment feature | Active |
 
 ## Evolution
 
@@ -80,4 +85,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-20 after starting v1.2 Block Deployment*
+*Last updated: 2026-07-23 after starting v1.3 Acquisition Integrity*
