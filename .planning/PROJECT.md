@@ -24,6 +24,7 @@ Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline 
 - [ ] Continue resolving ROS service responses while live-frame rendering is paused.
 - [ ] Recover from ROSbridge fallback, close, and restart events without stale sockets or a forced page reload.
 - [ ] Expire stale master/slave and stream-health state so disconnected hardware cannot remain falsely online.
+- [ ] Compute pair joint angles from the VQF quaternion differential between slave and master devices, exposing three anatomical angle components accurate during dynamic movement.
 
 ### Out of Scope
 
@@ -41,6 +42,7 @@ Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline 
 - Range-aware IMU conversion, preserved device timestamps/sequences, and geometry-safe quaternion filtering.
 - Pause-safe service responses plus race-free ROSbridge fallback, restart, and hardware reconnection.
 - Time-bounded master/slave and stream health that turns offline when valid updates stop.
+- VQF quaternion differential pair angle (3D: flexion/extension, ab/adduction, axial rotation) replacing raw accelerometer tilt.
 
 ## Context
 
@@ -85,4 +87,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-23 after starting v1.3 Acquisition Integrity*
+*Last updated: 2026-07-24 — extended v1.3 with Phase 14 VQF Quaternion Joint Angles*

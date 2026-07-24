@@ -25,9 +25,16 @@
 - [ ] **HEALTH-04**: Pair availability expires when slave-health updates exceed a defined freshness threshold.
 - [ ] **HEALTH-05**: Stream and pair indicators clear or age offline after socket loss, acquisition stop/restart, or a sustained absence of valid frames.
 
+### Joint Angle
+
+- [ ] **JOINT-01**: The pair joint angle is computed from the VQF quaternion differential (`q_slave × q_master_conjugate`) rather than from single-axis accelerometer tilt, so angles remain accurate during dynamic limb movement.
+- [ ] **JOINT-02**: The pair frame exposes three anatomical joint-angle components (primary flexion/extension, secondary ab/adduction, tertiary axial rotation) decomposed from the relative quaternion.
+- [ ] **JOINT-03**: A zero-reference relative quaternion is established from the initial still calibration window so the joint reads near-zero when the limb is in its reference position without requiring hardware alignment tools.
+
 ### Verification
 
 - [ ] **VERIFY-05**: Automated regression tests cover non-default scale conversion, timestamp and sequence preservation, quaternion geometry, paused service replies, socket-generation and fallback recovery, and health expiry.
+- [ ] **VERIFY-06**: Automated regression tests verify that the quaternion differential correctly computes known relative orientations and that the zero-reference baseline is properly applied before angle decomposition.
 
 ## Future Requirements
 
@@ -63,12 +70,16 @@
 | HEALTH-04 | Phase 12 | Pending |
 | HEALTH-05 | Phase 12 | Pending |
 | VERIFY-05 | Phase 13 | Pending |
+| JOINT-01 | Phase 14 | Pending |
+| JOINT-02 | Phase 14 | Pending |
+| JOINT-03 | Phase 14 | Pending |
+| VERIFY-06 | Phase 14 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 11 total
-- Mapped to phases: 11
+- v1.3 requirements: 15 total
+- Mapped to phases: 15
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-23*
-*Last updated: 2026-07-23 after v1.3 roadmap creation*
+*Last updated: 2026-07-24 — added JOINT-01/02/03 and VERIFY-06 (Phase 14 VQF Quaternion Joint Angles)*

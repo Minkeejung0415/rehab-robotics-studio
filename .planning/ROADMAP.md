@@ -8,7 +8,7 @@ Milestone v1.3 restores trust in live paired-ESP32 acquisition by correcting mea
 
 - **v1.1 Acquisition Operations** - Phases 5-8 completed; archived in `.planning/milestones/v1.1-ROADMAP.md`
 - **v1.2 Block Deployment** - Parked without phases
-- **v1.3 Acquisition Integrity** - Phases 9-13 planned
+- **v1.3 Acquisition Integrity** - Phases 9-14 planned
 
 ## Phases
 
@@ -17,6 +17,7 @@ Milestone v1.3 restores trust in live paired-ESP32 acquisition by correcting mea
 - [ ] **Phase 11: Pause-Safe Control and ROS Recovery** - Control replies and live ROS reconnection remain reliable across pause, fallback, close, and restart events.
 - [ ] **Phase 12: Fresh Acquisition Health** - Pair and stream state expires when hardware or valid frames stop reporting.
 - [ ] **Phase 13: Acquisition Integrity Verification** - Automated regressions prove the corrected contracts for audit findings 2-7.
+- [ ] **Phase 14: VQF Quaternion Joint Angles** - Pair joint angles are computed from quaternion differential and exposed as three anatomical components accurate during dynamic movement.
 
 ## Phase Details
 
@@ -76,9 +77,21 @@ Milestone v1.3 restores trust in live paired-ESP32 acquisition by correcting mea
   4. The focused acquisition-integrity suite passes locally without requiring the disconnected Jetson target.
 **Plans**: TBD
 
+### Phase 14: VQF Quaternion Joint Angles
+**Goal**: Operators see pair joint angles computed from the VQF quaternion differential rather than raw accelerometer tilt, with three anatomical components (flexion/extension, ab/adduction, axial rotation) that remain accurate during dynamic movement.
+**Depends on**: Phase 10 (normalized, finite quaternion outputs required as input)
+**Requirements**: JOINT-01, JOINT-02, JOINT-03, VERIFY-06
+**Success Criteria** (what must be TRUE):
+  1. During a dynamic limb movement, the displayed pair angle tracks the actual joint position rather than drifting with linear acceleration artifacts.
+  2. The pair frame exposes three distinct angle components; flexion/extension, ab/adduction, and axial rotation each change independently when the corresponding motion is applied.
+  3. After a short still window at acquisition start, the joint reads near-zero in the reference position without the operator needing to level or align the IMUs beyond placing them in consistent orientations.
+  4. Automated regressions verify that a known relative quaternion (e.g., 90° rotation about each axis) decomposes into the correct angle components and that the zero-reference baseline is correctly subtracted.
+**Plans**: TBD
+**UI hint**: yes
+
 ## Progress
 
-**Execution Order:** Phase 9 -> Phase 10 -> Phase 11 -> Phase 12 -> Phase 13
+**Execution Order:** Phase 9 → Phase 10 → Phase 11 → Phase 12 → Phase 13 → Phase 14
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -87,6 +100,8 @@ Milestone v1.3 restores trust in live paired-ESP32 acquisition by correcting mea
 | 11. Pause-Safe Control and ROS Recovery | 0/TBD | Not started | - |
 | 12. Fresh Acquisition Health | 0/TBD | Not started | - |
 | 13. Acquisition Integrity Verification | 0/TBD | Not started | - |
+| 14. VQF Quaternion Joint Angles | 0/TBD | Not started | - |
 
 ---
 *Roadmap created: 2026-07-23 for milestone v1.3 Acquisition Integrity*
+*Extended: 2026-07-24 — added Phase 14 VQF Quaternion Joint Angles (JOINT-01/02/03, VERIFY-06)*
