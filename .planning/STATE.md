@@ -4,14 +4,14 @@ milestone: v1.3
 milestone_name: Acquisition Integrity
 status: executing
 stopped_at: Phase 9 UI-SPEC approved
-last_updated: "2026-07-24T18:50:00Z"
-last_activity: 2026-07-24 -- Phase 09 Plan 01 complete
+last_updated: "2026-07-24T18:58:18Z"
+last_activity: 2026-07-24 -- Phase 09 Plan 02 complete
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
-  percent: 33
+  completed_plans: 2
+  percent: 67
 ---
 
 # Project State
@@ -26,27 +26,27 @@ See: `.planning/PROJECT.md` (updated 2026-07-23)
 ## Current Position
 
 Phase: 09 (Range-Correct Measurement Contract) — EXECUTING
-Plan: 2 of 3 (Plan 01 complete)
+Plan: 3 of 3 (Plans 01 and 02 complete)
 Status: Executing Phase 09
-Last activity: 2026-07-24 -- Phase 09 Plan 01 complete
+Last activity: 2026-07-24 -- Phase 09 Plan 02 complete
 
-Progress: [####------] 33%
+Progress: [#######---] 67%
 
 ## Performance Metrics
 
 **Current milestone:**
 
-- Total plans completed: 1
+- Total plans completed: 2
 - Average duration: 7 min
-- Total execution time: 7 min
+- Total execution time: 13 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 09 | 1 | 7 min | 7 min |
+| 09 | 2 | 13 min | 7 min |
 
-**Recent Trend:** Phase 09 Plan 01 completed (7 min, 3 tasks, 5 files, 26 tests passing).
+**Recent Trend:** Phase 09 Plan 02 completed (6 min, 2 tasks, 5 files, 17 tests passing).
 
 ## Accumulated Context
 
@@ -60,6 +60,8 @@ Decisions are logged in `PROJECT.md` Key Decisions.
 - [09-01]: Nullable confirmed fields (_confirmed_accel_range_g/gyro = None); suppress _publish_frame until both confirmed.
 - [09-01]: config_as_json emits canonical literal table values; validate_sensor_config uses rel_tol=1e-9 for range/sensitivity cross-check.
 - [09-01]: Dormant fixed-scale constants kept in esp32_bridge_node.py for Plan 03 clean-up.
+- [09-02]: frameFromPair accepts pre-converted Frame objects (not RawEspMessage); enforces validate-before-convert at type level.
+- [09-02]: callBothRangeServices uses Promise.all for minimal latency; partial slave failure logs warning but cannot restore master to prior value without extra state tracking.
 
 ### Pending Todos
 
@@ -80,6 +82,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-07-24T18:50:00Z
-Stopped at: Completed 09-01-PLAN.md
-Resume file: .planning/phases/09-range-correct-measurement-contract/09-02-PLAN.md
+Last session: 2026-07-24T18:58:18Z
+Stopped at: Completed 09-02-PLAN.md
+Resume file: .planning/phases/09-range-correct-measurement-contract/09-03-PLAN.md
