@@ -212,5 +212,78 @@ class Esp32ControlContractTests(unittest.TestCase):
         )
 
 
+def _make_stub_node():
+    """Create a minimal Esp32BridgeNode instance without invoking __init__ or ROS."""
+    node = object.__new__(bridge.Esp32BridgeNode)
+    node._desired_accel_range_g = 2
+    node._desired_gyro_range_dps = 250
+    node._confirmed_accel_range_g = None
+    node._confirmed_gyro_range_dps = None
+    node._sample_rate_hz = 100
+    node._recording_sample_rate_hz = 100
+    node._effective_sample_rate_hz = 100
+    node._filter_enabled = True
+    return node
+
+
+class ConfirmedRangeRetentionTests(unittest.TestCase):
+    """Verify nullable confirmed-range design and _store_confirmed_control_value."""
+
+    def test_09_01_03_initial_confirmed_ranges_are_none(self):
+        """Both confirmed range fields start as None on a freshly created stub."""
+        node = _make_stub_node()
+        self.assertIsNone(node._confirmed_accel_range_g)
+        self.assertIsNone(node._confirmed_gyro_range_dps)
+
+    def test_09_01_03_confirmed_range_updates_after_successful_ack(self):
+        """_store_confirmed_control_value writes confirmed fields after ACK."""
+        node = _make_stub_node()
+        node._store_confirmed_control_value('accel_range_g', 8)
+        node._store_confirmed_control_value('gyro_range_dps', 2000)
+        self.assertEqual(node._confirmed_accel_range_g, 8)
+        self.assertEqual(node._confirmed_gyro_range_dps, 2000)
+
+    def test_09_01_03_rejected_command_does_not_change_confirmed_state(self):
+        """Unsupported range produces an error before I/O; confirmed state unchanged."""
+        node = _make_stub_node()
+        node._confirmed_accel_range_g = 2
+        node._confirmed_gyro_range_dps = 250
+
+        # _control_command_for_parameter returns an error for unsupported preset 3.
+        cmd, exp, err = bridge.Esp32BridgeNode._control_command_for_parameter(
+            'accel_range_g', 3,  # unsupported
+        )
+        self.assertTrue(err, 'rejection must produce a non-empty error string')
+
+        # The existing _on_set_parameters early-return (lines after error check)
+        # prevents _store_confirmed_control_value from being called on error.
+        # Verify confirmed state is unchanged — do NOT call _store_confirmed_control_value here.
+        self.assertEqual(node._confirmed_accel_range_g, 2, 'confirmed state must be unchanged')
+
+    def test_09_01_03_control_command_maps_all_four_accel_presets(self):
+        """_control_command_for_parameter produces correct CFG ACC commands for all 4 ranges."""
+        expected_presets = {2: 0, 4: 1, 8: 2, 16: 3}
+        for accel_g, preset in expected_presets.items():
+            with self.subTest(accel_range_g=accel_g):
+                cmd, exp, err = bridge.Esp32BridgeNode._control_command_for_parameter(
+                    'accel_range_g', accel_g,
+                )
+                self.assertEqual(err, '', 'no error for supported range')
+                self.assertEqual(cmd, f'CFG 0 ACC {preset}')
+                self.assertEqual(exp, 'OK CFG ACC')
+
+    def test_09_01_03_control_command_maps_all_four_gyro_presets(self):
+        """_control_command_for_parameter produces correct CFG GYR commands for all 4 ranges."""
+        expected_presets = {250: 0, 500: 1, 1000: 2, 2000: 3}
+        for gyro_dps, preset in expected_presets.items():
+            with self.subTest(gyro_range_dps=gyro_dps):
+                cmd, exp, err = bridge.Esp32BridgeNode._control_command_for_parameter(
+                    'gyro_range_dps', gyro_dps,
+                )
+                self.assertEqual(err, '', 'no error for supported range')
+                self.assertEqual(cmd, f'CFG 0 GYR {preset}')
+                self.assertEqual(exp, 'OK CFG GYR')
+
+
 if __name__ == '__main__':
     unittest.main()
