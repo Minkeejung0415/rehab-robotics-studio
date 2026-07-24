@@ -95,7 +95,7 @@ Milestone v1.3 restores trust in live paired-ESP32 acquisition by correcting mea
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 9. Range-Correct Measurement Contract | 0/TBD | Not started | - |
+| 9. Range-Correct Measurement Contract | 3/3 | Checkpoint (hardware verification deferred) | - |
 | 10. Timing, Sequence, and Orientation Integrity | 0/TBD | Not started | - |
 | 11. Pause-Safe Control and ROS Recovery | 0/TBD | Not started | - |
 | 12. Fresh Acquisition Health | 0/TBD | Not started | - |
