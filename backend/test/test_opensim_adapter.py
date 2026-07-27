@@ -451,6 +451,16 @@ class OpenSimAdapterContractTests(unittest.TestCase):
         )
         self.assertEqual(adapter.status()["available"], True)
 
+    def test_fake_enforces_supported_quaternion_rotation_constructor(self):
+        fake = _FakeOpenSim()
+        quaternion = fake.Quaternion(1.0, 0.0, 0.0, 0.0)
+
+        native_rotation = fake.Rotation(quaternion)
+
+        self.assertIs(native_rotation[1], quaternion)
+        with self.assertRaises(TypeError):
+            fake.Rotation(*range(9))
+
     def test_each_update_mutates_only_its_retained_ground_decoration_and_shows(self):
         fake = _FakeOpenSim()
         adapter = OpenSimVisualizerAdapter(
@@ -542,6 +552,16 @@ class OpenSimAdapterContractTests(unittest.TestCase):
 )
 class OpenSimInstalledRuntimeSmokeTests(unittest.TestCase):
     """Exercise a minimal real model when OpenSim is already installed."""
+
+    def test_supported_rotation_constructor_contract(self):
+        import opensim
+
+        quaternion = opensim.Quaternion(1.0, 0.0, 0.0, 0.0)
+        rotation = opensim.Rotation(quaternion)
+
+        self.assertIsNotNone(rotation)
+        with self.assertRaises(TypeError):
+            opensim.Rotation(*range(9))
 
     def test_minimal_model_accepts_identity_and_positive_ninety_z_updates(self):
         import opensim
