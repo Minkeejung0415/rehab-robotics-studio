@@ -407,6 +407,30 @@ class OpenSimNodeStatusTests(unittest.TestCase):
         self.assertEqual(second_status["sensors"]["master"]["state"], "stale")
         self.assertEqual(second_status["sensors"]["slave"]["state"], "stale")
 
+    def test_timer_marks_never_seen_roles_stale_after_startup_grace(self):
+        node = self._node(stale_timeout_s=1.0)
+
+        self.clock.now = 11.1
+        node.timers[0].callback()
+        status = json.loads(node.publishers[0].messages[-1].data)
+
+        self.assertEqual(status["sensors"]["master"]["state"], "stale")
+        self.assertEqual(status["sensors"]["slave"]["state"], "stale")
+        self.assertIsNone(status["sensors"]["master"]["age_s"])
+        self.assertIsNone(status["sensors"]["slave"]["age_s"])
+        self.assertEqual(
+            node.logger.warning_messages.count(
+                "OpenSim sensor master state waiting->stale: stale_timeout",
+            ),
+            1,
+        )
+        self.assertEqual(
+            node.logger.warning_messages.count(
+                "OpenSim sensor slave state waiting->stale: stale_timeout",
+            ),
+            1,
+        )
+
     def test_adapter_failure_marks_only_affected_role_mapping_error(self):
         adapter = _FakeAdapter(accepted=False)
         node = self._node(adapter)

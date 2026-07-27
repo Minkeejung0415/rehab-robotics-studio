@@ -27,6 +27,7 @@ _ROLES = ("master", "slave")
 class _SensorState:
     topic: str
     frame: str
+    waiting_since_monotonic: float
     state: str = "waiting"
     last_valid_monotonic: float | None = None
     updates: int = 0
@@ -70,14 +71,17 @@ class OpenSimBridgeNode(Node):
         if not math.isfinite(configured_timeout):
             configured_timeout = 1.0
         self._stale_timeout_s = max(configured_timeout, 0.1)
+        waiting_since_monotonic = self._monotonic_clock()
         self._sensor_states = {
             "master": _SensorState(
                 topic=str(values["master_imu_topic"]),
                 frame=str(values["master_frame"]),
+                waiting_since_monotonic=waiting_since_monotonic,
             ),
             "slave": _SensorState(
                 topic=str(values["slave_imu_topic"]),
                 frame=str(values["slave_frame"]),
+                waiting_since_monotonic=waiting_since_monotonic,
             ),
         }
         frame_mappings = {
@@ -195,10 +199,12 @@ class OpenSimBridgeNode(Node):
         now = self._monotonic_clock()
         for role in _ROLES:
             sensor = self._sensor_states[role]
-            if (
-                sensor.last_valid_monotonic is not None
-                and now - sensor.last_valid_monotonic > self._stale_timeout_s
-            ):
+            freshness_baseline = (
+                sensor.last_valid_monotonic
+                if sensor.last_valid_monotonic is not None
+                else sensor.waiting_since_monotonic
+            )
+            if now - freshness_baseline > self._stale_timeout_s:
                 self._set_sensor_state(role, "stale", "stale_timeout")
 
         visualization_signature = self._visualization_signature()
