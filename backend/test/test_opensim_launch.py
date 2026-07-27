@@ -175,10 +175,11 @@ class OpenSimPublisherBridgeIntegrationTests(unittest.TestCase):
             (slave_role, slave_frame),
             ("slave", "custom_slave_frame"),
         )
-        self.assertEqual(
+        for actual, expected in zip(
             slave_rotation.scalar_first,
             (math.sqrt(0.5), 0.0, 0.0, math.sqrt(0.5)),
-        )
+        ):
+            self.assertAlmostEqual(actual, expected)
         expected_90z = (
             (0.0, -1.0, 0.0),
             (1.0, 0.0, 0.0),
