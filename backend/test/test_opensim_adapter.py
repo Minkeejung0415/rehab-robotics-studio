@@ -137,6 +137,10 @@ class QuaternionConversionTests(unittest.TestCase):
         ):
             ros_xyzw_to_opensim_rotation(1e-9, 0.0, 0.0, 0.0)
 
+    def test_component_scale_does_not_replace_total_norm_threshold(self):
+        rotation = ros_xyzw_to_opensim_rotation(6e-9, 6e-9, 6e-9, 6e-9)
+        self.assertEqual(rotation.scalar_first, (0.5, 0.5, 0.5, 0.5))
+
 
 class _FakeTransform:
     def __init__(self, rotation=None, translation=None):
