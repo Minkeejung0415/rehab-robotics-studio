@@ -12,27 +12,43 @@ coordinates.
 
 ## Build and launch
 
-From a ROS 2 workspace containing this package:
+This repository includes PowerShell wrappers that use the installed
+Ubuntu-22.04 WSL distribution. They avoid the apostrophe in the Windows
+project path, build in `~/rehab_robotics_ws`, install the compatible OpenSim
+4.5.2 Python API, and generate a minimal demo model.
 
-```bash
-colcon build --packages-select rehab_robotics_bridge
-source install/setup.bash
-ros2 launch rehab_robotics_bridge rehab_robotics.launch.py \
-  model_path:=/absolute/path/to/model.osim
-```
-
-On PowerShell, use the ROS-generated PowerShell setup script instead:
+Run setup once from the repository root while ordinary internet access is
+available:
 
 ```powershell
-colcon build --packages-select rehab_robotics_bridge
-.\install\setup.ps1
-ros2 launch rehab_robotics_bridge rehab_robotics.launch.py model_path:=C:\models\subject.osim
+.\scripts\setup_opensim_live_link.ps1
 ```
 
-Opening the native window requires a complete OpenSim/Simbody visualizer
-installation with the `simbody-visualizer` executable discoverable on
-`PATH`. The OpenSim Python wheel supplies bindings only and is not sufficient
-by itself to start the native visualizer.
+Run the deterministic hardware-free check:
+
+```powershell
+.\scripts\run_opensim_live_link.ps1 -Test
+```
+
+Stop it with `Ctrl+C`, connect the computer to the STEP_ESP32 network, and run
+the same subscriber against the real ESP topics:
+
+```powershell
+.\scripts\run_opensim_live_link.ps1
+```
+
+Use a subject model instead of the generated demo model:
+
+```powershell
+.\scripts\run_opensim_live_link.ps1 -ModelPath C:\models\subject.osim
+```
+
+Opening the native 3D window requires a Linux OpenSim/Simbody installation
+with `simbody-visualizer` discoverable on WSL's `PATH`. The installed official
+OpenSim 4.5.2 Conda API performs model/quaternion calculations but does not
+ship that executable. In its absence, subscriptions, validation, independent
+live counters, staleness, and status publication continue normally and status
+reports `visualizer_initialization_failed`.
 
 The locked defaults are:
 
@@ -66,22 +82,18 @@ missing model path leaves subscriptions and status active in non-visual mode.
 ## Hardware-free deterministic check
 
 The synthetic publisher is opt-in so its messages cannot be mistaken for live
-hardware by default. Start it through the launch file:
+hardware by default. The recommended command is:
 
-```bash
-ros2 launch rehab_robotics_bridge rehab_robotics.launch.py \
-  model_path:=/absolute/path/to/model.osim \
-  enable_opensim_test_publisher:=true
+```powershell
+.\scripts\run_opensim_live_link.ps1 -Test
 ```
 
-Or run it separately against an already-running bridge:
+For direct ROS usage inside a configured WSL shell, use the dedicated launch:
 
 ```bash
-ros2 run rehab_robotics_bridge opensim_test_publisher \
-  --ros-args \
-  -p master_imu_topic:=/esp32/master/imu \
-  -p slave_imu_topic:=/esp32/slave/imu \
-  -p publish_rate_hz:=1.0
+ros2 launch rehab_robotics_bridge opensim_live_link.launch.py \
+  model_path:=/absolute/path/to/model.osim \
+  enable_test_publisher:=true
 ```
 
 Each tick emits:

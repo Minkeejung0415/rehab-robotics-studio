@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from importlib import import_module
 import math
 from pathlib import Path
+import shutil
 from typing import Any, Mapping, Protocol
 
 
@@ -417,6 +418,17 @@ def create_visualizer_adapter(
     except (ImportError, ModuleNotFoundError):
         return UnavailableVisualizerAdapter(
             "opensim_bindings_unavailable",
+            frame_mappings,
+        )
+
+    # Simbody may fork while attempting to start its native visualizer. Avoid
+    # doing that after rclpy/DDS threads exist when the executable is absent.
+    if (
+        getattr(opensim_module, "__name__", None) == "opensim"
+        and shutil.which("simbody-visualizer") is None
+    ):
+        return UnavailableVisualizerAdapter(
+            "visualizer_initialization_failed",
             frame_mappings,
         )
 
