@@ -1,4 +1,4 @@
-import type { MouseEvent } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import type { BlockInstance, PortDefinition } from '../../types/blocks';
 import { getDef } from '../../graph/blockDefinitions';
 import { categoryColor, signalColor, statusColor } from '../../theme/tokens';
@@ -7,6 +7,11 @@ import { Gauge } from '../common/Gauge';
 import { MiniChart } from '../common/MiniChart';
 import { Port } from './Port';
 import { NODE_HEADER_HEIGHT, NODE_WIDTH, PORT_ROW_HEIGHT, portTop } from './Wire';
+import { useGraphStore } from '../../state/graphStore';
+import { useRuntimeStore } from '../../state/runtimeStore';
+import { useSystemStore } from '../../state/systemStore';
+import { setHardwareImuControl } from '../../data/appDataSource';
+import type { ImuControlParameter } from '../../data/RosbridgeDataSource';
 
 interface Props {
   node: BlockInstance;
@@ -42,12 +47,78 @@ function NodeBody({ kind }: { kind?: string }) {
   return null;
 }
 
+function ImuConfigurationControl({ node }: { node: BlockInstance }) {
+  const updateParam = useGraphStore((state) => state.updateParam);
+  const setSampleRate = useRuntimeStore((state) => state.setSampleRate);
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const rate = Number(node.params.sampleRate ?? 100);
+  const effectiveRate = Number(node.params.effectiveSampleRate ?? rate);
+  const accelRange = Number(node.params.accelRangeG ?? String(node.params.range ?? '2g').replace('g', '')) || 2;
+  const gyroRange = Number(node.params.gyroRangeDps ?? 250);
+  const filterEnabled = node.params.filterEnabled !== false;
+  const [draftRate, setDraftRate] = useState(String(rate));
+  const [draftEffectiveRate, setDraftEffectiveRate] = useState(String(effectiveRate));
+
+  useEffect(() => setDraftRate(String(rate)), [rate]);
+  useEffect(() => setDraftEffectiveRate(String(effectiveRate)), [effectiveRate]);
+
+  const changeControl = async (
+    pending: string,
+    parameter: ImuControlParameter,
+    value: number | boolean,
+    graphKey: string,
+  ) => {
+    const isRateControl = parameter === 'sample_rate_hz' || parameter === 'effective_sample_rate_hz';
+    if (parameter === 'sample_rate_hz') {
+      // Pair Rate is the operator's requested value. Effective Rate remains
+      // unchanged until the firmware acknowledgement arrives.
+      updateParam(node.id, 'sampleRate', value);
+      setSampleRate(Number(value));
+    }
+    setPendingKey(pending);
+    const result = await setHardwareImuControl(parameter, value);
+    setPendingKey(null);
+    if (result.success && isRateControl) {
+      // Only display an effective rate after bridge + firmware acknowledgement.
+      updateParam(node.id, 'effectiveSampleRate', value);
+    } else if (result.success) {
+      updateParam(node.id, graphKey, value);
+    } else if (parameter === 'effective_sample_rate_hz') {
+      setDraftEffectiveRate(String(effectiveRate));
+    }
+    useSystemStore.getState().addLog(result.success ? 'INFO' : 'ERROR', result.message);
+  };
+
+  const applyRate = (draft: string, current: number, parameter: ImuControlParameter, graphKey: string) => {
+    const nextRate = Number(draft);
+    if (Number.isInteger(nextRate) && nextRate >= 1 && nextRate <= 1000 && nextRate !== current) {
+      void changeControl(graphKey, parameter, nextRate, graphKey);
+    } else if (parameter === 'sample_rate_hz') {
+      setDraftRate(String(current));
+    } else {
+      setDraftEffectiveRate(String(current));
+    }
+  };
+
+  return (
+    <div className="node-imu-controls" onMouseDown={(event) => event.stopPropagation()}>
+      <label><span>PAIR RATE</span><input aria-label="ESP32 pair sample rate" type="number" min={1} max={1000} step={1} value={draftRate} disabled={pendingKey !== null} onChange={(event) => setDraftRate(event.target.value)} onBlur={() => applyRate(draftRate, rate, 'sample_rate_hz', 'sampleRate')} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') setDraftRate(String(rate)); }} /><b>Hz</b></label>
+      <label><span>FILTER</span><select aria-label="ESP32 filter" value={filterEnabled ? 'on' : 'off'} disabled={pendingKey !== null} onChange={(event) => void changeControl('filterEnabled', 'filter_enabled', event.target.value === 'on', 'filterEnabled')}><option value="on">ON</option><option value="off">OFF</option></select></label>
+      <label><span>ACCEL</span><select aria-label="ESP32 accelerometer range" value={accelRange} disabled={pendingKey !== null} onChange={(event) => void changeControl('accelRangeG', 'accel_range_g', Number(event.target.value), 'accelRangeG')}>{[2, 4, 8, 16].map((value) => <option key={value} value={value}>{value} g</option>)}</select></label>
+      <label><span>GYRO</span><select aria-label="ESP32 gyroscope range" value={gyroRange} disabled={pendingKey !== null} onChange={(event) => void changeControl('gyroRangeDps', 'gyro_range_dps', Number(event.target.value), 'gyroRangeDps')}>{[250, 500, 1000, 2000].map((value) => <option key={value} value={value}>{value} dps</option>)}</select></label>
+      <label><span>EFFECTIVE</span><input aria-label="ESP32 effective sample rate" type="number" value={draftEffectiveRate} readOnly /><b>Hz</b></label>
+      {pendingKey && <em className="node-imu-pending">APPLYING</em>}
+    </div>
+  );
+}
+
 export function BlockNode({ node, zoom, selected, onSelect, onMove, onWireStart, onWireFinish, onContextMenu }: Props) {
   const def = getDef(node.type);
   const inputCount = def?.inputs.length ?? 0;
   const outputCount = def?.outputs.length ?? 0;
   const portRows = Math.max(inputCount, outputCount, 1);
-  const bodyRows = def?.bodyKind ? 78 : 30;
+  const hasImuControls = node.type === 'esp32_imu';
+  const bodyRows = def?.bodyKind ? 78 : hasImuControls ? 180 : 30;
   const height = NODE_HEADER_HEIGHT + 22 + portRows * PORT_ROW_HEIGHT + bodyRows;
   const accent = def ? categoryColor[def.category] : '#8b969c';
 
@@ -122,6 +193,7 @@ export function BlockNode({ node, zoom, selected, onSelect, onMove, onWireStart,
         <span>IN {inputCount}</span>
         <span>OUT {outputCount}</span>
       </div>
+      {hasImuControls && <ImuConfigurationControl node={node} />}
       <NodeBody kind={def?.bodyKind} />
     </div>
   );

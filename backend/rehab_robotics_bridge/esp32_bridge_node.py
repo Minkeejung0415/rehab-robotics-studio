@@ -366,6 +366,7 @@ class Esp32BridgeNode(Node):
     def _store_confirmed_control_value(self, name: str, value) -> None:
         if name == 'sample_rate_hz':
             self._sample_rate_hz = value
+            self._effective_sample_rate_hz = value
             self._recording_sample_rate_hz = value
         elif name == 'effective_sample_rate_hz':
             self._effective_sample_rate_hz = value
@@ -553,9 +554,13 @@ class Esp32BridgeNode(Node):
                          writer: asyncio.StreamWriter) -> str:
         """Perform the REDPITAYA / START handshake.
 
-        Exact sequence (step_node v1.8, all nodes — master and slaves identical):
+        Actual sequence (CFG commands inserted before START to stay in text mode):
           PC  → ESP32:  "REDPITAYA\\n"
           ESP32 → PC:   "14 channels; sample_rate=100; node=esp32s3_arduino; ...\\n"
+          PC  → ESP32:  "CFG accel_range_g <N>\\n"   ← range confirm (text mode)
+          ESP32 → PC:   "OK CFG accel_range_g <N>\\n"
+          PC  → ESP32:  "CFG gyro_range_dps <N>\\n"  ← range confirm (text mode)
+          ESP32 → PC:   "OK CFG gyro_range_dps <N>\\n"
           PC  → ESP32:  "START\\n"
           ESP32 → PC:   "STARTED BIN:esp32s3_arduino transport=tcp\\n"
           ESP32 → PC:   "SENSORS:0,ICM20948\\n"
@@ -577,11 +582,42 @@ class Esp32BridgeNode(Node):
         except asyncio.TimeoutError:
             pass
 
-        # 3. Start streaming
+        # 3. Confirm desired ACC and GYR ranges BEFORE starting binary streaming.
+        #    Must happen while ESP32 is still in text mode (before START is sent).
+        accel_ok = await self._confirm_range_during_handshake(
+            writer, reader,
+            'accel_range_g', self._desired_accel_range_g,
+        )
+        if accel_ok:
+            self._confirmed_accel_range_g = self._desired_accel_range_g
+        else:
+            # CFG exchange failed or firmware doesn't support it.  Fall back to
+            # the desired (default 2 g) value — the ICM20948 powers on at ±2 g
+            # so using the desired value is correct and avoids suppressing frames.
+            self._confirmed_accel_range_g = self._desired_accel_range_g
+            self.get_logger().warning(
+                f'[{self._node_id}] handshake accel range confirmation failed; '
+                f'assuming ±{self._desired_accel_range_g} g (firmware power-on default)'
+            )
+
+        gyro_ok = await self._confirm_range_during_handshake(
+            writer, reader,
+            'gyro_range_dps', self._desired_gyro_range_dps,
+        )
+        if gyro_ok:
+            self._confirmed_gyro_range_dps = self._desired_gyro_range_dps
+        else:
+            self._confirmed_gyro_range_dps = self._desired_gyro_range_dps
+            self.get_logger().warning(
+                f'[{self._node_id}] handshake gyro range confirmation failed; '
+                f'assuming ±{self._desired_gyro_range_dps} dps (firmware power-on default)'
+            )
+
+        # 4. Start streaming
         writer.write(HANDSHAKE_START)
         await writer.drain()
 
-        # 4. Receive STARTED confirmation
+        # 5. Receive STARTED confirmation
         started = b''
         for _ in range(3):
             line = await asyncio.wait_for(reader.readline(), timeout=self._handshake_timeout_s)
@@ -590,7 +626,7 @@ class Esp32BridgeNode(Node):
                 started = line
                 break
 
-        # 5. Receive SENSORS line (ignore content — we know it's ICM20948)
+        # 6. Receive SENSORS line (ignore content — we know it's ICM20948)
         if not started:
             raise RuntimeError('ESP32 did not acknowledge START')
         # Never call readline() blindly here: a proxy is allowed to start the
@@ -603,33 +639,6 @@ class Esp32BridgeNode(Node):
                     f'[{self._node_id}] {sensors.decode(errors="replace").strip()}'
                 )
                 break
-
-        # 6. Confirm desired ACC and GYR ranges via the handshake writer/reader.
-        #    Uses the handshake connection directly — _active_writer and the
-        #    record-command lock are not yet established at this point.
-        accel_ok = await self._confirm_range_during_handshake(
-            writer, reader,
-            'accel_range_g', self._desired_accel_range_g,
-        )
-        if accel_ok:
-            self._confirmed_accel_range_g = self._desired_accel_range_g
-        else:
-            self.get_logger().warning(
-                f'[{self._node_id}] handshake accel range confirmation failed; '
-                'publication suppressed until live set_parameters confirms a range'
-            )
-
-        gyro_ok = await self._confirm_range_during_handshake(
-            writer, reader,
-            'gyro_range_dps', self._desired_gyro_range_dps,
-        )
-        if gyro_ok:
-            self._confirmed_gyro_range_dps = self._desired_gyro_range_dps
-        else:
-            self.get_logger().warning(
-                f'[{self._node_id}] handshake gyro range confirmation failed; '
-                'publication suppressed until live set_parameters confirms a range'
-            )
 
         return 'udp' if b'transport=udp' in started else 'tcp'
 
@@ -655,7 +664,11 @@ class Esp32BridgeNode(Node):
         try:
             writer.write((command + '\n').encode('ascii'))
             await writer.drain()
-            deadline = asyncio.get_running_loop().time() + 6.0
+            # Firmware closes idle pre-START TCP clients after 2 s; stay well
+            # under that.  If firmware responds in ~10 ms (normal), 0.8 s is
+            # plenty; if firmware is slow/missing we fail fast and fall back to
+            # the default range instead of blocking START for 6 seconds.
+            deadline = asyncio.get_running_loop().time() + 0.8
             while True:
                 remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0:

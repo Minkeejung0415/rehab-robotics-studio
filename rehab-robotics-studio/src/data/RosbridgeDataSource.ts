@@ -1,6 +1,6 @@
 import type { DataSource } from './DataSource';
 import type { Frame, ImuData } from '../types/signals';
-import type { PairHealthSnapshot } from '../types/health';
+import type { OpenSimStatusSnapshot, PairHealthSnapshot } from '../types/health';
 import {
   validateSensorConfig,
   accelCountToMps2,
@@ -40,6 +40,7 @@ const DEFAULT_URL = 'ws://127.0.0.1:9090';
 const DEFAULT_MASTER_TOPIC = '/esp/raw/master';
 const DEFAULT_SLAVE_TOPIC = '/esp/raw/slave';
 const DEFAULT_PAIR_HEALTH_TOPIC = '/esp/status/pair';
+const DEFAULT_OPENSIM_STATUS_TOPIC = '/opensim/status';
 const QUAT_SCALE = 1 / 32767;
 const GRAVITY = 9.80665;
 const CALIBRATION_WINDOW_SECONDS = 0.5;
@@ -197,6 +198,7 @@ export class RosbridgeDataSource implements DataSource {
     private readonly onFrameReceived?: () => void,
     private readonly onPairHealth?: (health: PairHealthSnapshot) => void,
     private readonly onWarnScaleMissing?: (deviceList: string) => void,
+    private readonly onOpenSimStatus?: (status: OpenSimStatusSnapshot) => void,
   ) {}
 
   start(_rateHz: number): void {
@@ -213,7 +215,12 @@ export class RosbridgeDataSource implements DataSource {
     this.socket.onopen = () => {
       this.connected = true;
       this.onConnectionChange?.(true);
-      for (const topic of new Set([this.masterTopic, this.slaveTopic, DEFAULT_PAIR_HEALTH_TOPIC])) {
+      for (const topic of new Set([
+        this.masterTopic,
+        this.slaveTopic,
+        DEFAULT_PAIR_HEALTH_TOPIC,
+        DEFAULT_OPENSIM_STATUS_TOPIC,
+      ])) {
         this.socket?.send(JSON.stringify({ op: 'subscribe', topic, type: 'std_msgs/msg/String' }));
       }
     };
@@ -406,6 +413,10 @@ export class RosbridgeDataSource implements DataSource {
       if (envelope.op !== 'publish' || !envelope.msg?.data) return;
       if (envelope.topic === DEFAULT_PAIR_HEALTH_TOPIC) {
         this.onPairHealth?.(JSON.parse(envelope.msg.data) as PairHealthSnapshot);
+        return;
+      }
+      if (envelope.topic === DEFAULT_OPENSIM_STATUS_TOPIC) {
+        this.onOpenSimStatus?.(JSON.parse(envelope.msg.data) as OpenSimStatusSnapshot);
         return;
       }
 

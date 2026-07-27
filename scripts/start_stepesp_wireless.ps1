@@ -182,9 +182,9 @@ if ($DiagnosticPort -and $availableSerialPorts -contains $DiagnosticPort) {
 Start-Process -FilePath python.exe -ArgumentList $relayArgs -RedirectStandardOutput $relayLog -RedirectStandardError $relayErrorLog -WindowStyle Hidden
 Start-Sleep -Milliseconds 750
 
-$rosEnvironment = "export ROS_DOMAIN_ID=$RosDomainId; source /opt/ros/humble/setup.bash; source $RosInstall/setup.bash"
-$master = "$rosEnvironment; exec ros2 run rehab_robotics_bridge esp32_bridge_node --ros-args -r __node:=esp_master -p node_id:=master -p host:=$wslGateway -p port:=$RelayPort -p transport:=tcp -p body_segment:=femur_r_imu -p recording_control_mode:=active > $bridgeLog 2>&1"
-$slave = "$rosEnvironment; exec ros2 run rehab_robotics_bridge esp32_bridge_node --ros-args -r __node:=esp_slave -p node_id:=slave -p host:=$wslGateway -p port:=$SlaveRelayPort -p transport:=tcp -p body_segment:=tibia_r_imu -p recording_control_mode:=active > $slaveBridgeLog 2>&1"
+$rosEnvironment = "export ROS_DOMAIN_ID=$RosDomainId; source /opt/ros/humble/setup.bash; source $RosInstall/setup.bash; source $OpenSimInstall/setup.bash"
+$master = "$rosEnvironment; exec ros2 run rehab_robotics_bridge esp32_bridge_node --ros-args -r __node:=esp_bridge_master -p node_id:=master -p host:=$wslGateway -p port:=$RelayPort -p transport:=tcp -p body_segment:=femur_r_imu -p recording_control_mode:=active > $bridgeLog 2>&1"
+$slave = "$rosEnvironment; exec ros2 run rehab_robotics_bridge esp32_bridge_node --ros-args -r __node:=esp_bridge_slave -p node_id:=slave -p host:=$wslGateway -p port:=$SlaveRelayPort -p transport:=tcp -p body_segment:=tibia_r_imu -p recording_control_mode:=active > $slaveBridgeLog 2>&1"
 $rosbridge = "$rosEnvironment; exec ros2 run rosbridge_server rosbridge_websocket --ros-args -p port:=9090 -p address:=0.0.0.0 > $rosbridgeLog 2>&1"
 $observer = "$rosEnvironment; exec ros2 run rehab_robotics_bridge processing_block_observer > $observerLog 2>&1"
 $openSim = "export ROS_DOMAIN_ID=$RosDomainId; exec bash $openSimRunner $OpenSimModel false master_imu_topic:=/esp32/master/imu slave_imu_topic:=/esp32/slave/imu > $openSimLog 2>&1"
