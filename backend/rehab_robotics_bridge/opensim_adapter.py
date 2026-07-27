@@ -276,7 +276,9 @@ class OpenSimVisualizerAdapter:
 
     def _initialize_retained_decorations(self) -> None:
         try:
-            ground_index = self._opensim.MobilizedBodyIndex(0)
+            # OpenSim 4.6 exposes mobilized-body indices returned by frames as
+            # ordinary Python integers; it does not export MobilizedBodyIndex.
+            ground_index = self._model.getGround().getMobilizedBodyIndex()
             identity_transform = self._opensim.Transform()
             for sensor_id in self._frame_mappings:
                 group = self._make_decorations(sensor_id)

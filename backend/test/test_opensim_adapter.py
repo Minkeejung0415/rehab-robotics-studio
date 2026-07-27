@@ -228,6 +228,12 @@ class _FakeModelVisualizer:
         self.show_states.append(state)
 
 
+class _FakeGround:
+    @staticmethod
+    def getMobilizedBodyIndex():
+        return 0
+
+
 class _FakeModel:
     def __init__(self, module, path):
         self.module = module
@@ -244,6 +250,7 @@ class _FakeModel:
             ),
         }
         self.visualizer = _FakeModelVisualizer(self.calls)
+        self.ground = _FakeGround()
         self.state = object()
 
     def setUseVisualizer(self, enabled):
@@ -258,6 +265,10 @@ class _FakeModel:
         if path not in self.frames:
             raise RuntimeError("component not found")
         return self.frames[path]
+
+    def getGround(self):
+        self.calls.append("getGround")
+        return self.ground
 
     def updVisualizer(self):
         self.calls.append("updVisualizer")
@@ -302,10 +313,6 @@ class _FakeOpenSim:
     @staticmethod
     def Vec3(*values):
         return ("Vec3", values)
-
-    @staticmethod
-    def MobilizedBodyIndex(index):
-        return ("MobilizedBodyIndex", index)
 
 
 class OpenSimAdapterContractTests(unittest.TestCase):
@@ -454,6 +461,25 @@ class OpenSimAdapterContractTests(unittest.TestCase):
             ],
         )
         self.assertEqual(adapter.status()["available"], True)
+
+    def test_fake_matches_opensim_46_mobilized_body_index_contract(self):
+        fake = _FakeOpenSim()
+
+        self.assertFalse(hasattr(fake, "MobilizedBodyIndex"))
+        self.assertIsInstance(
+            _FakeModel(fake, self.model_file.name)
+            .getGround()
+            .getMobilizedBodyIndex(),
+            int,
+        )
+
+        OpenSimVisualizerAdapter(
+            self.model_file.name,
+            self.mappings,
+            opensim_module=fake,
+        )
+        add_calls = fake.models[0].visualizer.simbody.add_calls
+        self.assertEqual([call[0] for call in add_calls], [0, 0])
 
     def test_fake_enforces_supported_quaternion_rotation_constructor(self):
         fake = _FakeOpenSim()
