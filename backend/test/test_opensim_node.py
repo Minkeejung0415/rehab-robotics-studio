@@ -380,6 +380,16 @@ class OpenSimNodeStatusTests(unittest.TestCase):
             "opensim_bindings_unavailable",
         )
         self.assertEqual(status["visualization"]["model_path"], "")
+        self.assertEqual(
+            node.logger.warning_messages,
+            [
+                "OpenSim visualization state available=False "
+                "state=unavailable reason=opensim_bindings_unavailable",
+            ],
+        )
+
+        node.timers[0].callback()
+        self.assertEqual(len(node.logger.warning_messages), 1)
 
     def test_timer_cadence_is_bounded_by_half_timeout_with_safe_minimum(self):
         node = self._node(stale_timeout_s=4.0)

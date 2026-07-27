@@ -111,7 +111,7 @@ class OpenSimBridgeNode(Node):
             if adapter is not None
             else adapter_factory(self._model_path, frame_mappings)
         )
-        self._last_visualization_signature = self._visualization_signature()
+        self._last_visualization_signature: tuple[bool, str, str] | None = None
 
         self._status_publisher = self.create_publisher(
             String,
