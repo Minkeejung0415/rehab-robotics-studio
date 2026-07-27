@@ -7,7 +7,10 @@ from pathlib import Path
 import types
 import unittest
 
-from backend.test import test_opensim_node as node_contracts
+if __package__ == "backend.test":
+    from backend.test import test_opensim_node as node_contracts
+else:
+    import test_opensim_node as node_contracts
 
 
 ROOT = Path(__file__).parents[2]
