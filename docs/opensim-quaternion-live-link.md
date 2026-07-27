@@ -29,6 +29,11 @@ colcon build --packages-select rehab_robotics_bridge
 ros2 launch rehab_robotics_bridge rehab_robotics.launch.py model_path:=C:\models\subject.osim
 ```
 
+Opening the native window requires a complete OpenSim/Simbody visualizer
+installation with the `simbody-visualizer` executable discoverable on
+`PATH`. The OpenSim Python wheel supplies bindings only and is not sufficient
+by itself to start the native visualizer.
+
 The locked defaults are:
 
 | Launch argument | Default |
@@ -85,9 +90,10 @@ Each tick emits:
 - slave frame `opensim_test_slave`: positive 90 degrees about Z,
   `(x,y,z,w)=(0,0,sqrt(0.5),sqrt(0.5))`
 
-With a compatible model and OpenSim Python runtime, the master triad remains at
-identity and the slave triad displays the corresponding positive 90-degree
-active Z rotation.
+With a compatible model, OpenSim Python bindings, and a complete native
+visualizer installation whose `simbody-visualizer` executable is on `PATH`,
+the master triad remains at identity and the slave triad displays the
+corresponding positive 90-degree active Z rotation.
 
 ## Quaternion convention
 
@@ -124,6 +130,12 @@ frame, or unsupported dynamic-decoration API is visible in `visualization`
 state/reason and transition logs. Missing runtime/model support does not stop
 subscriptions: valid messages still advance each sensor's independent live
 counter and freshness in non-visual mode.
+
+If the bindings are importable but the native executable cannot start, the
+visualization reason is `visualizer_initialization_failed`. The bridge then
+continues in subscription/status-only mode: sensor validation, freshness, live
+counters, status publication, and transition logs remain active, but no native
+window is shown.
 
 Stop the deterministic publisher before reconnecting ESP hardware unless you
 have intentionally assigned separate test topics.

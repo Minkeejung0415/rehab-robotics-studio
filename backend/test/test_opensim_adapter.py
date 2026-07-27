@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import importlib.util
 from pathlib import Path
+import shutil
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -630,12 +631,33 @@ class OpenSimAdapterContractTests(unittest.TestCase):
         )
 
 
+def _write_installed_runtime_model(opensim, temp_dir):
+    model_path = str(Path(temp_dir) / "adapter-smoke.osim")
+    model = opensim.Model()
+    model.setName("adapter_smoke")
+    for name, offset in (
+        ("femur_r_imu", opensim.Vec3(0.1, 0.0, 0.0)),
+        ("tibia_r_imu", opensim.Vec3(0.0, 0.2, 0.0)),
+    ):
+        frame = opensim.PhysicalOffsetFrame()
+        frame.setName(name)
+        frame.connectSocket_parent(model.getGround())
+        frame.set_translation(offset)
+        model.addComponent(frame)
+    model.finalizeConnections()
+    model.printToXML(model_path)
+    return model_path, {
+        "master": "/femur_r_imu",
+        "slave": "/tibia_r_imu",
+    }
+
+
 @unittest.skipUnless(
     importlib.util.find_spec("opensim") is not None,
     "opensim module is not installed",
 )
-class OpenSimInstalledRuntimeSmokeTests(unittest.TestCase):
-    """Exercise a minimal real model when OpenSim is already installed."""
+class OpenSimInstalledBindingContractTests(unittest.TestCase):
+    """Exercise real binding APIs without starting the native visualizer."""
 
     def test_supported_rotation_constructor_contract(self):
         import opensim
@@ -647,37 +669,67 @@ class OpenSimInstalledRuntimeSmokeTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             opensim.Rotation(*range(9))
 
+    def test_headless_model_frame_transform_and_decoration_contract(self):
+        import opensim
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_path, mappings = _write_installed_runtime_model(
+                opensim,
+                temp_dir,
+            )
+            loaded_model = opensim.Model(model_path)
+            loaded_model.setUseVisualizer(False)
+            state = loaded_model.initSystem()
+            anchor_positions = {}
+            for component_path in mappings.values():
+                frame = opensim.Frame.safeDownCast(
+                    loaded_model.getComponent(component_path),
+                )
+                self.assertTrue(frame)
+                anchor_positions[component_path] = (
+                    frame.getTransformInGround(state).p()
+                )
+
+            ground_index = (
+                loaded_model.getGround().getMobilizedBodyIndex()
+            )
+            self.assertIsInstance(ground_index, int)
+
+            quaternion = opensim.Quaternion(1.0, 0.0, 0.0, 0.0)
+            rotation = opensim.Rotation(quaternion)
+            transform = opensim.Transform(
+                rotation,
+                anchor_positions[mappings["master"]],
+            )
+            decorations = opensim.Decorations()
+            decorations.addDecoration(opensim.DecorativeFrame(0.12))
+            decorations.addDecoration(
+                opensim.DecorativeText(
+                    f"master: {mappings['master']}",
+                ),
+            )
+            decorations.setTransform(transform)
+
+            self.assertIsNotNone(transform)
+            self.assertIsNotNone(decorations)
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("opensim") is not None
+    and shutil.which("simbody-visualizer") is not None,
+    "opensim module or simbody-visualizer executable is not installed",
+)
+class OpenSimNativeVisualizerSmokeTests(unittest.TestCase):
+    """Exercise the complete native visualizer installation end to end."""
+
     def test_minimal_model_accepts_identity_and_positive_ninety_z_updates(self):
         import opensim
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            model_path = str(Path(temp_dir) / "adapter-smoke.osim")
-            model = opensim.Model()
-            model.setName("adapter_smoke")
-            for name, offset in (
-                ("femur_r_imu", opensim.Vec3(0.1, 0.0, 0.0)),
-                ("tibia_r_imu", opensim.Vec3(0.0, 0.2, 0.0)),
-            ):
-                frame = opensim.PhysicalOffsetFrame()
-                frame.setName(name)
-                frame.connectSocket_parent(model.getGround())
-                frame.set_translation(offset)
-                model.addComponent(frame)
-            model.finalizeConnections()
-            model.printToXML(model_path)
-
-            mappings = {
-                "master": "/femur_r_imu",
-                "slave": "/tibia_r_imu",
-            }
-            loaded_model = opensim.Model(model_path)
-            loaded_model.initSystem()
-            for component_path in mappings.values():
-                self.assertTrue(
-                    opensim.Frame.safeDownCast(
-                        loaded_model.getComponent(component_path),
-                    ),
-                )
+            model_path, mappings = _write_installed_runtime_model(
+                opensim,
+                temp_dir,
+            )
             adapter = create_visualizer_adapter(model_path, mappings)
             self.assertTrue(adapter.status()["available"], adapter.status())
             identity = ros_xyzw_to_opensim_rotation(0.0, 0.0, 0.0, 1.0)
