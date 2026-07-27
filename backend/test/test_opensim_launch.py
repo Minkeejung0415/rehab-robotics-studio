@@ -38,6 +38,7 @@ def _get_clock(node):
 node_contracts._StubNode.get_clock = _get_clock
 
 from rehab_robotics_bridge import opensim_test_publisher  # noqa: E402
+from rehab_robotics_bridge import opensim_node  # noqa: E402
 
 
 class OpenSimTestPublisherContractTests(unittest.TestCase):
@@ -118,6 +119,183 @@ class OpenSimTestPublisherContractTests(unittest.TestCase):
             with self.subTest(entry=entry):
                 self.assertIn(entry, setup_source)
         ast.parse(setup_source)
+
+
+class OpenSimPublisherBridgeIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        node_contracts._StubNode.parameter_overrides = {
+            "master_imu_topic": "/verification/master",
+            "slave_imu_topic": "/verification/slave",
+            "master_frame": "custom_master_frame",
+            "slave_frame": "custom_slave_frame",
+            "model_path": "verification.osim",
+            "status_topic": "/verification/opensim/status",
+            "stale_timeout_s": 2.0,
+        }
+        self.clock = node_contracts._Clock(now=20.0)
+        self.adapter = node_contracts._FakeAdapter(
+            available=True,
+            reason="fake_visualizer",
+        )
+        self.node = opensim_node.OpenSimBridgeNode(
+            adapter=self.adapter,
+            monotonic_clock=self.clock,
+        )
+
+    def test_exact_publisher_messages_cross_both_configured_bridge_paths(self):
+        messages = opensim_test_publisher.known_orientations()
+
+        self.node._on_master_imu(messages["master"])
+        self.assertEqual(len(self.adapter.calls), 1)
+        master_role, master_frame, master_rotation = self.adapter.calls[0]
+        self.assertEqual(
+            (master_role, master_frame),
+            ("master", "custom_master_frame"),
+        )
+        self.assertEqual(master_rotation.scalar_first, (1.0, 0.0, 0.0, 0.0))
+        self.assertEqual(
+            master_rotation.matrix,
+            ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        )
+        master_after_first = self.node.status_snapshot()["sensors"]["master"]
+        slave_before_update = self.node.status_snapshot()["sensors"]["slave"]
+        self.assertEqual(master_after_first["state"], "live")
+        self.assertEqual(master_after_first["updates"], 1)
+        self.assertEqual(slave_before_update["state"], "waiting")
+        self.assertEqual(slave_before_update["updates"], 0)
+
+        self.clock.now = 20.5
+        self.node._on_slave_imu(messages["slave"])
+        self.assertEqual(len(self.adapter.calls), 2)
+        slave_role, slave_frame, slave_rotation = self.adapter.calls[1]
+        self.assertEqual(
+            (slave_role, slave_frame),
+            ("slave", "custom_slave_frame"),
+        )
+        self.assertEqual(
+            slave_rotation.scalar_first,
+            (math.sqrt(0.5), 0.0, 0.0, math.sqrt(0.5)),
+        )
+        expected_90z = (
+            (0.0, -1.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+        )
+        for actual_row, expected_row in zip(
+            slave_rotation.matrix,
+            expected_90z,
+        ):
+            for actual, expected in zip(actual_row, expected_row):
+                self.assertAlmostEqual(actual, expected)
+
+        status = self.node.status_snapshot()
+        self.assertTrue(status["visualization"]["available"])
+        self.assertEqual(status["visualization"]["reason"], "fake_visualizer")
+        self.assertEqual(status["sensors"]["master"]["state"], "live")
+        self.assertEqual(status["sensors"]["master"]["updates"], 1)
+        self.assertAlmostEqual(status["sensors"]["master"]["age_s"], 0.5)
+        self.assertEqual(status["sensors"]["slave"]["state"], "live")
+        self.assertEqual(status["sensors"]["slave"]["updates"], 1)
+        self.assertAlmostEqual(status["sensors"]["slave"]["age_s"], 0.0)
+
+        slave_call = self.adapter.calls[1]
+        slave_state = dict(status["sensors"]["slave"])
+        self.clock.now = 20.75
+        self.node._on_master_imu(messages["master"])
+        updated_status = self.node.status_snapshot()
+        self.assertEqual(self.adapter.calls[1], slave_call)
+        self.assertEqual(updated_status["sensors"]["slave"]["updates"], 1)
+        self.assertEqual(
+            updated_status["sensors"]["slave"]["last_error"],
+            slave_state["last_error"],
+        )
+        self.assertEqual(updated_status["sensors"]["master"]["updates"], 2)
+
+
+class OpenSimLaunchContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.source = LAUNCH_PATH.read_text(encoding="utf-8")
+        cls.tree = ast.parse(cls.source)
+
+    def test_launch_declares_locked_live_link_defaults(self):
+        expected = {
+            "master_imu_topic": "/esp32/master/imu",
+            "slave_imu_topic": "/esp32/slave/imu",
+            "master_frame": "femur_r_imu",
+            "slave_frame": "tibia_r_imu",
+            "model_path": "",
+            "stale_timeout_s": "1.0",
+            "status_topic": "/opensim/status",
+            "enable_opensim_bridge": "true",
+            "enable_opensim_test_publisher": "false",
+        }
+        declared = {}
+        for node in ast.walk(self.tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "DeclareLaunchArgument"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+            ):
+                continue
+            default = next(
+                (
+                    keyword.value.value
+                    for keyword in node.keywords
+                    if keyword.arg == "default_value"
+                    and isinstance(keyword.value, ast.Constant)
+                ),
+                None,
+            )
+            declared[node.args[0].value] = default
+        for name, default in expected.items():
+            with self.subTest(argument=name):
+                self.assertEqual(declared.get(name), default)
+
+    def test_bridge_and_default_off_publisher_wire_exact_topic_parameters(self):
+        for parameter in (
+            "master_imu_topic",
+            "slave_imu_topic",
+            "master_frame",
+            "slave_frame",
+            "model_path",
+            "stale_timeout_s",
+            "status_topic",
+        ):
+            with self.subTest(parameter=parameter):
+                self.assertIn(
+                    f"'{parameter}': LaunchConfiguration('{parameter}')",
+                    self.source,
+                )
+        self.assertIn("executable='opensim_bridge'", self.source)
+        self.assertIn(
+            "condition=IfCondition(LaunchConfiguration('enable_opensim_bridge'))",
+            self.source,
+        )
+        self.assertIn("executable='opensim_test_publisher'", self.source)
+        self.assertIn(
+            "condition=IfCondition("
+            "LaunchConfiguration('enable_opensim_test_publisher'))",
+            self.source,
+        )
+
+    def test_unrelated_nodes_are_retained_and_legacy_opensim_udp_is_removed(self):
+        for executable in (
+            "esp32_bridge_node",
+            "esp_filter",
+            "esp_record",
+            "esp_status",
+            "processing_block_observer",
+            "rosbridge_websocket",
+        ):
+            with self.subTest(executable=executable):
+                self.assertIn(f"executable='{executable}'", self.source)
+        self.assertNotIn("opensim_udp_host", self.source)
+        self.assertNotIn("opensim_udp_port", self.source)
+        self.assertNotIn("'filtered_topic': '/esp/filtered/master'", self.source)
 
 
 if __name__ == "__main__":
