@@ -1,9 +1,9 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.4
-milestone_name: Real-time OpenSim IK
+milestone_name: OpenSim Quaternion Live Link
 status: planning
-last_updated: "2026-07-27T18:29:11.582Z"
+last_updated: "2026-07-27T19:01:18.096Z"
 last_activity: 2026-07-27
 progress:
   total_phases: 0

@@ -1,85 +1,58 @@
 # Requirements: Rehab Robotics Studio
 
-**Defined:** 2026-07-23
-**Milestone:** v1.3 Acquisition Integrity
+**Defined:** 2026-07-27
+**Milestone:** v1.4 OpenSim Quaternion Live Link
 **Core Value:** Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline into usable filtered, biomechanical, and recorded outputs.
 
-## v1.3 Requirements
+## v1.4 Requirements
 
-### Measurement Integrity
+### Quaternion Live Link
 
-- [ ] **DATA-01**: An operator receives acceleration and angular velocity converted with each device's confirmed active accelerometer and gyroscope ranges.
-- [ ] **DATA-02**: Published raw and live acquisition data carries sufficient range or unit metadata for backend and GUI consumers to interpret samples consistently.
-- [ ] **TIME-01**: Synchronized device acquisition time survives firmware transport, backend parsing, ROS publication, and rosbridge delivery.
-- [ ] **TIME-02**: TCP and UDP acquisition frames expose meaningful monotonic sequence values suitable for detecting gaps and reordering.
-- [ ] **ORIENT-01**: Filtered quaternions handle equivalent antipodal inputs and remain normalized, finite, and valid orientations.
-
-### Control And Recovery
-
-- [ ] **CTRL-04**: Pausing live sample rendering does not block ROS service responses or create false control-command timeouts.
-- [ ] **RECOV-01**: After fallback to mock data, an operator can reconnect live ROS acquisition without reloading the application.
-- [ ] **RECOV-02**: Obsolete WebSocket callbacks cannot overwrite a newer connection, and established connection loss enters a controlled recovery state.
-
-### Fresh Health
-
-- [ ] **HEALTH-04**: Pair availability expires when slave-health updates exceed a defined freshness threshold.
-- [ ] **HEALTH-05**: Stream and pair indicators clear or age offline after socket loss, acquisition stop/restart, or a sustained absence of valid frames.
-
-### Joint Angle
-
-- [ ] **JOINT-01**: The pair joint angle is computed from the VQF quaternion differential (`q_slave × q_master_conjugate`) rather than from single-axis accelerometer tilt, so angles remain accurate during dynamic limb movement.
-- [ ] **JOINT-02**: The pair frame exposes three anatomical joint-angle components (primary flexion/extension, secondary ab/adduction, tertiary axial rotation) decomposed from the relative quaternion.
-- [ ] **JOINT-03**: A zero-reference relative quaternion is established from the initial still calibration window so the joint reads near-zero when the limb is in its reference position without requiring hardware alignment tools.
-
-### Verification
-
-- [ ] **VERIFY-05**: Automated regression tests cover non-default scale conversion, timestamp and sequence preservation, quaternion geometry, paused service replies, socket-generation and fallback recovery, and health expiry.
-- [ ] **VERIFY-06**: Automated regression tests verify that the quaternion differential correctly computes known relative orientations and that the zero-reference baseline is properly applied before angle decomposition.
+- [ ] **LINK-01**: An operator can launch `opensim_bridge` with configurable master and slave `sensor_msgs/Imu` input topics.
+- [ ] **LINK-02**: The bridge reads the orientation quaternion from each ESP IMU message and converts it through one documented ROS-to-OpenSim convention boundary.
+- [ ] **LINK-03**: The operator can map each ESP input to a named OpenSim model frame without changing source code.
+- [ ] **LINK-04**: Valid incoming orientations update the corresponding frames in a running OpenSim model or native OpenSim visualizer demonstration.
+- [ ] **LINK-05**: Missing OpenSim runtime/model assets, invalid quaternions, unknown frame mappings, and stale subscriptions produce visible status instead of silent failure.
+- [ ] **LINK-06**: A deterministic local publisher/test proves that known quaternion messages reach the bridge and produce the expected OpenSim orientation update without connected ESP hardware.
 
 ## Future Requirements
 
-### Block Deployment
+### OpenSim IK
 
-- **DEPLOY-01**: Generate a typed ROS processing-block update draft whenever a valid processing block is connected directly to a source block.
-- **DEPLOY-02**: Publish a finalized processing-block update when the operator deploys the graph.
-- **DEPLOY-03**: Package one language-neutral source entry file with manifest YAML, dependencies, graph identity, revision, checksum, and deployment metadata.
-- **DEPLOY-04**: Provide a local ROS observer or inspection path that verifies generated messages while the Jetson is disconnected.
+- **IK-01**: Calibrate sensor-to-model mounting orientations from a known pose.
+- **IK-02**: Run persistent real-time inverse kinematics and publish joint angles.
+- **IK-03**: Validate solved coordinates, synchronization, latency, and biomechanical accuracy.
 
-## Out Of Scope
+### Visualization
+
+- **VIS-01**: Render the solved OpenSim model inside Rehab Robotics Studio.
+
+## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Physical E-STOP and motor-driver integration | Audit finding 1 is safety-critical but requires a separately approved hardware and fail-safe scope. |
-| Graph-load validation and ID restoration | Audit finding 8 is deferred until acquisition correctness and recovery are stable. |
-| Docker packaging, stale aggregator, and documentation cleanup | Audit findings 9-10 are deferred from v1.3. |
-| General streaming and GUI performance optimization | v1.3 addresses confirmed correctness defects; optimization follows measurement and recovery verification. |
-| Block Deployment implementation | The former v1.2 scope is preserved as future work and will resume after acquisition integrity. |
+| Inverse kinematics and joint-angle publication | The milestone first proves that OpenSim can receive the existing ESP quaternion streams. |
+| Full calibration workflow | Fixed/configured frame mapping is sufficient for the live-link prototype. |
+| Jetson production packaging | Deployment architecture follows after the local OpenSim path is demonstrated. |
+| Embedded Studio 3D rendering | OpenSim's native visualizer is sufficient for this prototype. |
+| Clinical or biomechanical validity claims | No IK or external-reference validation is included. |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DATA-01 | Phase 9 | Pending |
-| DATA-02 | Phase 9 | Pending |
-| TIME-01 | Phase 10 | Pending |
-| TIME-02 | Phase 10 | Pending |
-| ORIENT-01 | Phase 10 | Pending |
-| CTRL-04 | Phase 11 | Pending |
-| RECOV-01 | Phase 11 | Pending |
-| RECOV-02 | Phase 11 | Pending |
-| HEALTH-04 | Phase 12 | Pending |
-| HEALTH-05 | Phase 12 | Pending |
-| VERIFY-05 | Phase 13 | Pending |
-| JOINT-01 | Phase 14 | Pending |
-| JOINT-02 | Phase 14 | Pending |
-| JOINT-03 | Phase 14 | Pending |
-| VERIFY-06 | Phase 14 | Pending |
+| LINK-01 | Phase 15 | Pending |
+| LINK-02 | Phase 15 | Pending |
+| LINK-03 | Phase 15 | Pending |
+| LINK-04 | Phase 15 | Pending |
+| LINK-05 | Phase 15 | Pending |
+| LINK-06 | Phase 15 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 15 total
-- Mapped to phases: 15
+- v1.4 requirements: 6 total
+- Mapped to phases: 6
 - Unmapped: 0
 
 ---
-*Requirements defined: 2026-07-23*
-*Last updated: 2026-07-24 — added JOINT-01/02/03 and VERIFY-06 (Phase 14 VQF Quaternion Joint Angles)*
+*Requirements defined: 2026-07-27*
+*Last updated: 2026-07-27 after scope reduction*

@@ -2,106 +2,41 @@
 
 ## Overview
 
-Milestone v1.3 restores trust in live paired-ESP32 acquisition by correcting measurement interpretation and sample identity first, then making control/recovery and health state reliable, and finally locking the corrected contracts down with focused regression coverage. The parked Block Deployment scope and audit findings 1 and 8-10 remain outside this milestone.
+Milestone v1.4 is a single-phase proof of connection between the paired ESP quaternion topics and OpenSim. It replaces the placeholder one-topic UDP forwarder with a directly testable ROS subscription and OpenSim live-orientation update path. IK, calibration, production packaging, and embedded visualization remain deferred.
 
 ## Milestones
 
-- **v1.1 Acquisition Operations** - Phases 5-8 completed; archived in `.planning/milestones/v1.1-ROADMAP.md`
-- **v1.2 Block Deployment** - Parked without phases
-- **v1.3 Acquisition Integrity** - Phases 9-14 planned
+- **v1.1 Acquisition Operations** - Phases 5-8 completed and archived.
+- **v1.2 Block Deployment** - Parked without phases.
+- **v1.3 Acquisition Integrity** - Unfinished prior scope preserved in repository history and existing Phase 9 artifacts.
+- **v1.4 OpenSim Quaternion Live Link** - Phase 15 planned.
 
 ## Phases
 
-- [ ] **Phase 9: Range-Correct Measurement Contract** - Operators and consumers receive IMU values interpreted with confirmed device ranges and explicit metadata.
-- [ ] **Phase 10: Timing, Sequence, and Orientation Integrity** - Samples retain device identity through transport and filtering produces valid orientations.
-- [ ] **Phase 11: Pause-Safe Control and ROS Recovery** - Control replies and live ROS reconnection remain reliable across pause, fallback, close, and restart events.
-- [ ] **Phase 12: Fresh Acquisition Health** - Pair and stream state expires when hardware or valid frames stop reporting.
-- [ ] **Phase 13: Acquisition Integrity Verification** - Automated regressions prove the corrected contracts for audit findings 2-7.
-- [ ] **Phase 14: VQF Quaternion Joint Angles** - Pair joint angles are computed from quaternion differential and exposed as three anatomical components accurate during dynamic movement.
+- [ ] **Phase 15: OpenSim Quaternion Live Link** - An operator can launch OpenSim integration and see the model receive the quaternion orientations already published by the master and slave ESP devices.
 
 ## Phase Details
 
-### Phase 9: Range-Correct Measurement Contract
-**Goal**: Operators and downstream consumers can trust that raw and live IMU values use each device's confirmed active ranges and carry enough context to be interpreted consistently.
-**Depends on**: Phase 8
-**Requirements**: DATA-01, DATA-02
-**Success Criteria** (what must be TRUE):
-  1. An operator who selects a supported non-default accelerometer or gyroscope range receives acceleration and angular velocity scaled according to the range confirmed by that device.
-  2. Raw ROS and rosbridge acquisition data exposes the active range or equivalent unit/scale metadata needed to interpret every sample.
-  3. Backend and GUI consumers report mutually consistent physical values for the same raw IMU sample and confirmed range.
-**Plans**: TBD
-**UI hint**: yes
+### Phase 15: OpenSim Quaternion Live Link
 
-### Phase 10: Timing, Sequence, and Orientation Integrity
-**Goal**: Consumers can trace when and in what order a device acquired each sample while receiving only finite, normalized filtered orientations.
-**Depends on**: Phase 9
-**Requirements**: TIME-01, TIME-02, ORIENT-01
-**Success Criteria** (what must be TRUE):
-  1. A sample's synchronized device acquisition time remains identifiable through firmware transport, backend parsing, ROS publication, and rosbridge delivery rather than being replaced by host receipt time.
-  2. TCP and UDP samples expose meaningful monotonic device sequence values, allowing a consumer to detect a gap or reordered frame.
-  3. Filtering equivalent quaternion inputs `q` and `-q` yields the same physical orientation without cancellation.
-  4. Every emitted filtered quaternion is finite, normalized, and usable as an orientation; zero or otherwise invalid orientations are not emitted as valid samples.
+**Goal**: Prove the complete live path from the existing ESP `sensor_msgs/Imu` quaternion topics through `opensim_bridge` into mapped OpenSim model-frame orientation updates.
+**Depends on**: Existing ESP native IMU publishers
+**Requirements**: LINK-01, LINK-02, LINK-03, LINK-04, LINK-05, LINK-06
+**Success Criteria**:
+1. Launching the stack starts `opensim_bridge` with configurable master/slave IMU topics, model path, and frame mappings.
+2. Publishing known valid quaternions on both configured topics produces corresponding orientation updates in the OpenSim adapter or native visualizer demonstration.
+3. ROS `(x, y, z, w)` ordering and the OpenSim rotation convention are documented and covered by deterministic identity and known-axis tests.
+4. Missing runtime/model assets, invalid inputs, unknown mappings, and stale streams are visible through logs or a status topic.
+5. The local verification path passes without connected ESP hardware.
 **Plans**: TBD
-
-### Phase 11: Pause-Safe Control and ROS Recovery
-**Goal**: Operators can issue commands and regain live ROS acquisition without reloads or stale sockets corrupting the active connection.
-**Depends on**: Phase 10
-**Requirements**: CTRL-04, RECOV-01, RECOV-02
-**Success Criteria** (what must be TRUE):
-  1. An operator receives the actual ROS service result while live sample rendering is paused, without a false command timeout.
-  2. After the application falls back to mock data, an operator can reconnect to live ROS acquisition without reloading the page.
-  3. A delayed callback from an obsolete WebSocket cannot mark a newer live connection disconnected or replace its state.
-  4. Loss of an established rosbridge connection enters a controlled recovery state from which live acquisition can resume.
-**Plans**: TBD
-**UI hint**: yes
-
-### Phase 12: Fresh Acquisition Health
-**Goal**: Operators see pair and stream availability as time-bounded live state rather than indefinitely cached history.
-**Depends on**: Phase 11
-**Requirements**: HEALTH-04, HEALTH-05
-**Success Criteria** (what must be TRUE):
-  1. Pair availability changes offline after slave-health updates exceed the defined freshness threshold.
-  2. Socket loss or an acquisition stop/restart clears prior stream and pair indicators instead of preserving an online state from the previous connection.
-  3. A sustained absence of valid frames ages the stream offline, and a subsequent valid live update can establish fresh status again.
-**Plans**: TBD
-**UI hint**: yes
-
-### Phase 13: Acquisition Integrity Verification
-**Goal**: Maintainers can repeatedly verify every acquisition-integrity correction from audit findings 2-7 through automated tests.
-**Depends on**: Phases 9-12
-**Requirements**: VERIFY-05
-**Success Criteria** (what must be TRUE):
-  1. A maintainer can run automated regressions that exercise non-default range conversion, timestamp and sequence preservation, and quaternion antipodal/normalization cases.
-  2. A maintainer can run automated regressions that exercise paused service replies, socket-generation ownership, mock-to-live fallback recovery, and established-connection loss.
-  3. A maintainer can run automated regressions that prove pair and stream state expire after their freshness bounds and recover only from fresh valid updates.
-  4. The focused acquisition-integrity suite passes locally without requiring the disconnected Jetson target.
-**Plans**: TBD
-
-### Phase 14: VQF Quaternion Joint Angles
-**Goal**: Operators see pair joint angles computed from the VQF quaternion differential rather than raw accelerometer tilt, with three anatomical components (flexion/extension, ab/adduction, axial rotation) that remain accurate during dynamic movement.
-**Depends on**: Phase 10 (normalized, finite quaternion outputs required as input)
-**Requirements**: JOINT-01, JOINT-02, JOINT-03, VERIFY-06
-**Success Criteria** (what must be TRUE):
-  1. During a dynamic limb movement, the displayed pair angle tracks the actual joint position rather than drifting with linear acceleration artifacts.
-  2. The pair frame exposes three distinct angle components; flexion/extension, ab/adduction, and axial rotation each change independently when the corresponding motion is applied.
-  3. After a short still window at acquisition start, the joint reads near-zero in the reference position without the operator needing to level or align the IMUs beyond placing them in consistent orientations.
-  4. Automated regressions verify that a known relative quaternion (e.g., 90° rotation about each axis) decomposes into the correct angle components and that the zero-reference baseline is correctly subtracted.
-**Plans**: TBD
-**UI hint**: yes
 
 ## Progress
 
-**Execution Order:** Phase 9 → Phase 10 → Phase 11 → Phase 12 → Phase 13 → Phase 14
+**Execution Order:** Phase 15
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 9. Range-Correct Measurement Contract | 3/3 | Checkpoint (hardware verification deferred) | - |
-| 10. Timing, Sequence, and Orientation Integrity | 0/TBD | Not started | - |
-| 11. Pause-Safe Control and ROS Recovery | 0/TBD | Not started | - |
-| 12. Fresh Acquisition Health | 0/TBD | Not started | - |
-| 13. Acquisition Integrity Verification | 0/TBD | Not started | - |
-| 14. VQF Quaternion Joint Angles | 0/TBD | Not started | - |
+| 15. OpenSim Quaternion Live Link | 0/TBD | Not started | - |
 
 ---
-*Roadmap created: 2026-07-23 for milestone v1.3 Acquisition Integrity*
-*Extended: 2026-07-24 — added Phase 14 VQF Quaternion Joint Angles (JOINT-01/02/03, VERIFY-06)*
+*Roadmap created: 2026-07-27 for milestone v1.4 OpenSim Quaternion Live Link*
