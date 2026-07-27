@@ -229,6 +229,70 @@ def _make_stub_node():
 class ConfirmedRangeRetentionTests(unittest.TestCase):
     """Verify nullable confirmed-range design and _store_confirmed_control_value."""
 
+    def test_handshake_confirms_ranges_before_starting_binary_stream(self):
+        """CFG range commands must run while the firmware still accepts text."""
+
+        class Reader:
+            def __init__(self):
+                self._buffer = bytearray(b'SENSORS:0,ICM20948\n')
+                self._responses = iter((
+                    b'14 channels; sample_rate=100; node=esp32s3_arduino; transport=tcp\n',
+                    asyncio.TimeoutError(),
+                    b'OK CFG ACC 0\n',
+                    b'OK CFG GYR 0\n',
+                    b'STARTED BIN:esp32s3_arduino transport=tcp\n',
+                    b'SENSORS:0,ICM20948\n',
+                ))
+
+            async def readline(self):
+                response = next(self._responses)
+                if isinstance(response, BaseException):
+                    raise response
+                if response.startswith(b'SENSORS:'):
+                    self._buffer.clear()
+                return response
+
+        class Writer:
+            def __init__(self):
+                self.writes = []
+
+            def write(self, data):
+                self.writes.append(data)
+
+            async def drain(self):
+                pass
+
+        class Logger:
+            def info(self, _message):
+                pass
+
+            def warning(self, _message):
+                pass
+
+        async def run_handshake():
+            node = _make_stub_node()
+            node._node_id = 'test'
+            node._handshake_timeout_s = 0.1
+            node.get_logger = lambda: Logger()
+            writer = Writer()
+            transport = await bridge.Esp32BridgeNode._handshake(node, Reader(), writer)
+            return node, writer, transport
+
+        node, writer, transport = asyncio.run(run_handshake())
+
+        self.assertEqual(transport, 'tcp')
+        self.assertEqual(
+            writer.writes,
+            [
+                bridge.HANDSHAKE_CONNECT,
+                b'CFG 0 ACC 0\n',
+                b'CFG 0 GYR 0\n',
+                bridge.HANDSHAKE_START,
+            ],
+        )
+        self.assertEqual(node._confirmed_accel_range_g, 2)
+        self.assertEqual(node._confirmed_gyro_range_dps, 250)
+
     def test_09_01_03_initial_confirmed_ranges_are_none(self):
         """Both confirmed range fields start as None on a freshly created stub."""
         node = _make_stub_node()

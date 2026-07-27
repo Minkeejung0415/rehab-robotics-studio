@@ -337,6 +337,45 @@ describe('RosbridgeDataSource — 09-02-02 warning/cache/emission', () => {
     assert.ok(Array.isArray(pairFrame.imu.gyro), 'pair frame must have imu.gyro array');
   });
 
+  it('valid paired frames emit a changing relative-angle proxy when the slave moves', () => {
+    const frames: Array<{ imu: { accel: number[] } }> = [];
+    const { ds, masterTopic, slaveTopic, inject } = makeStub();
+    ds.subscribe((frame) => { frames.push(frame); });
+
+    // Skip the wall-clock neutral-learning delay; this test isolates the
+    // accepted-frame -> paired-angle emission path after calibration.
+    const internalDs = ds as unknown as {
+      angleStabilizer: {
+        baseline: number | null;
+        filtered: number | null;
+        lastTime: number | null;
+      };
+    };
+    internalDs.angleStabilizer.baseline = 0;
+    internalDs.angleStabilizer.filtered = 0;
+    internalDs.angleStabilizer.lastTime = performance.now() / 1_000;
+
+    inject(masterTopic, makeMinimalRaw('master', 8, 2000));
+
+    const flexed = JSON.parse(makeMinimalRaw('slave', 8, 2000)) as {
+      imu: Record<string, number>;
+    };
+    flexed.imu = { ...flexed.imu, ax: 4096, ay: 0, az: 4096 };
+    inject(slaveTopic, JSON.stringify(flexed));
+    const flexedX = frames[frames.length - 1]?.imu.accel[0];
+
+    const extended = {
+      ...flexed,
+      imu: { ...flexed.imu, ax: -4096 },
+    };
+    inject(slaveTopic, JSON.stringify(extended));
+    const extendedX = frames[frames.length - 1]?.imu.accel[0];
+
+    assert.equal(typeof flexedX, 'number');
+    assert.equal(typeof extendedX, 'number');
+    assert.notEqual(extendedX, flexedX, 'moving the slave must change the emitted pair angle');
+  });
+
 });
 
 // ── 09-02-03: Service names and ACK coordination ──────────────────────────────
