@@ -365,6 +365,32 @@ class OpenSimAdapterContractTests(unittest.TestCase):
             "frame_not_found:master:/missing",
         )
 
+    def test_factory_reports_unsupported_dynamic_decoration_bindings(self):
+        from unittest.mock import patch
+
+        fake = _FakeOpenSim()
+        original_model_factory = fake.Model
+
+        def model_without_dynamic_decorations(path):
+            model = original_model_factory(path)
+            model.visualizer.simbody.addDecoration = None
+            model.visualizer.simbody.updDecoration = None
+            return model
+
+        fake.Model = model_without_dynamic_decorations
+        with patch(
+            "rehab_robotics_bridge.opensim_adapter.import_module",
+            return_value=fake,
+        ):
+            adapter = create_visualizer_adapter(
+                self.model_file.name,
+                self.mappings,
+            )
+        self.assertEqual(
+            adapter.status()["reason"],
+            "dynamic_decorations_unsupported_by_bindings",
+        )
+
     def test_initialization_owns_model_resolves_exact_frames_and_retains_labels(self):
         fake = _FakeOpenSim()
         adapter = OpenSimVisualizerAdapter(
@@ -453,6 +479,32 @@ class OpenSimAdapterContractTests(unittest.TestCase):
             adapter.update_sensor("master", self.mappings["slave"], rotation)
         self.assertEqual(model.visualizer.simbody.updated_indices, [])
         self.assertEqual(model.visualizer.show_states, [])
+
+    def test_native_update_failure_becomes_explicit_unavailable_status(self):
+        fake = _FakeOpenSim()
+        adapter = OpenSimVisualizerAdapter(
+            self.model_file.name,
+            self.mappings,
+            opensim_module=fake,
+        )
+        model = fake.models[0]
+        model.visualizer.show = lambda _state: (_ for _ in ()).throw(
+            RuntimeError("visualizer closed"),
+        )
+        rotation = ros_xyzw_to_opensim_rotation(0.0, 0.0, 0.0, 1.0)
+
+        self.assertFalse(
+            adapter.update_sensor(
+                "master",
+                self.mappings["master"],
+                rotation,
+            ),
+        )
+        self.assertEqual(
+            adapter.status()["reason"],
+            "visualizer_update_failed",
+        )
+        self.assertFalse(adapter.status()["available"])
 
 
 @unittest.skipUnless(
