@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 import time
 from typing import Callable
 
@@ -62,7 +63,13 @@ class OpenSimBridgeNode(Node):
             for name, default in parameter_defaults.items()
         }
         self._model_path = str(values["model_path"])
-        self._stale_timeout_s = max(float(values["stale_timeout_s"]), 0.001)
+        try:
+            configured_timeout = float(values["stale_timeout_s"])
+        except (TypeError, ValueError):
+            configured_timeout = 1.0
+        if not math.isfinite(configured_timeout):
+            configured_timeout = 1.0
+        self._stale_timeout_s = max(configured_timeout, 0.1)
         self._sensor_states = {
             "master": _SensorState(
                 topic=str(values["master_imu_topic"]),
@@ -82,6 +89,7 @@ class OpenSimBridgeNode(Node):
             if adapter is not None
             else adapter_factory(self._model_path, frame_mappings)
         )
+        self._last_visualization_signature = self._visualization_signature()
 
         self._status_publisher = self.create_publisher(
             String,
@@ -99,6 +107,10 @@ class OpenSimBridgeNode(Node):
             self._sensor_states["slave"].topic,
             self._on_slave_imu,
             10,
+        )
+        self._status_timer = self.create_timer(
+            min(self._stale_timeout_s / 2.0, 0.5),
+            self._on_status_timer,
         )
 
     def _on_master_imu(self, message: Imu) -> None:
@@ -118,9 +130,7 @@ class OpenSimBridgeNode(Node):
                 orientation.w,
             )
         except (TypeError, ValueError) as exc:
-            sensor.state = "invalid"
-            sensor.last_error = str(exc)
-            self._publish_status()
+            self._set_sensor_state(role, "invalid", str(exc))
             return
 
         try:
@@ -129,31 +139,91 @@ class OpenSimBridgeNode(Node):
                 sensor.frame,
                 rotation,
             )
-        except (RuntimeError, TypeError, ValueError) as exc:
-            sensor.state = "mapping_error"
-            sensor.last_error = str(exc) or "adapter_update_failed"
-            self._publish_status()
+        except Exception as exc:
+            self._set_sensor_state(
+                role,
+                "mapping_error",
+                str(exc) or "adapter_update_failed",
+            )
             return
 
         if not accepted:
-            sensor.state = "mapping_error"
-            sensor.last_error = "adapter_update_failed"
-            self._publish_status()
+            self._set_sensor_state(
+                role,
+                "mapping_error",
+                "adapter_update_failed",
+            )
             return
 
         sensor.last_valid_monotonic = self._monotonic_clock()
         sensor.updates += 1
-        sensor.state = "live"
-        sensor.last_error = ""
+        self._set_sensor_state(role, "live", "")
+
+    def _set_sensor_state(
+        self,
+        role: str,
+        state: str,
+        error: str,
+    ) -> None:
+        sensor = self._sensor_states[role]
+        if (sensor.state, sensor.last_error) == (state, error):
+            return
+        previous_state = sensor.state
+        sensor.state = state
+        sensor.last_error = error
+        message = (
+            f"OpenSim sensor {role} state {previous_state}->{state}"
+            + (f": {error}" if error else "")
+        )
+        if state == "live":
+            self.get_logger().info(message)
+        else:
+            self.get_logger().warning(message)
+
+    def _visualization_signature(self) -> tuple[bool, str, str]:
+        try:
+            adapter_status = self._adapter.status()
+            return (
+                bool(adapter_status.get("available", False)),
+                str(adapter_status.get("state", "unavailable")),
+                str(adapter_status.get("reason", "")),
+            )
+        except Exception:
+            return (False, "unavailable", "adapter_status_failed")
+
+    def _on_status_timer(self) -> None:
+        now = self._monotonic_clock()
+        for role in _ROLES:
+            sensor = self._sensor_states[role]
+            if (
+                sensor.last_valid_monotonic is not None
+                and now - sensor.last_valid_monotonic > self._stale_timeout_s
+            ):
+                self._set_sensor_state(role, "stale", "stale_timeout")
+
+        visualization_signature = self._visualization_signature()
+        if visualization_signature != self._last_visualization_signature:
+            available, state, reason = visualization_signature
+            message = (
+                "OpenSim visualization state "
+                f"available={available} state={state} reason={reason}"
+            )
+            if available:
+                self.get_logger().info(message)
+            else:
+                self.get_logger().warning(message)
+            self._last_visualization_signature = visualization_signature
         self._publish_status()
 
     def status_snapshot(self) -> dict[str, object]:
         now = self._monotonic_clock()
-        adapter_status = self._adapter.status()
+        available, adapter_state, adapter_reason = (
+            self._visualization_signature()
+        )
         visualization = {
-            "available": bool(adapter_status.get("available", False)),
-            "state": str(adapter_status.get("state", "unavailable")),
-            "reason": str(adapter_status.get("reason", "")),
+            "available": available,
+            "state": adapter_state,
+            "reason": adapter_reason,
             "model_path": self._model_path,
         }
         sensors = {}
