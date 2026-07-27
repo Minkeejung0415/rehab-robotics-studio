@@ -81,8 +81,24 @@ class _StubNode:
 
 
 class _Imu:
-    def __init__(self, x=0.0, y=0.0, z=0.0, w=1.0):
+    def __init__(
+        self,
+        x=0.0,
+        y=0.0,
+        z=0.0,
+        w=1.0,
+        *,
+        stamp_sec=None,
+        stamp_nanosec=0,
+    ):
         self.orientation = types.SimpleNamespace(x=x, y=y, z=z, w=w)
+        if stamp_sec is not None:
+            self.header = types.SimpleNamespace(
+                stamp=types.SimpleNamespace(
+                    sec=stamp_sec,
+                    nanosec=stamp_nanosec,
+                ),
+            )
 
 
 class _String:
@@ -98,11 +114,21 @@ def _install_ros_stubs():
     rclpy = types.ModuleType("rclpy")
     rclpy.node = types.ModuleType("rclpy.node")
     rclpy.node.Node = _StubNode
+    rclpy.qos = types.ModuleType("rclpy.qos")
+    rclpy.qos.HistoryPolicy = types.SimpleNamespace(KEEP_LAST="keep_last")
+
+    class QoSProfile:
+        def __init__(self, *, history, depth):
+            self.history = history
+            self.depth = depth
+
+    rclpy.qos.QoSProfile = QoSProfile
     rclpy.init = lambda args=None: None
     rclpy.spin = lambda node: None
     rclpy.try_shutdown = lambda: None
     sys.modules["rclpy"] = rclpy
     sys.modules["rclpy.node"] = rclpy.node
+    sys.modules["rclpy.qos"] = rclpy.qos
 
     sensor_msgs = types.ModuleType("sensor_msgs")
     sensor_msgs.msg = types.ModuleType("sensor_msgs.msg")
@@ -172,6 +198,12 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
         )
         self.assertTrue(
             all(subscription.message_type is _Imu for subscription in node.subscriptions)
+        )
+        self.assertTrue(
+            all(subscription.qos.history == "keep_last" for subscription in node.subscriptions)
+        )
+        self.assertTrue(
+            all(subscription.qos.depth == 1 for subscription in node.subscriptions)
         )
         self.assertEqual(len(node.publishers), 1)
         self.assertEqual(node.publishers[0].topic, "/opensim/status")
@@ -251,6 +283,28 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
             node._sensor_states["master"].last_error,
             "quaternion_non_finite",
         )
+
+    def test_out_of_order_message_cannot_overwrite_or_refresh_newer_state(self):
+        adapter = _FakeAdapter()
+        node = self._node(adapter)
+        node._on_master_imu(
+            _Imu(z=1.0, w=1.0, stamp_sec=20, stamp_nanosec=500),
+        )
+        latest_call = adapter.calls[-1]
+        latest_valid_time = node._sensor_states["master"].last_valid_monotonic
+        latest_source_time = node._sensor_states["master"].last_source_timestamp_ns
+
+        self.clock.now = 12.0
+        node._on_master_imu(
+            _Imu(x=1.0, w=1.0, stamp_sec=19, stamp_nanosec=999),
+        )
+
+        sensor = node._sensor_states["master"]
+        self.assertEqual(adapter.calls, [latest_call])
+        self.assertEqual(sensor.updates, 1)
+        self.assertEqual(sensor.last_valid_monotonic, latest_valid_time)
+        self.assertEqual(sensor.last_source_timestamp_ns, latest_source_time)
+        self.assertEqual(sensor.state, "live")
 
     def test_unavailable_visualization_accepts_both_roles_as_live_no_ops(self):
         reasons = (

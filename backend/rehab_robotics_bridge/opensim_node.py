@@ -9,6 +9,7 @@ from typing import Callable
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile
 from sensor_msgs.msg import Imu
 from std_msgs.msg import String
 
@@ -21,6 +22,22 @@ from .opensim_adapter import (
 
 _SCHEMA = "rehab.opensim_live_link.1"
 _ROLES = ("master", "slave")
+_IMU_QOS = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=1)
+
+
+def _source_timestamp_ns(message: Imu) -> int | None:
+    """Return a usable positive ROS source timestamp, if one was supplied."""
+
+    try:
+        stamp = message.header.stamp
+        seconds = int(stamp.sec)
+        nanoseconds = int(stamp.nanosec)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if seconds < 0 or not 0 <= nanoseconds < 1_000_000_000:
+        return None
+    timestamp_ns = seconds * 1_000_000_000 + nanoseconds
+    return timestamp_ns if timestamp_ns > 0 else None
 
 
 @dataclass
@@ -30,6 +47,7 @@ class _SensorState:
     waiting_since_monotonic: float
     state: str = "waiting"
     last_valid_monotonic: float | None = None
+    last_source_timestamp_ns: int | None = None
     updates: int = 0
     last_error: str = ""
 
@@ -104,13 +122,13 @@ class OpenSimBridgeNode(Node):
             Imu,
             self._sensor_states["master"].topic,
             self._on_master_imu,
-            10,
+            _IMU_QOS,
         )
         self._slave_subscription = self.create_subscription(
             Imu,
             self._sensor_states["slave"].topic,
             self._on_slave_imu,
-            10,
+            _IMU_QOS,
         )
         self._status_timer = self.create_timer(
             min(self._stale_timeout_s / 2.0, 0.5),
@@ -125,6 +143,13 @@ class OpenSimBridgeNode(Node):
 
     def _on_imu(self, role: str, message: Imu) -> None:
         sensor = self._sensor_states[role]
+        source_timestamp_ns = _source_timestamp_ns(message)
+        if (
+            source_timestamp_ns is not None
+            and sensor.last_source_timestamp_ns is not None
+            and source_timestamp_ns <= sensor.last_source_timestamp_ns
+        ):
+            return
         orientation = message.orientation
         try:
             rotation = ros_xyzw_to_opensim_rotation(
@@ -160,6 +185,8 @@ class OpenSimBridgeNode(Node):
             return
 
         sensor.last_valid_monotonic = self._monotonic_clock()
+        if source_timestamp_ns is not None:
+            sensor.last_source_timestamp_ns = source_timestamp_ns
         sensor.updates += 1
         self._set_sensor_state(role, "live", "")
 
