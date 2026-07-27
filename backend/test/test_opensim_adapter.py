@@ -663,12 +663,21 @@ class OpenSimInstalledRuntimeSmokeTests(unittest.TestCase):
                 frame.connectSocket_parent(model.getGround())
                 frame.set_translation(offset)
                 model.addComponent(frame)
+            model.finalizeConnections()
             model.printToXML(model_path)
 
             mappings = {
                 "master": "/femur_r_imu",
                 "slave": "/tibia_r_imu",
             }
+            loaded_model = opensim.Model(model_path)
+            loaded_model.initSystem()
+            for component_path in mappings.values():
+                self.assertTrue(
+                    opensim.Frame.safeDownCast(
+                        loaded_model.getComponent(component_path),
+                    ),
+                )
             adapter = create_visualizer_adapter(model_path, mappings)
             self.assertTrue(adapter.status()["available"], adapter.status())
             identity = ros_xyzw_to_opensim_rotation(0.0, 0.0, 0.0, 1.0)
