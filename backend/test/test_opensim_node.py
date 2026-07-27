@@ -288,5 +288,174 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
                 )
 
 
+class OpenSimNodeStatusTests(unittest.TestCase):
+    def setUp(self):
+        _StubNode.parameter_overrides = {}
+        self.clock = _Clock()
+
+    def _node(self, adapter=None, **overrides):
+        _StubNode.parameter_overrides = overrides
+        return opensim_node.OpenSimBridgeNode(
+            adapter=adapter or _FakeAdapter(),
+            monotonic_clock=self.clock,
+        )
+
+    def test_initial_status_is_versioned_compact_and_reports_waiting_roles(self):
+        adapter = _FakeAdapter(
+            available=False,
+            reason="opensim_bindings_unavailable",
+        )
+        node = self._node(adapter)
+
+        self.assertEqual(len(node.timers), 1)
+        node.timers[0].callback()
+        payload = node.publishers[0].messages[-1].data
+        status = json.loads(payload)
+
+        self.assertEqual(
+            payload,
+            json.dumps(status, sort_keys=True, separators=(",", ":")),
+        )
+        self.assertEqual(status["schema"], "rehab.opensim_live_link.1")
+        self.assertEqual(status["sensors"]["master"]["state"], "waiting")
+        self.assertIsNone(status["sensors"]["master"]["age_s"])
+        self.assertEqual(status["sensors"]["slave"]["state"], "waiting")
+        self.assertFalse(status["visualization"]["available"])
+        self.assertEqual(
+            status["visualization"]["reason"],
+            "opensim_bindings_unavailable",
+        )
+        self.assertEqual(status["visualization"]["model_path"], "")
+
+    def test_timer_cadence_is_bounded_by_half_timeout_with_safe_minimum(self):
+        node = self._node(stale_timeout_s=4.0)
+        self.assertGreater(node.timers[0].period, 0.0)
+        self.assertLessEqual(node.timers[0].period, 2.0)
+
+        short_timeout_node = self._node(stale_timeout_s=-2.0)
+        self.assertGreater(short_timeout_node.timers[0].period, 0.0)
+        self.assertGreater(short_timeout_node._stale_timeout_s, 0.0)
+        self.assertLessEqual(
+            short_timeout_node.timers[0].period,
+            short_timeout_node._stale_timeout_s / 2.0,
+        )
+
+    def test_valid_update_changes_only_one_role_and_logs_transition_once(self):
+        node = self._node()
+        initial_log_count = len(node.logger.info_messages)
+
+        node._on_master_imu(_Imu())
+        first_log_count = len(node.logger.info_messages)
+        self.clock.now += 0.1
+        node._on_master_imu(_Imu(y=1.0, w=1.0))
+
+        status = node.status_snapshot()
+        self.assertEqual(status["sensors"]["master"]["state"], "live")
+        self.assertEqual(status["sensors"]["master"]["updates"], 2)
+        self.assertEqual(status["sensors"]["master"]["last_error"], "")
+        self.assertEqual(status["sensors"]["slave"]["state"], "waiting")
+        self.assertEqual(first_log_count, initial_log_count + 1)
+        self.assertEqual(len(node.logger.info_messages), first_log_count)
+
+    def test_invalid_reason_is_observable_without_refreshing_last_valid_time(self):
+        node = self._node()
+        node._on_master_imu(_Imu())
+        last_valid_time = node._sensor_states["master"].last_valid_monotonic
+        prior_warning_count = len(node.logger.warning_messages)
+        self.clock.now += 0.6
+
+        node._on_master_imu(_Imu(w=0.0))
+        first_warning_count = len(node.logger.warning_messages)
+        node._on_master_imu(_Imu(w=0.0))
+
+        sensor = node.status_snapshot()["sensors"]["master"]
+        self.assertEqual(sensor["state"], "invalid")
+        self.assertEqual(sensor["last_error"], "quaternion_near_zero")
+        self.assertEqual(
+            node._sensor_states["master"].last_valid_monotonic,
+            last_valid_time,
+        )
+        self.assertEqual(first_warning_count, prior_warning_count + 1)
+        self.assertEqual(
+            len(node.logger.warning_messages),
+            first_warning_count,
+        )
+
+    def test_timer_marks_roles_stale_independently_and_keeps_publishing(self):
+        node = self._node(stale_timeout_s=1.0)
+        node._on_master_imu(_Imu())
+        self.clock.now = 10.6
+        node._on_slave_imu(_Imu())
+
+        self.clock.now = 11.1
+        node.timers[0].callback()
+        first_status = json.loads(node.publishers[0].messages[-1].data)
+        self.assertEqual(first_status["sensors"]["master"]["state"], "stale")
+        self.assertEqual(first_status["sensors"]["slave"]["state"], "live")
+        self.assertAlmostEqual(first_status["sensors"]["master"]["age_s"], 1.1)
+        self.assertAlmostEqual(first_status["sensors"]["slave"]["age_s"], 0.5)
+
+        published_count = len(node.publishers[0].messages)
+        stale_warning_count = len(node.logger.warning_messages)
+        node.timers[0].callback()
+        self.assertEqual(len(node.publishers[0].messages), published_count + 1)
+        self.assertEqual(len(node.logger.warning_messages), stale_warning_count)
+
+        self.clock.now = 11.7
+        node.timers[0].callback()
+        second_status = json.loads(node.publishers[0].messages[-1].data)
+        self.assertEqual(second_status["sensors"]["master"]["state"], "stale")
+        self.assertEqual(second_status["sensors"]["slave"]["state"], "stale")
+
+    def test_adapter_failure_marks_only_affected_role_mapping_error(self):
+        adapter = _FakeAdapter(accepted=False)
+        node = self._node(adapter)
+
+        node._on_master_imu(_Imu())
+        status = node.status_snapshot()
+        self.assertEqual(
+            status["sensors"]["master"]["state"],
+            "mapping_error",
+        )
+        self.assertEqual(
+            status["sensors"]["master"]["last_error"],
+            "adapter_update_failed",
+        )
+        self.assertEqual(status["sensors"]["slave"]["state"], "waiting")
+        self.assertTrue(
+            any(
+                "mapping_error" in message
+                for message in node.logger.warning_messages
+            )
+        )
+
+        adapter.accepted = True
+        node._on_slave_imu(_Imu())
+        status = node.status_snapshot()
+        self.assertEqual(status["sensors"]["master"]["state"], "mapping_error")
+        self.assertEqual(status["sensors"]["slave"]["state"], "live")
+
+    def test_unavailable_visualization_remains_orthogonal_to_live_freshness(self):
+        node = self._node(
+            UnavailableVisualizerAdapter(
+                "model_path_not_found",
+                {"master": "femur_r_imu", "slave": "tibia_r_imu"},
+            )
+        )
+        node._on_master_imu(_Imu())
+        node._on_slave_imu(_Imu())
+        self.clock.now += 0.5
+        node.timers[0].callback()
+        status = json.loads(node.publishers[0].messages[-1].data)
+
+        self.assertFalse(status["visualization"]["available"])
+        self.assertEqual(
+            status["visualization"]["reason"],
+            "model_path_not_found",
+        )
+        self.assertEqual(status["sensors"]["master"]["state"], "live")
+        self.assertEqual(status["sensors"]["slave"]["state"], "live")
+
+
 if __name__ == "__main__":
     unittest.main()
