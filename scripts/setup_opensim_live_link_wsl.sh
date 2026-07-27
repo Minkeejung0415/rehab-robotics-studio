@@ -9,6 +9,8 @@ MAMBA_ROOT_PREFIX="${HOME}/.micromamba"
 ENV_NAME="rehab-opensim"
 ENV_PYTHON="${MAMBA_ROOT_PREFIX}/envs/${ENV_NAME}/bin/python"
 DEMO_MODEL="${PROJECT_DIR}/examples/opensim_quaternion_demo.osim"
+RUNTIME_DEMO_MODEL="${WS_DIR}/opensim_quaternion_demo.osim"
+RUNTIME_RUNNER="${WS_DIR}/run_opensim_live_link_wsl.sh"
 
 if [[ ! -f /opt/ros/humble/setup.bash ]]; then
     echo "ROS 2 Humble is not installed at /opt/ros/humble." >&2
@@ -52,6 +54,9 @@ set -u
 
 "${ENV_PYTHON}" "${PROJECT_DIR}/scripts/create_opensim_demo_model.py" \
     "${DEMO_MODEL}"
+cp -f "${DEMO_MODEL}" "${RUNTIME_DEMO_MODEL}"
+cp -f "${PROJECT_DIR}/scripts/run_opensim_live_link_wsl.sh" \
+    "${RUNTIME_RUNNER}"
 
 export PYTHONPATH="${MAMBA_ROOT_PREFIX}/envs/${ENV_NAME}/lib/python3.10/site-packages:${PYTHONPATH:-}"
 export LD_LIBRARY_PATH="${MAMBA_ROOT_PREFIX}/envs/${ENV_NAME}/lib:${LD_LIBRARY_PATH:-}"
