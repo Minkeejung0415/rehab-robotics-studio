@@ -99,6 +99,23 @@ class QuaternionConversionTests(unittest.TestCase):
         scaled = ros_xyzw_to_opensim_rotation(0.0, 0.0, 0.0, 42.0)
         self.assertEqual(scaled, unit)
 
+    def test_extreme_finite_components_normalize_without_overflow(self):
+        rotation = ros_xyzw_to_opensim_rotation(
+            1e308,
+            1e308,
+            1e308,
+            1e308,
+        )
+        self.assertEqual(rotation.scalar_first, (0.5, 0.5, 0.5, 0.5))
+        self.assertMatrixAlmostEqual(
+            rotation.matrix,
+            (
+                (0.0, 0.0, 1.0),
+                (1.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0),
+            ),
+        )
+
     def test_antipodal_inputs_produce_the_same_rotation_matrix(self):
         positive = ros_xyzw_to_opensim_rotation(0.1, -0.2, 0.3, 0.4)
         negative = ros_xyzw_to_opensim_rotation(-0.1, 0.2, -0.3, -0.4)

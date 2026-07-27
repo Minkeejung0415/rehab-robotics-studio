@@ -52,13 +52,16 @@ def ros_xyzw_to_opensim_rotation(
     if not all(math.isfinite(component) for component in components):
         raise ValueError("quaternion_non_finite")
 
-    norm = math.sqrt(sum(component * component for component in components))
-    if norm < _MIN_QUATERNION_NORM:
+    scale = max(abs(component) for component in components)
+    if scale < _MIN_QUATERNION_NORM:
         raise ValueError("quaternion_near_zero")
 
-    x_n, y_n, z_n, w_n = (
-        component / norm for component in components
-    )
+    scaled = tuple(component / scale for component in components)
+    norm = math.hypot(*scaled)
+    normalized = tuple(component / norm for component in scaled)
+    if not all(math.isfinite(value) for value in normalized):
+        raise ValueError("quaternion_norm_invalid")
+    x_n, y_n, z_n, w_n = normalized
     xx, yy, zz = x_n * x_n, y_n * y_n, z_n * z_n
     xy, xz, yz = x_n * y_n, x_n * z_n, y_n * z_n
     wx, wy, wz = w_n * x_n, w_n * y_n, w_n * z_n
