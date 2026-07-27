@@ -18,13 +18,11 @@ Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline 
 
 ### Active
 
-- [ ] Decode accelerometer and gyroscope samples using the ranges confirmed by the ESP32 rather than fixed default scale factors.
-- [ ] Preserve device timing and monotonic sequence information through the TCP/UDP, ROS, and rosbridge acquisition path.
-- [ ] Filter quaternion samples without producing non-unit or zero orientations.
-- [ ] Continue resolving ROS service responses while live-frame rendering is paused.
-- [ ] Recover from ROSbridge fallback, close, and restart events without stale sockets or a forced page reload.
-- [ ] Expire stale master/slave and stream-health state so disconnected hardware cannot remain falsely online.
-- [ ] Compute pair joint angles from the VQF quaternion differential between slave and master devices, exposing three anatomical angle components accurate during dynamic movement.
+- [ ] Consume synchronized, normalized master and slave IMU quaternions through a real ROS 2 `opensim_bridge` node.
+- [ ] Calibrate sensor-to-model orientation from a known reference pose and reject invalid or stale orientation inputs.
+- [ ] Run real-time OpenSim/OpenSense-compatible inverse kinematics against a configurable musculoskeletal model.
+- [ ] Publish solved joint angles, timestamps, solver quality, and bridge health for ROS and rosbridge consumers.
+- [ ] Verify quaternion conventions, calibration, synchronization, and known-pose IK results with deterministic local tests.
 
 ### Out of Scope
 
@@ -33,20 +31,23 @@ Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline 
 - Motor-control and EtherCAT integration - unrelated to IMU acquisition operations.
 - Block Deployment work previously scoped as v1.2 - parked intact for a later milestone while acquisition integrity is corrected.
 - Audit findings 1 and 8-10 - physical E-STOP integration, graph persistence, Docker packaging, stale aggregator/documentation, and broader performance work are deferred.
+- Embedded or native OpenSim 3D visualization - explicitly deferred to a later milestone; v1.4 only preserves compatible joint/model outputs for it.
+- Remaining v1.3 Acquisition Integrity phases - preserved as unfinished prior scope while v1.4 is active.
 
-## Current Milestone: v1.3 Acquisition Integrity
+## Current Milestone: v1.4 Real-time OpenSim IK
 
-**Goal:** Make live paired-ESP32 measurements, timing, transport recovery, command handling, and health reporting correct and trustworthy end to end.
+**Goal:** Turn synchronized paired-ESP32 quaternion streams into calibrated, real-time OpenSim inverse-kinematics joint angles exposed through ROS 2.
 
 **Target features:**
-- Range-aware IMU conversion, preserved device timestamps/sequences, and geometry-safe quaternion filtering.
-- Pause-safe service responses plus race-free ROSbridge fallback, restart, and hardware reconnection.
-- Time-bounded master/slave and stream health that turns offline when valid updates stop.
-- VQF quaternion differential pair angle (3D: flexion/extension, ab/adduction, axial rotation) replacing raw accelerometer tilt.
+- A real `opensim_bridge` ROS 2 node that synchronizes and validates master/slave quaternion inputs.
+- Reference-pose sensor-to-model calibration with explicit quaternion frame and ordering conventions.
+- Real-time OpenSim/OpenSense-compatible IK with configurable model, IMU frame mapping, and joint selection.
+- Standard ROS joint-angle and diagnostic outputs suitable for rosbridge and later 3D visualization.
+- Local deterministic verification that does not require the disconnected Jetson target.
 
 ## Context
 
-The GUI and ROS 2 backend already expose paired ESP32 controls, health, processing, recording, and rosbridge integration. A repository-wide diagnosis confirmed six acquisition-integrity defect groups spanning firmware-configured scale factors, timing metadata, quaternion filtering, paused service handling, reconnection ownership, and stale health state. The former v1.2 Block Deployment scope is parked for later; v1.3 is limited to audit findings 2-7 and their regression coverage.
+The GUI and ROS 2 backend already expose paired ESP32 controls, health, processing, recording, native `sensor_msgs/Imu` topics, and rosbridge integration. A placeholder `opensim_bridge` currently forwards one filtered JSON stream over UDP but does not synchronize multiple IMUs, calibrate sensor frames, execute IK, or publish joint states. v1.4 replaces that placeholder with the real-time IK boundary. OpenSim GUI or embedded web 3D visualization is intentionally deferred, while outputs should remain compatible with that future milestone. The unfinished v1.3 roadmap and Phase 9 artifacts remain preserved in repository history and on disk.
 
 ## Constraints
 
@@ -68,6 +69,9 @@ The GUI and ROS 2 backend already expose paired ESP32 controls, health, processi
 | Generate drafts on connection and finalize on Deploy | Connection provides immediate feedback while Deploy remains the operator-controlled release boundary | Active |
 | Keep the source payload language-neutral and single-entry | Supports future processor languages without introducing archive handling in v1.2 | Active |
 | Park Block Deployment and prioritize acquisition integrity as v1.3 | Incorrect measurements and misleading live state undermine every downstream processing or deployment feature | Active |
+| Start v1.4 as a separate real-time OpenSim IK milestone | OpenSim integration is a distinct model/calibration/solver boundary and the user explicitly selected a new milestone | Active |
+| Defer 3D visualization beyond v1.4 | First establish trustworthy real-time IK outputs; visualization can consume the stable ROS/model contract later | Active |
+| Preserve unfinished v1.3 artifacts and continue phase numbering | Avoid losing prior planning work or colliding with existing phase identifiers | Active |
 
 ## Evolution
 
@@ -87,4 +91,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-24 — extended v1.3 with Phase 14 VQF Quaternion Joint Angles*
+*Last updated: 2026-07-27 - started v1.4 Real-time OpenSim IK milestone*
