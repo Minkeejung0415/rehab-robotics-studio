@@ -266,12 +266,18 @@ class _FakeFrameType:
         return component if isinstance(component, _FakeFrame) else None
 
 
+class _FakeQuaternion:
+    def __init__(self, w, x, y, z):
+        self.values = (w, x, y, z)
+
+
 class _FakeOpenSim:
     Frame = _FakeFrameType
     Transform = _FakeTransform
     Decorations = _FakeDecorations
     DecorativeFrame = _FakeDecorativeFrame
     DecorativeText = _FakeDecorativeText
+    Quaternion = _FakeQuaternion
 
     def __init__(self):
         self.calls = []
@@ -284,8 +290,10 @@ class _FakeOpenSim:
         return model
 
     @staticmethod
-    def Rotation(*values):
-        return ("Rotation", values)
+    def Rotation(quaternion):
+        if not isinstance(quaternion, _FakeQuaternion):
+            raise TypeError("Rotation requires an OpenSim Quaternion")
+        return ("Rotation", quaternion)
 
     @staticmethod
     def Vec3(*values):
@@ -479,6 +487,10 @@ class OpenSimAdapterContractTests(unittest.TestCase):
         self.assertEqual(
             simbody.decorations[0].transform.rotation[0],
             "Rotation",
+        )
+        self.assertEqual(
+            simbody.decorations[0].transform.rotation[1].values,
+            rotation.scalar_first,
         )
         self.assertEqual(model.visualizer.show_states, [model.state])
 

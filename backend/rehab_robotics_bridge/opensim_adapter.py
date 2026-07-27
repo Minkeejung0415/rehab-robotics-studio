@@ -338,12 +338,9 @@ class OpenSimVisualizerAdapter:
             ) from exc
 
     def _rotation_for_native(self, rotation: OpenSimRotation) -> Any:
-        values = tuple(
-            value
-            for row in rotation.matrix
-            for value in row
-        )
-        return self._opensim.Rotation(*values)
+        w, x, y, z = rotation.scalar_first
+        quaternion = self._opensim.Quaternion(w, x, y, z)
+        return self._opensim.Rotation(quaternion)
 
     def update_sensor(
         self,
