@@ -545,6 +545,60 @@ class OpenSimAdapterContractTests(unittest.TestCase):
         )
         self.assertFalse(adapter.status()["available"])
 
+    def test_successful_update_recovers_after_transient_native_failure(self):
+        fake = _FakeOpenSim()
+        adapter = OpenSimVisualizerAdapter(
+            self.model_file.name,
+            self.mappings,
+            opensim_module=fake,
+        )
+        model = fake.models[0]
+        attempts = 0
+
+        def fail_once(state):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("transient visualizer failure")
+            model.visualizer.show_states.append(state)
+
+        model.visualizer.show = fail_once
+        rotation = ros_xyzw_to_opensim_rotation(0.0, 0.0, 0.0, 1.0)
+
+        self.assertFalse(
+            adapter.update_sensor(
+                "master",
+                self.mappings["master"],
+                rotation,
+            ),
+        )
+        self.assertEqual(
+            adapter.status(),
+            {
+                "available": False,
+                "state": "unavailable",
+                "reason": "visualizer_update_failed",
+                "mode": "retained_decorations",
+            },
+        )
+
+        self.assertTrue(
+            adapter.update_sensor(
+                "master",
+                self.mappings["master"],
+                rotation,
+            ),
+        )
+        self.assertEqual(
+            adapter.status(),
+            {
+                "available": True,
+                "state": "ready",
+                "reason": "",
+                "mode": "retained_decorations",
+            },
+        )
+
 
 @unittest.skipUnless(
     importlib.util.find_spec("opensim") is not None,

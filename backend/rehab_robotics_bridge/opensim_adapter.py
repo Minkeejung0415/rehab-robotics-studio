@@ -373,6 +373,9 @@ class OpenSimVisualizerAdapter:
             self._state_name = "unavailable"
             self._reason = "visualizer_update_failed"
             return False
+        self._available = True
+        self._state_name = "ready"
+        self._reason = ""
         return True
 
     def status(self) -> dict[str, object]:
