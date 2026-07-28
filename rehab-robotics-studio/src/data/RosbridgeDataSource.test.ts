@@ -376,6 +376,25 @@ describe('RosbridgeDataSource — 09-02-02 warning/cache/emission', () => {
     assert.notEqual(extendedX, flexedX, 'moving the slave must change the emitted pair angle');
   });
 
+  it('does not attach /opensim/joint_angle to emitted frames by default', () => {
+    const frames: Array<{ jointAngleDeg?: number }> = [];
+    const { ds, masterTopic, handleMessage, inject } = makeStub();
+    ds.subscribe((frame) => { frames.push(frame); });
+
+    inject(masterTopic, makeMinimalRaw('master', 8, 2000));
+    assert.equal(frames[0]?.jointAngleDeg, undefined);
+
+    handleMessage(JSON.stringify({
+      op: 'publish',
+      topic: '/opensim/joint_angle',
+      msg: { data: 42.5 },
+    }));
+
+    // Topic is not subscribed / not attached — prior frame unchanged, no new attach.
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0]?.jointAngleDeg, undefined);
+  });
+
 });
 
 // ── 09-02-03: Service names and ACK coordination ──────────────────────────────

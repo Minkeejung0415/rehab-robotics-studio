@@ -411,6 +411,7 @@ export class RosbridgeDataSource implements DataSource {
         return;
       }
       if (envelope.op !== 'publish' || !envelope.msg?.data) return;
+
       if (envelope.topic === DEFAULT_PAIR_HEALTH_TOPIC) {
         this.onPairHealth?.(JSON.parse(envelope.msg.data) as PairHealthSnapshot);
         return;

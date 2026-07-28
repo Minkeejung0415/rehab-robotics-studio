@@ -63,7 +63,7 @@ function edge(
 
 const DEFAULT_NODES: BlockInstance[] = [
   makeNode('B7', 'esp32_imu', 40, 40),
-  makeNode('B8', 'opensim_ik_live', 320, 40),
+  makeNode('B8', 'opensim_ik_waiting', 320, 40),
   makeNode('B9', 'joint_angle_display', 600, 40),
 
   makeNode('B4', 'fake_emg', 40, 340),

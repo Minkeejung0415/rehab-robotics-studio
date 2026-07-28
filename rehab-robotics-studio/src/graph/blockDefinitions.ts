@@ -1,5 +1,6 @@
 import type { BlockDefinition, PortDefinition, ParamSpec } from '../types/blocks';
 import type { SignalType } from '../types/signals';
+import { getCustomDef } from '../state/blockRegistryStore';
 
 /* ----- small builders to keep the registry readable ----- */
 
@@ -72,16 +73,22 @@ export const BLOCK_DEFS: Record<string, BlockDefinition> = {
     ],
     description: 'Surface EMG acquisition mock.',
   },
-  fake_imu: {
-    type: 'fake_imu',
-    name: 'Fake IMU',
+  esp32_imu: {
+    type: 'esp32_imu',
+    name: 'ESP32 IMU Pair',
     category: 'Sources',
-    runtime: 'mock',
+    runtime: 'rosbridge',
     safeForMotorControl: false,
     inputs: [],
     outputs: [out('imu', 'imu')],
-    params: [enumP('range', 'Accel Range', ['2g', '4g', '8g', '16g'], '16g'), enumP('sampleRate', 'Sample Rate', RATE_OPTIONS, 1000)],
-    description: 'Orientation + acceleration mock.',
+    params: [
+      num('sampleRate', 'Pair Rate', 100, 'Hz', { min: 1, max: 1000 }),
+      { key: 'filterEnabled', label: 'Filter', type: 'bool', default: true },
+      enumP('accelRangeG', 'Accel Range', [2, 4, 8, 16], 2),
+      enumP('gyroRangeDps', 'Gyro Range', [250, 500, 1000, 2000], 250),
+      num('effectiveSampleRate', 'Effective Rate', 100, 'Hz', { min: 1, max: 1000 }),
+    ],
+    description: 'Live relative orientation from the master and slave ESP32 ROS streams.',
   },
   fake_motor_state: {
     type: 'fake_motor_state',
@@ -162,6 +169,30 @@ export const BLOCK_DEFS: Record<string, BlockDefinition> = {
     outputs: [out('joint_state', 'angles')],
     params: [enumP('model', 'Model', ['gait2392', 'arm26', 'leg6dof'], 'gait2392'), enumP('solver', 'Solver', ['Least Squares', 'Kalman'], 'Least Squares')],
     description: 'Inverse-kinematics solver mock.',
+  },
+  opensim_ik_waiting: {
+    type: 'opensim_ik_waiting',
+    name: 'OpenSim IK (Waiting)',
+    category: 'Biomechanics',
+    runtime: 'rosbridge',
+    safeForMotorControl: false,
+    inputs: [inp('imu', 'imu')],
+    outputs: [out('joint_state', 'angles')],
+    params: [enumP('joint', 'Joint', ['Knee', 'Hip', 'Ankle'], 'Knee')],
+    description:
+      'Placeholder until calibrated OpenSim IK publishes /opensim/joint_states. Emits no product angle.',
+  },
+  opensim_ik_live: {
+    type: 'opensim_ik_live',
+    name: 'Relative Quat Angle (Debug)',
+    category: 'Biomechanics',
+    runtime: 'rosbridge',
+    safeForMotorControl: false,
+    inputs: [inp('imu', 'imu')],
+    outputs: [out('joint_state', 'angles')],
+    params: [enumP('joint', 'Joint', ['Knee', 'Hip', 'Ankle'], 'Knee')],
+    description:
+      'Debug-only relative-quat Float64 from /opensim/joint_angle when enabled. Not product OpenSim IK.',
   },
   joint_angle_estimator_mock: {
     type: 'joint_angle_estimator_mock',
@@ -310,7 +341,7 @@ export const BLOCK_DEFS: Record<string, BlockDefinition> = {
 };
 
 export function getDef(type: string): BlockDefinition | undefined {
-  return BLOCK_DEFS[type];
+  return BLOCK_DEFS[type] ?? getCustomDef(type);
 }
 
 /** Default params object derived from a definition's ParamSpecs. */
