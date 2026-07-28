@@ -106,6 +106,9 @@ def relative_orientation_angle_deg(
 class VisualizerAdapter(Protocol):
     """OpenSim-free interface consumed by the ROS subscription layer."""
 
+    def open_visualizer(self) -> tuple[bool, str]:
+        """Show the adapter-owned native visualizer without spawning a process."""
+
     def update_sensor(
         self,
         sensor_id: str,
@@ -128,6 +131,11 @@ class UnavailableVisualizerAdapter:
     ) -> None:
         self._reason = reason
         self._frame_mappings = dict(frame_mappings or {})
+
+    def open_visualizer(self) -> tuple[bool, str]:
+        """Return the stable capability reason without touching native APIs."""
+
+        return False, self._reason
 
     def update_sensor(
         self,
@@ -370,6 +378,22 @@ class OpenSimVisualizerAdapter:
         w, x, y, z = rotation.scalar_first
         quaternion = self._opensim.Quaternion(w, x, y, z)
         return self._opensim.Rotation(quaternion)
+
+    def open_visualizer(self) -> tuple[bool, str]:
+        """Idempotently show the already-owned native visualizer window."""
+
+        try:
+            self._model_visualizer.show(self._state)
+        except Exception:
+            self._available = False
+            self._state_name = "failed"
+            self._reason = "visualizer_open_failed"
+            return False, self._reason
+
+        self._available = True
+        self._state_name = "open"
+        self._reason = ""
+        return True, "visualizer_open"
 
     def update_sensor(
         self,

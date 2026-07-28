@@ -370,6 +370,29 @@ class OpenSimAdapterContractTests(unittest.TestCase):
             },
         )
 
+    def test_unavailable_adapter_open_returns_stable_reason_without_native_calls(self):
+        adapter = UnavailableVisualizerAdapter(
+            reason="opensim_bindings_unavailable",
+            frame_mappings=self.mappings,
+        )
+
+        self.assertEqual(
+            adapter.open_visualizer(),
+            (False, "opensim_bindings_unavailable"),
+        )
+        self.assertEqual(
+            adapter.open_visualizer(),
+            (False, "opensim_bindings_unavailable"),
+        )
+        self.assertEqual(
+            adapter.status(),
+            {
+                "available": False,
+                "state": "unavailable",
+                "reason": "opensim_bindings_unavailable",
+            },
+        )
+
     def test_factory_reports_empty_and_missing_model_paths_before_import(self):
         empty = create_visualizer_adapter("", self.mappings)
         missing = create_visualizer_adapter(
@@ -553,6 +576,87 @@ class OpenSimAdapterContractTests(unittest.TestCase):
             rotation.scalar_first,
         )
         self.assertEqual(model.visualizer.show_states, [model.state])
+
+    def test_open_visualizer_is_idempotent_and_reuses_owned_model_state(self):
+        fake = _FakeOpenSim()
+        adapter = OpenSimVisualizerAdapter(
+            self.model_file.name,
+            self.mappings,
+            opensim_module=fake,
+        )
+        model = fake.models[0]
+
+        self.assertEqual(adapter.open_visualizer(), (True, "visualizer_open"))
+        self.assertEqual(adapter.open_visualizer(), (True, "visualizer_open"))
+        self.assertEqual(
+            model.visualizer.show_states,
+            [model.state, model.state],
+        )
+        self.assertEqual(
+            adapter.status(),
+            {
+                "available": True,
+                "state": "open",
+                "reason": "",
+                "mode": "retained_decorations",
+            },
+        )
+        self.assertEqual(len(fake.models), 1)
+
+    def test_open_failure_persists_and_successful_retry_replaces_it(self):
+        fake = _FakeOpenSim()
+        adapter = OpenSimVisualizerAdapter(
+            self.model_file.name,
+            self.mappings,
+            opensim_module=fake,
+        )
+        model = fake.models[0]
+        attempts = 0
+
+        def fail_once(state):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("native window failed")
+            model.visualizer.show_states.append(state)
+
+        model.visualizer.show = fail_once
+
+        self.assertEqual(
+            adapter.open_visualizer(),
+            (False, "visualizer_open_failed"),
+        )
+        self.assertEqual(
+            adapter.status(),
+            {
+                "available": False,
+                "state": "failed",
+                "reason": "visualizer_open_failed",
+                "mode": "retained_decorations",
+            },
+        )
+        self.assertEqual(
+            adapter.status(),
+            {
+                "available": False,
+                "state": "failed",
+                "reason": "visualizer_open_failed",
+                "mode": "retained_decorations",
+            },
+        )
+
+        self.assertEqual(adapter.open_visualizer(), (True, "visualizer_open"))
+        self.assertEqual(
+            adapter.status(),
+            {
+                "available": True,
+                "state": "open",
+                "reason": "",
+                "mode": "retained_decorations",
+            },
+        )
+        self.assertEqual(model.visualizer.show_states, [model.state])
+        self.assertEqual(len(fake.models), 1)
 
     def test_mapping_mismatch_is_rejected_without_mutation(self):
         fake = _FakeOpenSim()

@@ -20,6 +20,7 @@ DEFAULT_SLAVE_FRAME = "tibia_r_imu"
 # Calibration controls (Phase 17).
 CALIBRATION_CAPTURE_SERVICE = "/opensim/calibration/capture"
 CALIBRATION_CLEAR_SERVICE = "/opensim/calibration/clear"
+VISUALIZER_OPEN_SERVICE = "/opensim/visualizer/open"
 
 # Status / diagnostics topics (Phase 18).
 IK_STATUS_TOPIC = "/opensim/ik_status"
