@@ -1,0 +1,484 @@
+"""OpenSim Python orientation-IK adapter (Phase 18).
+
+Research preferred a dedicated C++ OpenSense package on OpenSim 4.6 with
+``BufferedOrientationsReference``. This milestone uses the pragmatic Python
+path inside ``opensim_bridge`` on WSL OpenSim 4.5.2 (D-18-02). When required
+bindings are missing, the factory returns ``UnavailableOrientationIkSolver``
+— never a custom relative-quaternion product angle.
+"""
+from __future__ import annotations
+
+from importlib import import_module
+from pathlib import Path
+import time
+from typing import Any, Sequence
+
+from rehab_robotics_bridge.opensim.calibration import CalibrationArtifact
+from rehab_robotics_bridge.opensim.orientation_ik import (
+    DEFAULT_JOINT_NAME,
+    IkSolution,
+    UnavailableOrientationIkSolver,
+    apply_mounting_offsets,
+)
+from rehab_robotics_bridge.opensim_adapter import ros_xyzw_to_opensim_rotation
+
+
+def probe_opensim_orientation_ik_apis(opensim_module: Any) -> dict[str, bool]:
+    """Report presence of symbols required for orientation InverseKinematics."""
+
+    return {
+        "InverseKinematicsSolver": hasattr(opensim_module, "InverseKinematicsSolver"),
+        "OrientationsReference": hasattr(opensim_module, "OrientationsReference"),
+        "BufferedOrientationsReference": hasattr(
+            opensim_module,
+            "BufferedOrientationsReference",
+        ),
+        "TimeSeriesTableQuaternion": hasattr(
+            opensim_module,
+            "TimeSeriesTableQuaternion",
+        ),
+        "MarkersReference": hasattr(opensim_module, "MarkersReference"),
+        "OpenSenseUtilities": hasattr(opensim_module, "OpenSenseUtilities"),
+        "Rotation": hasattr(opensim_module, "Rotation"),
+        "Quaternion": hasattr(opensim_module, "Quaternion"),
+    }
+
+
+def _strip_leading_slash(name: str) -> str:
+    return name[1:] if name.startswith("/") else name
+
+
+def _component_path(frame_name: str) -> str:
+    stripped = _strip_leading_slash(frame_name)
+    return stripped if stripped.startswith("/") else f"/{stripped}"
+
+
+class OpenSimOrientationIkSolver:
+    """Single-thread owner of Model/State/InverseKinematicsSolver for live IK."""
+
+    def __init__(
+        self,
+        *,
+        model_path: str,
+        master_frame: str,
+        slave_frame: str,
+        coordinate_paths: Sequence[str],
+        opensim_module: Any,
+    ) -> None:
+        self._osim = opensim_module
+        self._master_frame = _strip_leading_slash(master_frame)
+        self._slave_frame = _strip_leading_slash(slave_frame)
+        self._coordinate_paths = [
+            _strip_leading_slash(path) for path in coordinate_paths
+        ] or [DEFAULT_JOINT_NAME]
+        self._assembled = False
+        self._last_calibration_id: str | None = None
+        self._time_s = 0.0
+
+        self._model = self._osim.Model(str(model_path))
+        self._model.setUseVisualizer(False)
+        self._state = self._model.initSystem()
+        self._solver: Any | None = None
+        self._orientations_ref: Any | None = None
+        self._use_buffered = False
+        self._probe = probe_opensim_orientation_ik_apis(self._osim)
+        self._build_solver()
+
+    def reset(self) -> None:
+        self._assembled = False
+        self._last_calibration_id = None
+        self._time_s = 0.0
+        try:
+            self._state = self._model.initSystem()
+        except Exception:
+            pass
+        self._solver = None
+        self._orientations_ref = None
+        try:
+            self._build_solver()
+        except Exception:
+            # Leave solver None; solve() will fail closed.
+            self._solver = None
+
+    def _build_solver(self) -> None:
+        osim = self._osim
+        if not (
+            self._probe.get("InverseKinematicsSolver")
+            and self._probe.get("OrientationsReference")
+        ):
+            raise RuntimeError("opensim_ik_api_unavailable")
+
+        # Seed a one-row orientation table (identity) so references construct.
+        column_labels = [self._master_frame, self._slave_frame]
+        identity_sf = (1.0, 0.0, 0.0, 0.0)  # w,x,y,z
+        table = self._make_quat_table(column_labels, identity_sf, identity_sf, 0.0)
+
+        if self._probe.get("BufferedOrientationsReference") and hasattr(
+            osim,
+            "BufferedOrientationsReference",
+        ):
+            try:
+                # Prefer buffered streaming API when present (OpenSim 4.6+).
+                rotations_table = self._quats_to_rotations(table)
+                self._orientations_ref = osim.BufferedOrientationsReference(
+                    rotations_table,
+                )
+                self._use_buffered = True
+            except Exception:
+                self._use_buffered = False
+
+        if not self._use_buffered:
+            rotations_table = self._quats_to_rotations(table)
+            self._orientations_ref = osim.OrientationsReference(rotations_table)
+
+        markers_ref = None
+        if self._probe.get("MarkersReference"):
+            try:
+                markers_ref = osim.MarkersReference()
+            except Exception:
+                markers_ref = None
+
+        coord_refs = self._empty_coordinate_refs()
+        # Try shared_ptr-style / Python overloaded constructors.
+        constructed = False
+        last_exc: Exception | None = None
+        for args in (
+            (self._model, markers_ref, self._orientations_ref, coord_refs),
+            (self._model, self._orientations_ref, coord_refs),
+            (
+                self._model,
+                markers_ref if markers_ref is not None else osim.MarkersReference(),
+                self._orientations_ref,
+                coord_refs,
+            ),
+        ):
+            try:
+                self._solver = osim.InverseKinematicsSolver(*args)
+                constructed = True
+                break
+            except Exception as exc:
+                last_exc = exc
+                continue
+        if not constructed:
+            raise RuntimeError(
+                f"opensim_ik_api_unavailable:{type(last_exc).__name__ if last_exc else 'ctor'}"
+            )
+
+    def _empty_coordinate_refs(self) -> Any:
+        osim = self._osim
+        for name in (
+            "SimTKArrayCoordinateReference",
+            "ArrayCoordinateReference",
+        ):
+            ctor = getattr(osim, name, None)
+            if callable(ctor):
+                try:
+                    return ctor()
+                except Exception:
+                    continue
+        # Last resort: empty Python list (some bindings accept it).
+        return []
+
+    def _make_quat_table(
+        self,
+        labels: Sequence[str],
+        master_wxyz: tuple[float, float, float, float],
+        slave_wxyz: tuple[float, float, float, float],
+        time_s: float,
+    ) -> Any:
+        osim = self._osim
+        table = osim.TimeSeriesTableQuaternion()
+        table.setColumnLabels(list(labels))
+        row = osim.RowVectorQuaternion(2)
+        # OpenSim Quaternion is (w, x, y, z).
+        q0 = osim.Quaternion(*master_wxyz)
+        q1 = osim.Quaternion(*slave_wxyz)
+        # Prefer updElt / set patterns used by OpenSim Python forums.
+        set_ok = False
+        for setter in ("set", "setItem", "updElt"):
+            if hasattr(row, setter):
+                try:
+                    if setter == "updElt":
+                        row.updElt(0, 0, q0)
+                        row.updElt(0, 1, q1)
+                    else:
+                        getattr(row, setter)(0, q0)
+                        getattr(row, setter)(1, q1)
+                    set_ok = True
+                    break
+                except Exception:
+                    continue
+        if not set_ok:
+            # Fall back to constructing via appendRow with a flat list if exposed.
+            try:
+                table.appendRow(time_s, [q0, q1])
+                return table
+            except Exception as exc:
+                raise RuntimeError(f"quaternion_row_failed:{exc}") from exc
+        table.appendRow(time_s, row)
+        return table
+
+    def _quats_to_rotations(self, quat_table: Any) -> Any:
+        osim = self._osim
+        utilities = getattr(osim, "OpenSenseUtilities", None)
+        if utilities is not None and hasattr(
+            utilities,
+            "convertQuaternionsToRotations",
+        ):
+            return utilities.convertQuaternionsToRotations(quat_table)
+        # Some bindings accept OrientationsReference(TimeSeriesTableQuaternion).
+        return quat_table
+
+    def _xyzw_to_wxyz(
+        self,
+        xyzw: Sequence[float],
+    ) -> tuple[float, float, float, float]:
+        rotation = ros_xyzw_to_opensim_rotation(
+            float(xyzw[0]),
+            float(xyzw[1]),
+            float(xyzw[2]),
+            float(xyzw[3]),
+        )
+        return rotation.scalar_first
+
+    def _update_orientation_targets(
+        self,
+        master_corr: Sequence[float],
+        slave_corr: Sequence[float],
+        time_s: float,
+    ) -> None:
+        master_wxyz = self._xyzw_to_wxyz(master_corr)
+        slave_wxyz = self._xyzw_to_wxyz(slave_corr)
+        labels = [self._master_frame, self._slave_frame]
+        table = self._make_quat_table(labels, master_wxyz, slave_wxyz, time_s)
+        rotations = self._quats_to_rotations(table)
+
+        if self._use_buffered and self._orientations_ref is not None:
+            put = getattr(self._orientations_ref, "putValues", None)
+            if callable(put):
+                # putValues(time, Array_<Rotation>) — build when possible.
+                try:
+                    rotations_row = rotations.getRowAtIndex(0)
+                    put(time_s, rotations_row)
+                    return
+                except Exception:
+                    pass
+
+        # Rebuild OrientationsReference + solver for non-buffered 4.5.x path.
+        osim = self._osim
+        self._orientations_ref = osim.OrientationsReference(rotations)
+        markers_ref = osim.MarkersReference() if self._probe.get("MarkersReference") else None
+        coord_refs = self._empty_coordinate_refs()
+        try:
+            self._solver = osim.InverseKinematicsSolver(
+                self._model,
+                markers_ref,
+                self._orientations_ref,
+                coord_refs,
+            )
+        except Exception:
+            self._solver = osim.InverseKinematicsSolver(
+                self._model,
+                self._orientations_ref,
+                coord_refs,
+            )
+        self._assembled = False
+
+    def _read_coordinates(self) -> list[float]:
+        positions: list[float] = []
+        for path in self._coordinate_paths:
+            coord = None
+            try:
+                coord = self._model.getCoordinateSet().get(path)
+            except Exception:
+                try:
+                    component = self._model.getComponent(_component_path(path))
+                    coord = component
+                except Exception:
+                    coord = None
+            if coord is None:
+                raise RuntimeError(f"coordinate_not_found:{path}")
+            value = float(coord.getValue(self._state))
+            positions.append(value)
+        return positions
+
+    def _orientation_residuals(self) -> tuple[float | None, float | None]:
+        solver = self._solver
+        if solver is None:
+            return None, None
+        for method_name in (
+            "computeCurrentOrientationError",
+            "getOrientationError",
+            "calcOrientationError",
+        ):
+            method = getattr(solver, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                errors = method()
+                values = [float(errors[i]) for i in range(len(errors))]
+                if not values:
+                    return None, None
+                rms = (sum(v * v for v in values) / len(values)) ** 0.5
+                return rms, max(abs(v) for v in values)
+            except Exception:
+                continue
+        return None, None
+
+    def solve(
+        self,
+        *,
+        master_xyzw: Sequence[float],
+        slave_xyzw: Sequence[float],
+        calibration: CalibrationArtifact | None,
+        source_timestamp_ns: int | None,
+        input_age_s: float | None,
+        joint_names: Sequence[str],
+    ) -> IkSolution:
+        started = time.perf_counter()
+        names = [str(name) for name in joint_names] or list(self._coordinate_paths)
+
+        if calibration is None:
+            return IkSolution(
+                solution_valid=False,
+                reason="calibration_required",
+                joint_names=names,
+                positions_rad=[],
+                source_timestamp_ns=source_timestamp_ns,
+                orientation_residual_rms=None,
+                orientation_residual_max=None,
+                calibration_id=None,
+                input_age_s=input_age_s,
+                solve_duration_s=time.perf_counter() - started,
+            )
+        if source_timestamp_ns is None:
+            return IkSolution(
+                solution_valid=False,
+                reason="missing_source_timestamp",
+                joint_names=names,
+                positions_rad=[],
+                source_timestamp_ns=None,
+                orientation_residual_rms=None,
+                orientation_residual_max=None,
+                calibration_id=calibration.calibration_id,
+                input_age_s=input_age_s,
+                solve_duration_s=time.perf_counter() - started,
+            )
+
+        try:
+            if self._solver is None:
+                self._build_solver()
+
+            if self._last_calibration_id != calibration.calibration_id:
+                self._assembled = False
+                self._last_calibration_id = calibration.calibration_id
+
+            master_corr, slave_corr = apply_mounting_offsets(
+                master_xyzw,
+                slave_xyzw,
+                calibration,
+            )
+            self._time_s += 0.01
+            self._update_orientation_targets(master_corr, slave_corr, self._time_s)
+            self._state.setTime(self._time_s)
+
+            assert self._solver is not None
+            if not self._assembled:
+                self._solver.assemble(self._state)
+                self._assembled = True
+            else:
+                try:
+                    self._solver.track(self._state)
+                except Exception:
+                    self._solver.assemble(self._state)
+
+            positions = self._read_coordinates()
+            # Align published names with requested joint_names length.
+            if len(positions) != len(names):
+                if len(positions) == 1 and len(names) >= 1:
+                    positions = [positions[0]] * len(names)
+                    names = list(names)
+                else:
+                    names = list(self._coordinate_paths[: len(positions)])
+
+            rms, residual_max = self._orientation_residuals()
+            return IkSolution(
+                solution_valid=True,
+                reason="ok",
+                joint_names=list(names),
+                positions_rad=list(positions),
+                source_timestamp_ns=int(source_timestamp_ns),
+                orientation_residual_rms=rms,
+                orientation_residual_max=residual_max,
+                calibration_id=calibration.calibration_id,
+                input_age_s=input_age_s,
+                solve_duration_s=time.perf_counter() - started,
+            )
+        except Exception as exc:
+            self._assembled = False
+            reason = f"opensim_ik_solve_failed:{type(exc).__name__}"
+            message = str(exc)
+            if message and len(message) < 80:
+                reason = f"{reason}:{message}"
+            return IkSolution(
+                solution_valid=False,
+                reason=reason,
+                joint_names=names,
+                positions_rad=[],
+                source_timestamp_ns=source_timestamp_ns,
+                orientation_residual_rms=None,
+                orientation_residual_max=None,
+                calibration_id=calibration.calibration_id,
+                input_age_s=input_age_s,
+                solve_duration_s=time.perf_counter() - started,
+            )
+
+
+def create_orientation_ik_solver(
+    *,
+    model_path: str,
+    master_frame: str,
+    slave_frame: str,
+    coordinate_paths: Sequence[str],
+    opensim_module: Any | None = None,
+):
+    """Return OpenSimOrientationIkSolver when model+APIs OK; else Unavailable."""
+
+    path = str(model_path or "").strip()
+    if not path:
+        return UnavailableOrientationIkSolver("model_path_empty")
+    if not Path(path).is_file():
+        return UnavailableOrientationIkSolver("model_path_not_found")
+
+    try:
+        osim = opensim_module or import_module("opensim")
+    except Exception:
+        return UnavailableOrientationIkSolver("opensim_ik_api_unavailable")
+
+    probe = probe_opensim_orientation_ik_apis(osim)
+    if not (
+        probe.get("InverseKinematicsSolver") and probe.get("OrientationsReference")
+    ):
+        return UnavailableOrientationIkSolver("opensim_ik_api_unavailable")
+
+    try:
+        return OpenSimOrientationIkSolver(
+            model_path=path,
+            master_frame=master_frame,
+            slave_frame=slave_frame,
+            coordinate_paths=coordinate_paths,
+            opensim_module=osim,
+        )
+    except Exception as exc:
+        reason = "opensim_ik_api_unavailable"
+        detail = str(exc)
+        if "model" in detail.lower():
+            reason = f"opensim_ik_api_unavailable:{type(exc).__name__}"
+        return UnavailableOrientationIkSolver(reason)
+
+
+__all__ = [
+    "OpenSimOrientationIkSolver",
+    "create_orientation_ik_solver",
+    "probe_opensim_orientation_ik_apis",
+]
