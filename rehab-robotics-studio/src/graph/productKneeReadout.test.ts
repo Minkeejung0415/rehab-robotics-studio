@@ -269,4 +269,58 @@ describe('product knee readout — custom joint angle retired', () => {
       rmSync(temporaryRoot, { recursive: true, force: true });
     }
   });
+
+  it('SignalBus cancels its animation frame and cannot reschedule after dispose', async () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'rehab-signal-bus-dispose-'));
+    const projectLink = join(temporaryRoot, 'studio');
+    symlinkSync(process.cwd(), projectLink, 'junction');
+    const vite = await createServer({
+      root: projectLink,
+      configFile: false,
+      appType: 'custom',
+      resolve: { preserveSymlinks: true },
+      optimizeDeps: { noDiscovery: true, include: [] },
+      server: { middlewareMode: true },
+    });
+    try {
+      const module = await vite.ssrLoadModule('/src/data/signalBus.ts') as {
+        SignalBus: new (options: Record<string, unknown>) => {
+          dispose(): void;
+        };
+      };
+      let scheduledCallback: FrameRequestCallback | null = null;
+      let requestCount = 0;
+      const cancelled: number[] = [];
+      const bus = new module.SignalBus({
+        subscribeFrames: () => () => undefined,
+        getGraph: getDefaultGraphDocument,
+        getLiveKneeAngle: () => ({
+          state: 'waiting',
+          valueDeg: null,
+          reason: 'Waiting for calibrated IK',
+        }),
+        subscribeLiveKneeAngle: () => () => undefined,
+        requestFrame: (callback: FrameRequestCallback) => {
+          requestCount += 1;
+          scheduledCallback = callback;
+          return 40 + requestCount;
+        },
+        cancelFrame: (handle: number) => cancelled.push(handle),
+      });
+
+      assert.equal(requestCount, 1);
+      assert.ok(scheduledCallback);
+      const queuedBeforeDispose = scheduledCallback as FrameRequestCallback;
+      bus.dispose();
+      assert.deepEqual(cancelled, [41]);
+
+      queuedBeforeDispose(100);
+      assert.equal(requestCount, 1, 'disposed loop must not schedule another frame');
+      bus.dispose();
+      assert.deepEqual(cancelled, [41], 'dispose must be idempotent');
+    } finally {
+      await vite.close();
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  });
 });

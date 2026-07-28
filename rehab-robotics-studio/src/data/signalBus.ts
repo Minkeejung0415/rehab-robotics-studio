@@ -73,6 +73,7 @@ interface SignalBusOptions {
     callback: (snapshot: LiveKneeAngleSnapshot) => void,
   ) => () => void;
   requestFrame?: ((callback: FrameRequestCallback) => number) | null;
+  cancelFrame?: ((handle: number) => void) | null;
 }
 
 /**
@@ -95,7 +96,10 @@ export class SignalBus {
   private liveKneeAngleDeg: number | null;
   private readonly getGraph: NonNullable<SignalBusOptions['getGraph']>;
   private readonly requestFrame: NonNullable<SignalBusOptions['requestFrame']> | null;
+  private readonly cancelFrame: NonNullable<SignalBusOptions['cancelFrame']> | null;
   private readonly unsubscribers: Array<() => void> = [];
+  private frameHandle: number | null = null;
+  private disposed = false;
 
   private latest: SignalSnapshot = emptySnapshot();
   private snapshot: SignalSnapshot = this.latest;
@@ -114,13 +118,22 @@ export class SignalBus {
       }));
 
     this.getGraph = options.getGraph ?? (() => useGraphStore.getState());
+    const nativeRequestFrame = globalThis.requestAnimationFrame;
+    const nativeCancelFrame = globalThis.cancelAnimationFrame;
     this.requestFrame = options.requestFrame === undefined
       ? (
-          typeof requestAnimationFrame === 'undefined'
-            ? null
-            : requestAnimationFrame
+          typeof nativeRequestFrame === 'function'
+            ? (callback) => nativeRequestFrame.call(globalThis, callback)
+            : null
         )
       : options.requestFrame;
+    this.cancelFrame = options.cancelFrame === undefined
+      ? (
+          typeof nativeCancelFrame === 'function'
+            ? (handle) => nativeCancelFrame.call(globalThis, handle)
+            : null
+        )
+      : options.cancelFrame;
     this.liveKneeAngleDeg = this.liveValue(getLiveKneeAngle());
     this.unsubscribers.push(
       (options.subscribeFrames ?? ((callback) => appDataSource.subscribe(callback)))(
@@ -130,7 +143,7 @@ export class SignalBus {
     );
 
     if (this.requestFrame) {
-      this.requestFrame(this.loop);
+      this.frameHandle = this.requestFrame(this.loop);
     }
   }
 
@@ -140,7 +153,14 @@ export class SignalBus {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.frameHandle !== null && this.cancelFrame) {
+      this.cancelFrame(this.frameHandle);
+    }
+    this.frameHandle = null;
     this.unsubscribers.splice(0).forEach((unsubscribe) => unsubscribe());
+    this.listeners.clear();
   }
 
   private liveValue(snapshot: LiveKneeAngleSnapshot): number | null {
@@ -221,11 +241,12 @@ export class SignalBus {
   }
 
   private loop = (ts: number): void => {
+    if (this.disposed) return;
     if (this.dirty && ts - this.lastNotify > 33) {
       this.lastNotify = ts;
       this.publish();
     }
-    this.requestFrame?.(this.loop);
+    this.frameHandle = this.requestFrame?.(this.loop) ?? null;
   };
 
   subscribe = (listener: () => void): (() => void) => {
