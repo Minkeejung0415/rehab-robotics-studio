@@ -58,7 +58,7 @@ Declared values for Phase 19 additions (must be multiples of 4):
 | 2xl | 48px | Reserved; existing chart height only |
 | 3xl | 64px | Reserved; no new Phase 19 layout requires it |
 
-Exceptions: inherit existing component geometry rather than normalizing it: 5–7px compact internal gaps/padding, 10px panel padding, 22px separators, 23px mini-buttons, 27px toolbar buttons, 28px panel headings, and the 42px toolbar row. Phase 19 adds no icon-only target and no new spacing exception.
+No spacing exceptions are permitted in Phase 19. All margins, padding, gaps, and separator offsets must use only `4px`, `8px`, `16px`, `24px`, `32px`, `48px`, or `64px`: use `4px` or `8px` for compact internal gaps/padding, `8px` for panel padding, and `24px` for separator spacing. Existing control and row heights remain unchanged because they are component dimensions, not spacing tokens. Phase 19 adds no icon-only target.
 
 The `Open visualizer` button uses the existing `.btn` height and horizontal padding. It sits directly after `Clear cal` and directly before `Save`, with the normal 8px toolbar gap and no additional separator.
 
