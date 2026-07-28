@@ -223,6 +223,16 @@ class _FakeSimbodyVisualizer:
         self.decorations = []
         self.add_calls = []
         self.updated_indices = []
+        self.mode = None
+        self.desired_frame_rate = None
+
+    def setMode(self, mode):
+        self.mode = mode
+        return self
+
+    def setDesiredFrameRate(self, frame_rate):
+        self.desired_frame_rate = frame_rate
+        return self
 
     def addDecoration(self, body_index, transform, decoration):
         self.add_calls.append((body_index, transform, decoration))
@@ -313,6 +323,7 @@ class _FakeOpenSim:
     DecorativeFrame = _FakeDecorativeFrame
     DecorativeText = _FakeDecorativeText
     Quaternion = _FakeQuaternion
+    SimTKVisualizer = type("_FakeSimTKVisualizerType", (), {"Sampling": 2})
 
     def __init__(self):
         self.calls = []
@@ -504,6 +515,11 @@ class OpenSimAdapterContractTests(unittest.TestCase):
             ],
         )
         self.assertEqual(adapter.status()["available"], True)
+        self.assertEqual(model.visualizer.simbody.mode, 2)
+        self.assertEqual(
+            model.visualizer.simbody.desired_frame_rate,
+            30.0,
+        )
 
     def test_fake_matches_opensim_46_mobilized_body_index_contract(self):
         fake = _FakeOpenSim()

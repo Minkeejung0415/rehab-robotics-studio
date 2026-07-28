@@ -163,6 +163,13 @@ class OpenSimBridgeNode(Node):
             role: sensor.frame
             for role, sensor in self._sensor_states.items()
         }
+        self._frame_mappings = frame_mappings
+        self._adapter_factory = (
+            None
+            if adapter is not None
+            else adapter_factory
+        )
+        self._next_visualizer_recovery_monotonic = 0.0
         self._adapter = (
             adapter
             if adapter is not None
@@ -325,14 +332,19 @@ class OpenSimBridgeNode(Node):
             )
             return
 
-        if not accepted:
-            self._set_sensor_state(
-                role,
-                "mapping_error",
-                "adapter_update_failed",
-            )
-            return
+        if not accepted and self._recover_visualizer_adapter():
+            try:
+                self._adapter.update_sensor(
+                    role,
+                    sensor.frame,
+                    rotation,
+                )
+            except Exception:
+                pass
 
+        # A native window failure is orthogonal to acquisition and IK. The
+        # adapter records its own unavailable status; a validated IMU sample
+        # must still refresh sensor freshness and feed calibration/IK.
         sensor.last_valid_monotonic = self._monotonic_clock()
         if source_timestamp_ns is not None:
             sensor.last_source_timestamp_ns = source_timestamp_ns
@@ -414,6 +426,17 @@ class OpenSimBridgeNode(Node):
         except Exception:
             success = False
             message = "visualizer_open_failed"
+
+        if not success and self._recover_visualizer_adapter():
+            try:
+                result = self._adapter.open_visualizer()
+                if not isinstance(result, tuple) or len(result) != 2:
+                    raise ValueError("visualizer_open_result_invalid")
+                success = bool(result[0])
+                message = str(result[1] or "")
+            except Exception:
+                success = False
+                message = "visualizer_open_failed"
 
         if success:
             message = message or "visualizer_open"
@@ -575,6 +598,33 @@ class OpenSimBridgeNode(Node):
             )
         except Exception:
             return (False, "unavailable", "adapter_status_failed")
+
+    def _recover_visualizer_adapter(self) -> bool:
+        """Recreate only a crashed native visualizer, with bounded retries."""
+
+        if self._adapter_factory is None:
+            return False
+        _, _, reason = self._adapter_visualization_signature()
+        if reason not in (
+            "visualizer_open_failed",
+            "visualizer_update_failed",
+        ):
+            return False
+        now = self._monotonic_clock()
+        if now < self._next_visualizer_recovery_monotonic:
+            return False
+        self._next_visualizer_recovery_monotonic = now + 1.0
+        try:
+            replacement = self._adapter_factory(
+                self._model_path,
+                self._frame_mappings,
+            )
+        except Exception:
+            return False
+        self._adapter = replacement
+        self._visualizer_request_status = None
+        available, _, _ = self._adapter_visualization_signature()
+        return available
 
     def _visualization_signature(self) -> tuple[bool, str, str]:
         adapter_signature = self._adapter_visualization_signature()

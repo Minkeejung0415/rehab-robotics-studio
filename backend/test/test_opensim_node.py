@@ -398,6 +398,44 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
             },
         )
 
+    def test_visualizer_trigger_recreates_crashed_native_adapter(self):
+        crashed = _FakeAdapter(
+            available=False,
+            reason="visualizer_open_failed",
+            open_result=(False, "visualizer_open_failed"),
+        )
+        replacement = _FakeAdapter()
+        adapters = [crashed, replacement]
+        factory_calls = []
+
+        def factory(model_path, frame_mappings):
+            factory_calls.append((model_path, frame_mappings))
+            return adapters[len(factory_calls) - 1]
+
+        node = opensim_node.OpenSimBridgeNode(
+            adapter_factory=factory,
+            monotonic_clock=self.clock,
+        )
+        service = next(
+            service
+            for service in node.services
+            if service.name == VISUALIZER_OPEN_SERVICE
+        )
+
+        response = service.callback(
+            _TriggerRequest(),
+            _TriggerResponse(),
+        )
+
+        self.assertTrue(response.success)
+        self.assertEqual(len(factory_calls), 2)
+        self.assertEqual(crashed.open_calls, 1)
+        self.assertEqual(replacement.open_calls, 1)
+        self.assertEqual(
+            node.status_snapshot()["visualization"]["state"],
+            "open",
+        )
+
     def test_parameter_overrides_control_topics_frames_model_timeout_and_status(self):
         _StubNode.parameter_overrides = {
             "master_imu_topic": "/custom/master",
@@ -735,33 +773,53 @@ class OpenSimNodeStatusTests(unittest.TestCase):
             1,
         )
 
-    def test_adapter_failure_marks_only_affected_role_mapping_error(self):
+    def test_visualizer_update_failure_does_not_reject_valid_imu(self):
         adapter = _FakeAdapter(accepted=False)
         node = self._node(adapter)
 
         node._on_master_imu(_Imu())
         status = node.status_snapshot()
-        self.assertEqual(
-            status["sensors"]["master"]["state"],
-            "mapping_error",
-        )
-        self.assertEqual(
-            status["sensors"]["master"]["last_error"],
-            "adapter_update_failed",
-        )
+        self.assertEqual(status["sensors"]["master"]["state"], "live")
+        self.assertEqual(status["sensors"]["master"]["last_error"], "")
+        self.assertEqual(status["sensors"]["master"]["updates"], 1)
         self.assertEqual(status["sensors"]["slave"]["state"], "waiting")
-        self.assertTrue(
-            any(
-                "mapping_error" in message
-                for message in node.logger.warning_messages
-            )
-        )
 
         adapter.accepted = True
         node._on_slave_imu(_Imu())
         status = node.status_snapshot()
-        self.assertEqual(status["sensors"]["master"]["state"], "mapping_error")
+        self.assertEqual(status["sensors"]["master"]["state"], "live")
         self.assertEqual(status["sensors"]["slave"]["state"], "live")
+
+    def test_valid_imu_recreates_crashed_native_adapter_once(self):
+        crashed = _FakeAdapter(
+            accepted=False,
+            available=False,
+            reason="visualizer_update_failed",
+        )
+        replacement = _FakeAdapter()
+        adapters = [crashed, replacement]
+        factory_calls = []
+
+        def factory(model_path, frame_mappings):
+            factory_calls.append((model_path, frame_mappings))
+            return adapters[len(factory_calls) - 1]
+
+        node = opensim_node.OpenSimBridgeNode(
+            adapter_factory=factory,
+            monotonic_clock=self.clock,
+        )
+        node._on_master_imu(_Imu())
+
+        self.assertEqual(len(factory_calls), 2)
+        self.assertEqual(len(crashed.calls), 1)
+        self.assertEqual(len(replacement.calls), 1)
+        self.assertEqual(
+            node.status_snapshot()["sensors"]["master"]["state"],
+            "live",
+        )
+        self.assertTrue(
+            node.status_snapshot()["visualization"]["available"],
+        )
 
     def test_unavailable_visualization_remains_orthogonal_to_live_freshness(self):
         node = self._node(

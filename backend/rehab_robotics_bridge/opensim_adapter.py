@@ -220,6 +220,26 @@ class OpenSimVisualizerAdapter:
                 "visualizer_access_failed",
             ) from exc
 
+        # Sampling mode coalesces high-rate IMU updates into a bounded display
+        # cadence instead of blocking the ROS callback for every 100 Hz sample.
+        visualizer_type = getattr(self._opensim, "SimTKVisualizer", None)
+        sampling_mode = getattr(visualizer_type, "Sampling", None)
+        set_mode = getattr(self._simbody_visualizer, "setMode", None)
+        set_frame_rate = getattr(
+            self._simbody_visualizer,
+            "setDesiredFrameRate",
+            None,
+        )
+        try:
+            if sampling_mode is not None and callable(set_mode):
+                set_mode(sampling_mode)
+            if callable(set_frame_rate):
+                set_frame_rate(30.0)
+        except Exception as exc:
+            raise _AdapterInitializationError(
+                "visualizer_sampling_mode_failed",
+            ) from exc
+
         if self._supports_retained_decorations():
             self._initialize_retained_decorations()
             self._mode = "retained_decorations"
