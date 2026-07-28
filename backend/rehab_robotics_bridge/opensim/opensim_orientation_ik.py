@@ -66,6 +66,15 @@ class OpenSimOrientationIkSolver:
         opensim_module: Any,
     ) -> None:
         self._osim = opensim_module
+        logger = getattr(self._osim, "Logger", None)
+        set_log_level = getattr(logger, "setLevelString", None)
+        if callable(set_log_level):
+            # The 4.5.2 fallback rebuilds its static reference per sample.
+            # Suppress the solver constructor's INFO line at acquisition rates.
+            try:
+                set_log_level("Warn")
+            except Exception:
+                pass
         self._master_frame = _strip_leading_slash(master_frame)
         self._slave_frame = _strip_leading_slash(slave_frame)
         self._coordinate_paths = [
@@ -80,6 +89,7 @@ class OpenSimOrientationIkSolver:
         self._state = self._model.initSystem()
         self._solver: Any | None = None
         self._orientations_ref: Any | None = None
+        self._solver_orientations_ref: Any | None = None
         self._use_buffered = False
         self._probe = probe_opensim_orientation_ik_apis(self._osim)
         self._build_solver()
@@ -94,6 +104,7 @@ class OpenSimOrientationIkSolver:
             pass
         self._solver = None
         self._orientations_ref = None
+        self._solver_orientations_ref = None
         try:
             self._build_solver()
         except Exception:
@@ -118,11 +129,20 @@ class OpenSimOrientationIkSolver:
             "BufferedOrientationsReference",
         ):
             try:
-                # Prefer buffered streaming API when present (OpenSim 4.6+).
+                # Buffered updates require passing a shared_ptr into the solver.
+                # OpenSim 4.5.2 exposes this class but its Python shared_ptr
+                # wrapper cannot be constructed from an instance; using the
+                # legacy overload silently slices it to a static reference.
                 rotations_table = self._quats_to_rotations(table)
-                self._orientations_ref = osim.BufferedOrientationsReference(
+                buffered_ref = osim.BufferedOrientationsReference(
                     rotations_table,
                 )
+                shared_ctor = getattr(osim, "SharedOrientationsReference", None)
+                if not callable(shared_ctor):
+                    raise TypeError("shared_orientation_reference_unavailable")
+                shared_ref = shared_ctor(buffered_ref)
+                self._orientations_ref = buffered_ref
+                self._solver_orientations_ref = shared_ref
                 self._use_buffered = True
             except Exception:
                 self._use_buffered = False
@@ -130,6 +150,7 @@ class OpenSimOrientationIkSolver:
         if not self._use_buffered:
             rotations_table = self._quats_to_rotations(table)
             self._orientations_ref = osim.OrientationsReference(rotations_table)
+            self._solver_orientations_ref = self._orientations_ref
 
         markers_ref = None
         if self._probe.get("MarkersReference"):
@@ -143,12 +164,12 @@ class OpenSimOrientationIkSolver:
         constructed = False
         last_exc: Exception | None = None
         for args in (
-            (self._model, markers_ref, self._orientations_ref, coord_refs),
-            (self._model, self._orientations_ref, coord_refs),
+            (self._model, markers_ref, self._solver_orientations_ref, coord_refs),
+            (self._model, self._solver_orientations_ref, coord_refs),
             (
                 self._model,
                 markers_ref if markers_ref is not None else osim.MarkersReference(),
-                self._orientations_ref,
+                self._solver_orientations_ref,
                 coord_refs,
             ),
         ):
@@ -193,21 +214,31 @@ class OpenSimOrientationIkSolver:
         # OpenSim Quaternion is (w, x, y, z).
         q0 = osim.Quaternion(*master_wxyz)
         q1 = osim.Quaternion(*slave_wxyz)
-        # Prefer updElt / set patterns used by OpenSim Python forums.
+        # OpenSim 4.5.x's SWIG binding does not expose assignment of a whole
+        # Quaternion into RowVectorQuaternion. It does expose the mutable
+        # Quaternion returned by updElt(row, column), whose four components can
+        # be set individually.
         set_ok = False
-        for setter in ("set", "setItem", "updElt"):
-            if hasattr(row, setter):
-                try:
-                    if setter == "updElt":
-                        row.updElt(0, 0, q0)
-                        row.updElt(0, 1, q1)
-                    else:
+        try:
+            for column, values in enumerate((master_wxyz, slave_wxyz)):
+                target = row.updElt(0, column)
+                for component, value in enumerate(values):
+                    target.set(component, float(value))
+            set_ok = True
+        except Exception:
+            pass
+
+        # Keep compatibility with bindings that expose whole-value setters.
+        if not set_ok:
+            for setter in ("set", "setItem"):
+                if hasattr(row, setter):
+                    try:
                         getattr(row, setter)(0, q0)
                         getattr(row, setter)(1, q1)
-                    set_ok = True
-                    break
-                except Exception:
-                    continue
+                        set_ok = True
+                        break
+                    except Exception:
+                        continue
         if not set_ok:
             # Fall back to constructing via appendRow with a flat list if exposed.
             try:
@@ -259,6 +290,12 @@ class OpenSimOrientationIkSolver:
                 # putValues(time, Array_<Rotation>) — build when possible.
                 try:
                     rotations_row = rotations.getRowAtIndex(0)
+                    # OpenSim 4.5.2 returns a non-owning RowVectorViewRotation,
+                    # while BufferedOrientationsReference.putValues() requires
+                    # an owning RowVectorRotation.
+                    row_ctor = getattr(self._osim, "RowVectorRotation", None)
+                    if callable(row_ctor):
+                        rotations_row = row_ctor(rotations_row)
                     put(time_s, rotations_row)
                     return
                 except Exception:

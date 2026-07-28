@@ -30,8 +30,9 @@ set -u
 # ROS-generated entry points use /usr/bin/python3. Add the ABI-compatible
 # OpenSim 4.5.2 package and native libraries to that process.
 CONDA_ENV="$(dirname -- "$(dirname -- "${ENV_PYTHON}")")"
+export PATH="${HOME}/.local/libexec/simbody:${PATH}"
 export PYTHONPATH="${CONDA_ENV}/lib/python3.10/site-packages:${PYTHONPATH:-}"
-export LD_LIBRARY_PATH="${CONDA_ENV}/lib:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="${CONDA_ENV}/simbody/lib:${CONDA_ENV}/lib:${LD_LIBRARY_PATH:-}"
 
 exec ros2 launch rehab_robotics_bridge opensim_live_link.launch.py \
     "model_path:=${MODEL_PATH}" \

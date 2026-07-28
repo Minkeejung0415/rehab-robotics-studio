@@ -41,6 +41,8 @@ if [[ ! -x "${ENV_PYTHON}" ]]; then
         opensim=4.5.2
 fi
 
+bash "${PROJECT_DIR}/scripts/install_simbody_visualizer_wsl.sh"
+
 set +u
 source /opt/ros/humble/setup.bash
 set -u

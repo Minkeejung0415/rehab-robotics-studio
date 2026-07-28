@@ -49,12 +49,11 @@ Use a subject model instead of the generated demo model:
 .\scripts\run_opensim_live_link.ps1 -ModelPath C:\models\subject.osim
 ```
 
-Opening the native 3D window requires a Linux OpenSim/Simbody installation
-with `simbody-visualizer` discoverable on WSL's `PATH`. The installed official
-OpenSim 4.5.2 Conda API performs model/quaternion calculations but does not
-ship that executable. In its absence, subscriptions, validation, independent
-live counters, staleness, and status publication continue normally and status
-reports `visualizer_initialization_failed`.
+The setup script builds the Simbody 3.8 `simbody-visualizer` that matches the
+OpenSim 4.5.2 Conda runtime and installs it under
+`~/.local/libexec/simbody`. The launch runner adds that directory to `PATH`.
+Re-run `.\scripts\setup_opensim_live_link.ps1` if the Conda environment or
+visualizer is removed.
 
 The locked defaults are:
 

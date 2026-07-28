@@ -36,9 +36,9 @@ def _identity_artifact() -> CalibrationArtifact:
     )
 
 
-def _quat_about_x(angle_rad: float) -> tuple[float, float, float, float]:
+def _quat_about_z(angle_rad: float) -> tuple[float, float, float, float]:
     half = angle_rad / 2.0
-    return (math.sin(half), 0.0, 0.0, math.cos(half))
+    return (0.0, 0.0, math.sin(half), math.cos(half))
 
 
 class FactoryAlwaysOnTests(unittest.TestCase):
@@ -200,19 +200,14 @@ class OpenSimOrientationIkBindingTests(unittest.TestCase):
             )
             flexed = solver.solve(
                 master_xyzw=(0.0, 0.0, 0.0, 1.0),
-                slave_xyzw=_quat_about_x(math.pi / 2.0),
+                slave_xyzw=_quat_about_z(math.pi / 2.0),
                 calibration=artifact,
                 source_timestamp_ns=20,
                 input_age_s=0.01,
                 joint_names=["knee_angle_r"],
             )
-            if not identity.solution_valid or not flexed.solution_valid:
-                # Bindings present but orientation-reference wiring may still
-                # fail on synthetic model — fail closed is acceptable; document.
-                self.assertFalse(identity.solution_valid)
-                self.assertFalse(flexed.solution_valid)
-                return
-
+            self.assertTrue(identity.solution_valid, msg=identity.reason)
+            self.assertTrue(flexed.solution_valid, msg=flexed.reason)
             self.assertGreater(
                 flexed.positions_rad[0] - identity.positions_rad[0],
                 0.2,

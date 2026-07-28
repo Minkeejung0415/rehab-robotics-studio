@@ -140,14 +140,11 @@ or launches WSL/OpenSim itself.
    .\scripts\stop_stepesp_wireless.ps1
    ```
 
-**`human_needed` native-window boundary:** automated QA proves the fixed Trigger,
-failure/retry state, calibration gate, official JointState angle, staleness,
-and reconnect isolation. It cannot prove a real Simbody window appeared.
-When `simbody-visualizer` is installed and discoverable on WSL's `PATH`, a
-human must confirm that the native window opens, updates during calibrated IK,
-and reopens on retry without stopping IK or recording. When that executable is
-absent, record this check as `human_needed`; the documented failure state is
-the honest expected result.
+**`human_needed` native-window boundary:** setup installs a matching Simbody 3.8
+visualizer under `~/.local/libexec/simbody`, and automated QA verifies the open
+service plus its `available=true`, `state=open` status. A human must still
+confirm that the native window is visibly rendered, updates during calibrated
+IK, and reopens on retry without stopping IK or recording.
 
 ## One-shot 250 Hz hardware verification
 
