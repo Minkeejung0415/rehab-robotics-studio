@@ -618,14 +618,22 @@ describe('RosbridgeDataSource — OpenSim calibration Trigger services', () => {
   });
 
   it('captureCalibration returns failure when rosbridge is disconnected', async () => {
-    const ds = new RosbridgeDataSource('ws://localhost:9090');
+    const ds = new RosbridgeDataSource(
+      'ws://localhost:9090',
+      '/esp/raw/master',
+      '/esp/raw/slave',
+    );
     const result = await ds.captureCalibration();
     assert.equal(result.success, false);
     assert.match(result.message, /not connected/i);
   });
 
   it('clearCalibration returns failure when rosbridge is disconnected', async () => {
-    const ds = new RosbridgeDataSource('ws://localhost:9090');
+    const ds = new RosbridgeDataSource(
+      'ws://localhost:9090',
+      '/esp/raw/master',
+      '/esp/raw/slave',
+    );
     const result = await ds.clearCalibration();
     assert.equal(result.success, false);
     assert.match(result.message, /not connected/i);
