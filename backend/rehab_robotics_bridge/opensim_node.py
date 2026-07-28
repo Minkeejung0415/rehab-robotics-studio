@@ -23,8 +23,19 @@ from .opensim.ik_contracts import (
     CALIBRATION_CAPTURE_SERVICE,
     CALIBRATION_CLEAR_SERVICE,
     CALIBRATION_STATUS_TOPIC,
+    DIAGNOSTICS_TOPIC,
+    IK_STATUS_TOPIC,
     JOINT_STATES_TOPIC,
     may_publish_joint_states,
+)
+from .opensim.opensim_orientation_ik import create_orientation_ik_solver
+from .opensim.orientation_ik import (
+    DEFAULT_JOINT_NAME,
+    FakeOrientationIkSolver,
+    IkSolution,
+    OrientationIkSolver,
+    UnavailableOrientationIkSolver,
+    ik_status_dict,
 )
 from .opensim_adapter import (
     VisualizerAdapter,
@@ -35,8 +46,30 @@ from .opensim_adapter import (
 
 
 _SCHEMA = "rehab.opensim_live_link.1"
+_DIAGNOSTICS_SCHEMA = "rehab.opensim_diagnostics.1"
 _ROLES = ("master", "slave")
 _IMU_QOS = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=1)
+
+
+def _parse_name_list(raw: object, *, default: list[str]) -> list[str]:
+    if isinstance(raw, (list, tuple)):
+        names = [str(item).strip() for item in raw if str(item).strip()]
+        return names or list(default)
+    text = str(raw or "").strip()
+    if not text:
+        return list(default)
+    if "," in text:
+        names = [part.strip() for part in text.split(",") if part.strip()]
+        return names or list(default)
+    return [text]
+
+
+def _solver_backend_name(solver: object) -> str:
+    if isinstance(solver, FakeOrientationIkSolver):
+        return "fake"
+    if isinstance(solver, UnavailableOrientationIkSolver):
+        return "unavailable"
+    return type(solver).__name__
 
 
 def _source_timestamp_ns(message: Imu) -> int | None:
@@ -80,6 +113,7 @@ class OpenSimBridgeNode(Node):
         ] = create_visualizer_adapter,
         monotonic_clock: Callable[[], float] = time.monotonic,
         calibration_controller: CalibrationController | None = None,
+        ik_solver: OrientationIkSolver | None = None,
     ) -> None:
         super().__init__("opensim_bridge")
         self._monotonic_clock = monotonic_clock
@@ -96,6 +130,8 @@ class OpenSimBridgeNode(Node):
             "publish_joint_angle_enabled": False,
             "calibration_window_s": DEFAULT_CAPTURE_WINDOW_S,
             "calibration_max_dispersion_deg": DEFAULT_MAX_DISPERSION_DEG,
+            "ik_joint_names": DEFAULT_JOINT_NAME,
+            "ik_coordinate_paths": DEFAULT_JOINT_NAME,
         }
         values = {
             name: self.declare_parameter(name, default).value
@@ -149,8 +185,26 @@ class OpenSimBridgeNode(Node):
                 max_dispersion_deg=max_dispersion,
             )
         self._last_calibration_signature: tuple[str, str, object] | None = None
-        # Phase 18 will set this when an IK solution is available.
+        self._ik_joint_names = _parse_name_list(
+            values["ik_joint_names"],
+            default=[DEFAULT_JOINT_NAME],
+        )
+        self._ik_coordinate_paths = _parse_name_list(
+            values["ik_coordinate_paths"],
+            default=list(self._ik_joint_names),
+        )
+        if ik_solver is not None:
+            self._ik_solver = ik_solver
+        else:
+            self._ik_solver = create_orientation_ik_solver(
+                model_path=self._model_path,
+                master_frame=self._sensor_states["master"].frame,
+                slave_frame=self._sensor_states["slave"].frame,
+                coordinate_paths=self._ik_coordinate_paths,
+            )
+        self._ik_backend = _solver_backend_name(self._ik_solver)
         self._ik_solution: dict[str, object] | None = None
+        self._last_ik_solution: IkSolution | None = None
 
         self._status_publisher = self.create_publisher(
             String,
@@ -160,6 +214,16 @@ class OpenSimBridgeNode(Node):
         self._calibration_status_publisher = self.create_publisher(
             String,
             CALIBRATION_STATUS_TOPIC,
+            10,
+        )
+        self._ik_status_publisher = self.create_publisher(
+            String,
+            IK_STATUS_TOPIC,
+            10,
+        )
+        self._diagnostics_publisher = self.create_publisher(
+            String,
+            DIAGNOSTICS_TOPIC,
             10,
         )
         self._joint_states_publisher = self.create_publisher(
@@ -275,7 +339,7 @@ class OpenSimBridgeNode(Node):
         self._set_sensor_state(role, "live", "")
         self._feed_calibration_if_capturing()
         self._publish_joint_angle_if_ready()
-        self._maybe_publish_joint_states()
+        self._solve_and_publish_ik()
 
     def _sensors_ready_for_capture(self) -> tuple[bool, str]:
         for role in _ROLES:
@@ -309,9 +373,15 @@ class OpenSimBridgeNode(Node):
     ) -> Trigger.Response:
         self._calibration.clear()
         self._ik_solution = None
+        self._last_ik_solution = None
+        try:
+            self._ik_solver.reset()
+        except Exception:
+            pass
         response.success = True
         response.message = "cleared"
         self._publish_calibration_status(force=True)
+        self._publish_ik_status()
         return response
 
     def _feed_calibration_if_capturing(self) -> None:
@@ -328,21 +398,78 @@ class OpenSimBridgeNode(Node):
         if self._calibration.state != prior:
             self._publish_calibration_status(force=True)
 
+    def _pair_source_timestamp_ns(self) -> int | None:
+        master_ts = self._sensor_states["master"].last_source_timestamp_ns
+        slave_ts = self._sensor_states["slave"].last_source_timestamp_ns
+        if master_ts is None or slave_ts is None:
+            return None
+        return min(int(master_ts), int(slave_ts))
+
+    def _pair_input_age_s(self) -> float | None:
+        now = self._monotonic_clock()
+        ages: list[float] = []
+        for role in _ROLES:
+            last = self._sensor_states[role].last_valid_monotonic
+            if last is None:
+                return None
+            ages.append(max(0.0, now - last))
+        return min(ages) if ages else None
+
+    def _solve_and_publish_ik(self) -> None:
+        master = self._sensor_states["master"]
+        slave = self._sensor_states["slave"]
+        if master.last_xyzw is None or slave.last_xyzw is None:
+            return
+        if master.state != "live" or slave.state != "live":
+            return
+
+        source_timestamp_ns = self._pair_source_timestamp_ns()
+        solution = self._ik_solver.solve(
+            master_xyzw=master.last_xyzw,
+            slave_xyzw=slave.last_xyzw,
+            calibration=self._calibration.artifact,
+            source_timestamp_ns=source_timestamp_ns,
+            input_age_s=self._pair_input_age_s(),
+            joint_names=self._ik_joint_names,
+        )
+        self._last_ik_solution = solution
+        if (
+            solution.solution_valid
+            and may_publish_joint_states(self._calibration.state)
+            and solution.source_timestamp_ns is not None
+        ):
+            self._ik_solution = {
+                "name": list(solution.joint_names),
+                "position": list(solution.positions_rad),
+                "source_timestamp_ns": int(solution.source_timestamp_ns),
+                "solution_valid": True,
+            }
+        else:
+            self._ik_solution = None
+        self._publish_ik_status()
+        self._maybe_publish_joint_states()
+
     def _maybe_publish_joint_states(self) -> None:
-        """Hard gate seam for Phase 18 — never fabricate angles in Phase 17."""
+        """Publish JointState only when CALIBRATED and solution_valid (D-18-05)."""
 
         if not may_publish_joint_states(self._calibration.state):
             return
         if self._ik_solution is None:
             return
-        # Phase 18 will populate JointState from self._ik_solution here.
-        message = JointState()
+        if not bool(self._ik_solution.get("solution_valid")):
+            return
         names = self._ik_solution.get("name")
         positions = self._ik_solution.get("position")
+        stamp_ns = self._ik_solution.get("source_timestamp_ns")
         if not isinstance(names, list) or not isinstance(positions, list):
             return
+        if not isinstance(stamp_ns, int) or stamp_ns <= 0:
+            return
+        message = JointState()
         message.name = [str(name) for name in names]
         message.position = [float(value) for value in positions]
+        message.header.stamp.sec = stamp_ns // 1_000_000_000
+        message.header.stamp.nanosec = stamp_ns % 1_000_000_000
         self._joint_states_publisher.publish(message)
 
     def _publish_joint_angle_if_ready(self) -> None:
@@ -427,6 +554,33 @@ class OpenSimBridgeNode(Node):
             self._last_visualization_signature = visualization_signature
         self._publish_status()
         self._publish_calibration_status()
+        self._publish_ik_status()
+        self._publish_diagnostics()
+
+    def _ik_status_payload(self) -> dict[str, object]:
+        if self._last_ik_solution is not None:
+            return ik_status_dict(
+                self._last_ik_solution,
+                backend=self._ik_backend,
+            )
+        return {
+            "schema": "rehab.opensim_ik_status.1",
+            "solution_valid": False,
+            "reason": "no_solution_yet",
+            "calibration_id": (
+                self._calibration.artifact.calibration_id
+                if self._calibration.artifact is not None
+                else None
+            ),
+            "orientation_residual_rms": None,
+            "orientation_residual_max": None,
+            "input_age_s": None,
+            "solve_duration_s": None,
+            "backend": self._ik_backend,
+            "joint_names": list(self._ik_joint_names),
+            "source_timestamp_ns": None,
+            "positions_rad": [],
+        }
 
     def status_snapshot(self) -> dict[str, object]:
         now = self._monotonic_clock()
@@ -460,6 +614,7 @@ class OpenSimBridgeNode(Node):
             "visualization": visualization,
             "sensors": sensors,
             "calibration": self._calibration.status_dict(),
+            "ik": self._ik_status_payload(),
             "joint_angle_deg": (
                 self._last_joint_angle_deg
                 if self._publish_joint_angle_enabled
@@ -493,6 +648,39 @@ class OpenSimBridgeNode(Node):
             separators=(",", ":"),
         )
         self._calibration_status_publisher.publish(message)
+
+    def _publish_ik_status(self) -> None:
+        message = String()
+        message.data = json.dumps(
+            self._ik_status_payload(),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        self._ik_status_publisher.publish(message)
+
+    def _publish_diagnostics(self) -> None:
+        ik = self._ik_status_payload()
+        level = "OK" if ik.get("solution_valid") else "WARN"
+        if not may_publish_joint_states(self._calibration.state):
+            level = "WARN"
+        payload = {
+            "schema": _DIAGNOSTICS_SCHEMA,
+            "level": level,
+            "solution_valid": ik.get("solution_valid"),
+            "reason": ik.get("reason"),
+            "calibration_id": ik.get("calibration_id"),
+            "calibration_state": self._calibration.state.value,
+            "orientation_residual_rms": ik.get("orientation_residual_rms"),
+            "input_age_s": ik.get("input_age_s"),
+            "backend": ik.get("backend"),
+        }
+        message = String()
+        message.data = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        self._diagnostics_publisher.publish(message)
 
 
 def main(args=None) -> None:

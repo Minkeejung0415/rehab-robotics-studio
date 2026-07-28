@@ -23,8 +23,13 @@ CALIBRATION_CLEAR_SERVICE = "/opensim/calibration/clear"
 
 # Status / diagnostics topics (Phase 18).
 IK_STATUS_TOPIC = "/opensim/ik_status"
+IK_STATUS_SCHEMA = "rehab.opensim_ik_status.1"
 CALIBRATION_STATUS_TOPIC = "/opensim/calibration_status"
 DIAGNOSTICS_TOPIC = "/diagnostics"
+DIAGNOSTICS_SCHEMA = "rehab.opensim_diagnostics.1"
+
+# Default product coordinate (D-18-08).
+DEFAULT_IK_JOINT_NAME = "knee_angle_r"
 
 # Retired non-product path (D-16-01). Debug only; never the product IK output.
 PRODUCT_JOINT_ANGLE_TOPIC = "/opensim/joint_angle"  # deprecated

@@ -31,6 +31,14 @@ def generate_launch_description():
             default_value="false",
         ),
         DeclareLaunchArgument(
+            "ik_joint_names",
+            default_value="knee_angle_r",
+        ),
+        DeclareLaunchArgument(
+            "ik_coordinate_paths",
+            default_value="knee_angle_r",
+        ),
+        DeclareLaunchArgument(
             "enable_test_publisher",
             default_value="false",
         ),
@@ -53,6 +61,8 @@ def generate_launch_description():
             "publish_joint_angle_enabled": LaunchConfiguration(
                 "publish_joint_angle_enabled"
             ),
+            "ik_joint_names": LaunchConfiguration("ik_joint_names"),
+            "ik_coordinate_paths": LaunchConfiguration("ik_coordinate_paths"),
         }],
     )
     test_publisher = Node(
