@@ -17,8 +17,13 @@ import { formatCalibrationStatus } from './calibrationStatus';
  */
 const STALE_STREAM_MS = 5_000;
 
-function display(value: string | number | null | undefined, fallback: string | number = 'Unknown') {
-  return value === null || value === undefined || value === '' ? fallback : String(value);
+function display(
+  value: string | number | null | undefined,
+  fallback: string | number = 'Unknown',
+): string {
+  return value === null || value === undefined || value === ''
+    ? String(fallback)
+    : String(value);
 }
 
 function nodeState(node: EspHealthSnapshot | null | undefined) {
