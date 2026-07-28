@@ -1,7 +1,9 @@
-# OpenSim IK ROS Contracts (Phase 16)
+# OpenSim IK ROS Contracts (Phases 16–17)
 
-**Status:** Contracts only — no solver, no calibration UI, no runtime publishers
-in this milestone phase.
+**Status:** Phase 16 locked names/gate. Phase 17 implements calibration
+capture/clear Trigger services, `/opensim/calibration_status` JSON, and the
+hard joint_states publish gate on `opensim_bridge` (no InverseKinematicsSolver
+— Phase 18).
 
 **Machine-readable twin:**
 `backend/rehab_robotics_bridge/opensim/ik_contracts.py`
@@ -14,10 +16,10 @@ This document locks the ROS names and the hard calibration gate for Phases
 
 | In scope here | Out of this phase |
 | --- | --- |
-| Topic/service names and message types | OpenSim IK solver implementation |
-| Hard CALIBRATED gate for joint-state publish | Toolbar **Calibrate** / **Clear cal** |
+| Topic/service names and message types | OpenSim IK solver implementation (Phase 18) |
+| Hard CALIBRATED gate for joint-state publish | Toolbar **Calibrate** / **Clear cal** (Phase 17 GUI plan) |
 | Explicit retirement of custom `/opensim/joint_angle` | Visualizer start button |
-| Pointers for later wiring | Live GUI JointState subscription |
+| Phase 17 capture/clear + calibration_status | Live GUI JointState subscription |
 
 Live triad visualization remains documented in
 [`opensim-quaternion-live-link.md`](./opensim-quaternion-live-link.md) and is
@@ -68,22 +70,28 @@ Constants: `JOINT_STATES_TOPIC`, `JOINT_STATES_MSG_TYPE`.
 > Prefer `/opensim/joint_states` unless a later research rename is explicitly
 > approved.
 
-## Calibration services (Phase 17)
+## Calibration services (Phase 17 — implemented on `opensim_bridge`)
 
 | Service | Type | Purpose |
 | --- | --- | --- |
-| `/opensim/calibration/capture` | `std_srvs/Trigger` | Capture reference pose |
+| `/opensim/calibration/capture` | `std_srvs/Trigger` | Begin multi-sample standing / knees-extended capture |
 | `/opensim/calibration/clear` | `std_srvs/Trigger` | Clear calibration → `UNCALIBRATED` |
 
 Constants: `CALIBRATION_CAPTURE_SERVICE`, `CALIBRATION_CLEAR_SERVICE`.
 
-## Status and diagnostics topics (Phase 18)
+Capture requires both master and slave IMU orientations live. Clear invalidates
+active mounting offsets. JointState is never published until
+`may_publish_joint_states` is true **and** an IK solution exists (Phase 17
+leaves the solution absent).
 
-| Topic | Role |
-| --- | --- |
-| `/opensim/ik_status` | Validity, residuals/age, calibration identity |
-| `/opensim/calibration_status` | `UNCALIBRATED` \| `CAPTURING` \| `CALIBRATED` \| `FAILED` + reason |
-| `/diagnostics` | Standard health summary |
+## Status and diagnostics topics
+
+| Topic | Role | Owner |
+| --- | --- | --- |
+| `/opensim/calibration_status` | JSON: `state`, `reason`, `known_pose`, `sample_count`, `window_s`, `calibration_id`, `has_offsets` | Phase 17 |
+| `/opensim/status` | Embeds the same `calibration` object for Studio consumers | Phase 17 |
+| `/opensim/ik_status` | Validity, residuals/age, calibration identity | Phase 18 |
+| `/diagnostics` | Standard health summary | Phase 18 |
 
 Constants: `IK_STATUS_TOPIC`, `CALIBRATION_STATUS_TOPIC`, `DIAGNOSTICS_TOPIC`.
 
@@ -94,9 +102,9 @@ Constants: `IK_STATUS_TOPIC`, `CALIBRATION_STATUS_TOPIC`, `DIAGNOSTICS_TOPIC`.
 `publish_joint_angle_enabled` default **OFF** for debug. Constant:
 `PRODUCT_JOINT_ANGLE_TOPIC` (deprecated) — must not equal `JOINT_STATES_TOPIC`.
 
-## Not in this milestone phase
+## Not in this document's remaining scope
 
 - OpenSim IK solver process / package (Phase 18)
-- Toolbar Calibrate / Clear cal chrome (Phase 17)
+- Toolbar Calibrate / Clear cal chrome (Phase 17 GUI plan 03)
 - Visualizer toolbar button (Phase 19)
 - Studio subscription to `/opensim/joint_states` for live knee display (Phase 19)

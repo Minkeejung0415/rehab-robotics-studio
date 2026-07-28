@@ -10,9 +10,22 @@ from typing import Callable
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import Imu, JointState
 from std_msgs.msg import Float64, String
+from std_srvs.srv import Trigger
 
+from .opensim.calibration import (
+    DEFAULT_CAPTURE_WINDOW_S,
+    DEFAULT_MAX_DISPERSION_DEG,
+    CalibrationController,
+)
+from .opensim.ik_contracts import (
+    CALIBRATION_CAPTURE_SERVICE,
+    CALIBRATION_CLEAR_SERVICE,
+    CALIBRATION_STATUS_TOPIC,
+    JOINT_STATES_TOPIC,
+    may_publish_joint_states,
+)
 from .opensim_adapter import (
     VisualizerAdapter,
     create_visualizer_adapter,
@@ -66,6 +79,7 @@ class OpenSimBridgeNode(Node):
             VisualizerAdapter,
         ] = create_visualizer_adapter,
         monotonic_clock: Callable[[], float] = time.monotonic,
+        calibration_controller: CalibrationController | None = None,
     ) -> None:
         super().__init__("opensim_bridge")
         self._monotonic_clock = monotonic_clock
@@ -80,6 +94,8 @@ class OpenSimBridgeNode(Node):
             "status_topic": "/opensim/status",
             "joint_angle_topic": "/opensim/joint_angle",
             "publish_joint_angle_enabled": False,
+            "calibration_window_s": DEFAULT_CAPTURE_WINDOW_S,
+            "calibration_max_dispersion_deg": DEFAULT_MAX_DISPERSION_DEG,
         }
         values = {
             name: self.declare_parameter(name, default).value
@@ -117,9 +133,38 @@ class OpenSimBridgeNode(Node):
         )
         self._last_visualization_signature: tuple[bool, str, str] | None = None
 
+        if calibration_controller is not None:
+            self._calibration = calibration_controller
+        else:
+            try:
+                window_s = float(values["calibration_window_s"])
+            except (TypeError, ValueError):
+                window_s = DEFAULT_CAPTURE_WINDOW_S
+            try:
+                max_dispersion = float(values["calibration_max_dispersion_deg"])
+            except (TypeError, ValueError):
+                max_dispersion = DEFAULT_MAX_DISPERSION_DEG
+            self._calibration = CalibrationController(
+                window_s=window_s,
+                max_dispersion_deg=max_dispersion,
+            )
+        self._last_calibration_signature: tuple[str, str, object] | None = None
+        # Phase 18 will set this when an IK solution is available.
+        self._ik_solution: dict[str, object] | None = None
+
         self._status_publisher = self.create_publisher(
             String,
             str(values["status_topic"]),
+            10,
+        )
+        self._calibration_status_publisher = self.create_publisher(
+            String,
+            CALIBRATION_STATUS_TOPIC,
+            10,
+        )
+        self._joint_states_publisher = self.create_publisher(
+            JointState,
+            JOINT_STATES_TOPIC,
             10,
         )
         raw_flag = values["publish_joint_angle_enabled"]
@@ -152,6 +197,16 @@ class OpenSimBridgeNode(Node):
             self._sensor_states["slave"].topic,
             self._on_slave_imu,
             _IMU_QOS,
+        )
+        self._capture_service = self.create_service(
+            Trigger,
+            CALIBRATION_CAPTURE_SERVICE,
+            self._on_calibration_capture,
+        )
+        self._clear_service = self.create_service(
+            Trigger,
+            CALIBRATION_CLEAR_SERVICE,
+            self._on_calibration_clear,
         )
         self._status_timer = self.create_timer(
             min(self._stale_timeout_s / 2.0, 0.5),
@@ -218,7 +273,77 @@ class OpenSimBridgeNode(Node):
         )
         sensor.updates += 1
         self._set_sensor_state(role, "live", "")
+        self._feed_calibration_if_capturing()
         self._publish_joint_angle_if_ready()
+        self._maybe_publish_joint_states()
+
+    def _sensors_ready_for_capture(self) -> tuple[bool, str]:
+        for role in _ROLES:
+            sensor = self._sensor_states[role]
+            if sensor.last_xyzw is None:
+                return False, f"missing_{role}_orientation"
+            if sensor.state != "live":
+                return False, f"{role}_not_live"
+        return True, ""
+
+    def _on_calibration_capture(
+        self,
+        _request: Trigger.Request,
+        response: Trigger.Response,
+    ) -> Trigger.Response:
+        ready, reason = self._sensors_ready_for_capture()
+        if not ready:
+            response.success = False
+            response.message = reason
+            return response
+        ok, message = self._calibration.begin_capture()
+        response.success = ok
+        response.message = message
+        self._publish_calibration_status(force=True)
+        return response
+
+    def _on_calibration_clear(
+        self,
+        _request: Trigger.Request,
+        response: Trigger.Response,
+    ) -> Trigger.Response:
+        self._calibration.clear()
+        self._ik_solution = None
+        response.success = True
+        response.message = "cleared"
+        self._publish_calibration_status(force=True)
+        return response
+
+    def _feed_calibration_if_capturing(self) -> None:
+        master = self._sensor_states["master"]
+        slave = self._sensor_states["slave"]
+        if master.last_xyzw is None or slave.last_xyzw is None:
+            return
+        prior = self._calibration.state
+        self._calibration.feed_pair(
+            master.last_xyzw,
+            slave.last_xyzw,
+            monotonic_time=self._monotonic_clock(),
+        )
+        if self._calibration.state != prior:
+            self._publish_calibration_status(force=True)
+
+    def _maybe_publish_joint_states(self) -> None:
+        """Hard gate seam for Phase 18 — never fabricate angles in Phase 17."""
+
+        if not may_publish_joint_states(self._calibration.state):
+            return
+        if self._ik_solution is None:
+            return
+        # Phase 18 will populate JointState from self._ik_solution here.
+        message = JointState()
+        names = self._ik_solution.get("name")
+        positions = self._ik_solution.get("position")
+        if not isinstance(names, list) or not isinstance(positions, list):
+            return
+        message.name = [str(name) for name in names]
+        message.position = [float(value) for value in positions]
+        self._joint_states_publisher.publish(message)
 
     def _publish_joint_angle_if_ready(self) -> None:
         if not self._publish_joint_angle_enabled or self._joint_angle_publisher is None:
@@ -301,6 +426,7 @@ class OpenSimBridgeNode(Node):
                 self.get_logger().warning(message)
             self._last_visualization_signature = visualization_signature
         self._publish_status()
+        self._publish_calibration_status()
 
     def status_snapshot(self) -> dict[str, object]:
         now = self._monotonic_clock()
@@ -333,6 +459,7 @@ class OpenSimBridgeNode(Node):
             "schema": _SCHEMA,
             "visualization": visualization,
             "sensors": sensors,
+            "calibration": self._calibration.status_dict(),
             "joint_angle_deg": (
                 self._last_joint_angle_deg
                 if self._publish_joint_angle_enabled
@@ -348,6 +475,24 @@ class OpenSimBridgeNode(Node):
             separators=(",", ":"),
         )
         self._status_publisher.publish(message)
+
+    def _publish_calibration_status(self, *, force: bool = False) -> None:
+        payload = self._calibration.status_dict()
+        signature = (
+            str(payload.get("state", "")),
+            str(payload.get("reason", "")),
+            payload.get("calibration_id"),
+        )
+        if not force and signature == self._last_calibration_signature:
+            return
+        self._last_calibration_signature = signature
+        message = String()
+        message.data = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        self._calibration_status_publisher.publish(message)
 
 
 def main(args=None) -> None:
