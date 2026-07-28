@@ -1,58 +1,67 @@
 # Requirements: Rehab Robotics Studio
 
-**Defined:** 2026-07-27
-**Milestone:** v1.4 OpenSim Quaternion Live Link
+**Defined:** 2026-07-28
+**Milestone:** v1.5 OpenSim IK + Calibration + Visualizer Control
 **Core Value:** Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline into usable filtered, biomechanical, and recorded outputs.
 
-## v1.4 Requirements
+## v1.5 Requirements
 
-### Quaternion Live Link
+### Replace Custom Angle
 
-- [ ] **LINK-01**: An operator can launch `opensim_bridge` with configurable master and slave `sensor_msgs/Imu` input topics.
-- [ ] **LINK-02**: The bridge reads the orientation quaternion from each ESP IMU message and converts it through one documented ROS-to-OpenSim convention boundary.
-- [ ] **LINK-03**: The operator can map each ESP input to a named OpenSim model frame without changing source code.
-- [ ] **LINK-04**: Valid incoming orientations update the corresponding frames in a running OpenSim model or native OpenSim visualizer demonstration.
-- [ ] **LINK-05**: Missing OpenSim runtime/model assets, invalid quaternions, unknown frame mappings, and stale subscriptions produce visible status instead of silent failure.
-- [ ] **LINK-06**: A deterministic local publisher/test proves that known quaternion messages reach the bridge and produce the expected OpenSim orientation update without connected ESP hardware.
+- [x] **IK-00**: Remove the custom relative-quaternion `/opensim/joint_angle` path and stop presenting it as OpenSim IK in the GUI graph/display.
+
+### Calibration / Mounting Offset
+
+- [ ] **IK-01**: Operator can press a top-level toolbar **Calibrate** control to capture a bounded stable window in a fixed standing / knees-extended pose and compute sensor-to-model mounting offsets.
+- [ ] **IK-02**: Operator can press **Clear cal** to invalidate the active calibration and return to UNCALIBRATED.
+- [ ] **IK-03**: Joint-angle publication is hard-gated — no IK angles are published until calibration state is CALIBRATED.
+- [ ] **IK-04**: Calibration status (UNCALIBRATED / CAPTURING / CALIBRATED / FAILED + reason) is visible in the Front Panel OpenSim section.
+
+### Official OpenSim IK
+
+- [ ] **IK-05**: After calibration, OpenSim (OpenSense-compatible orientation IK) solves joint coordinates from the paired master/slave IMU orientations.
+- [ ] **IK-06**: Solved coordinates are published on a standard ROS joint-state topic for the GUI to display.
+- [ ] **IK-07**: IK validity, residuals, input age, and calibration identity are observable via status/diagnostics (not only logs).
+
+### Visualizer Control
+
+- [ ] **VIS-01**: Operator can press a top-level toolbar button to start/show the OpenSim 3D visualizer when the runtime supports it.
+- [ ] **VIS-02**: Visualizer availability / failure reason remains visible when the window cannot open.
 
 ## Future Requirements
 
-### OpenSim IK
-
-- **IK-01**: Calibrate sensor-to-model mounting orientations from a known pose.
-- **IK-02**: Run persistent real-time inverse kinematics and publish joint angles.
-- **IK-03**: Validate solved coordinates, synchronization, latency, and biomechanical accuracy.
-
-### Visualization
-
-- **VIS-01**: Render the solved OpenSim model inside Rehab Robotics Studio.
+- Versioned calibration save/load across sessions bound to model/config hashes.
+- Multi-pose calibration library and clinical validation protocols.
+- Embedded Studio 3D rendering of the solved model (not only native OpenSim window).
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Inverse kinematics and joint-angle publication | The milestone first proves that OpenSim can receive the existing ESP quaternion streams. |
-| Full calibration workflow | Fixed/configured frame mapping is sufficient for the live-link prototype. |
-| Jetson production packaging | Deployment architecture follows after the local OpenSim path is demonstrated. |
-| Embedded Studio 3D rendering | OpenSim's native visualizer is sufficient for this prototype. |
-| Clinical or biomechanical validity claims | No IK or external-reference validation is included. |
+| Custom relative-quat “IK” as the product angle | Explicitly rejected — must use OpenSim IK |
+| Classical marker-based IK | Hardware is IMU-only |
+| Clinical accuracy claims | Needs separate external-reference validation |
+| Jetson production packaging | Follows after local IK path works |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LINK-01 | Phase 15 | Pending |
-| LINK-02 | Phase 15 | Pending |
-| LINK-03 | Phase 15 | Pending |
-| LINK-04 | Phase 15 | Pending |
-| LINK-05 | Phase 15 | Pending |
-| LINK-06 | Phase 15 | Pending |
+| IK-00 | Phase 16 | Complete |
+| IK-01 | Phase 17 | Pending |
+| IK-02 | Phase 17 | Pending |
+| IK-03 | Phase 17 | Pending |
+| IK-04 | Phase 17 | Pending |
+| IK-05 | Phase 18 | Pending |
+| IK-06 | Phase 18 | Pending |
+| IK-07 | Phase 18 | Pending |
+| VIS-01 | Phase 19 | Pending |
+| VIS-02 | Phase 19 | Pending |
 
 **Coverage:**
-- v1.4 requirements: 6 total
-- Mapped to phases: 6
+- v1.5 requirements: 10 total
+- Mapped to phases: 10
 - Unmapped: 0
 
 ---
-*Requirements defined: 2026-07-27*
-*Last updated: 2026-07-27 after scope reduction*
+*Requirements defined: 2026-07-28*
