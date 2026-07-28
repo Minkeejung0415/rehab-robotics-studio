@@ -96,7 +96,7 @@ Plans:
 | 16. Retire Custom Angle + IK Contracts | 3/3 | Complete   | 2026-07-28 |
 | 17. Reference-Pose Calibration | 3/3 | Complete   | 2026-07-28 |
 | 18. Real-Time OpenSim IK Outputs | 3/3 | Complete   | 2026-07-28 |
-| 19. Studio Controls + Live Angle Display | 2/7 | In Progress|  |
+| 19. Studio Controls + Live Angle Display | 3/7 | In Progress|  |
 
 ---
 *Roadmap created: 2026-07-28 for milestone v1.5*
