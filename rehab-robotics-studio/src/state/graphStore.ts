@@ -15,9 +15,25 @@ export interface PendingWire {
   y: number;
 }
 
-const CANVAS_WIDTH = 980;
-const CANVAS_HEIGHT = 720;
 const NODE_WIDTH = 220;
+const WORKSPACE_MAX = 10_000;
+const GRAPH_ID_KEY = 'rehab-robotics:graphId';
+
+function createGraphId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `graph-${Date.now()}`;
+}
+
+function initialGraphId(): string {
+  try {
+    const saved = localStorage.getItem(GRAPH_ID_KEY);
+    if (saved) return saved;
+    const created = createGraphId();
+    localStorage.setItem(GRAPH_ID_KEY, created);
+    return created;
+  } catch {
+    return createGraphId();
+  }
+}
 
 /** Build a node instance with default params from its definition. */
 function makeNode(id: string, type: string, x: number, y: number): BlockInstance {
@@ -46,20 +62,20 @@ function edge(
 /* ----- the default graph (mirrors the Level 1 prototype) ----- */
 
 const DEFAULT_NODES: BlockInstance[] = [
-  makeNode('B7', 'fake_imu', 40, 40),
-  makeNode('B8', 'opensim_ik_mock', 320, 40),
+  makeNode('B7', 'esp32_imu', 40, 40),
+  makeNode('B8', 'opensim_ik_live', 320, 40),
   makeNode('B9', 'joint_angle_display', 600, 40),
 
-  makeNode('B4', 'fake_emg', 40, 190),
-  makeNode('B5', 'emg_envelope', 320, 190),
-  makeNode('B6', 'emg_chart', 600, 190),
+  makeNode('B4', 'fake_emg', 40, 340),
+  makeNode('B5', 'emg_envelope', 320, 340),
+  makeNode('B6', 'emg_chart', 600, 340),
 
-  makeNode('B1', 'fake_load_cell', 40, 340),
-  makeNode('B2', 'low_pass_filter', 320, 340),
-  makeNode('B3', 'force_gauge', 600, 340),
+  makeNode('B1', 'fake_load_cell', 40, 500),
+  makeNode('B2', 'low_pass_filter', 320, 500),
+  makeNode('B3', 'force_gauge', 600, 500),
 
-  makeNode('B10', 'fake_motor_state', 40, 500),
-  makeNode('B11', 'motor_state_indicator', 320, 500),
+  makeNode('B10', 'fake_motor_state', 40, 660),
+  makeNode('B11', 'motor_state_indicator', 320, 660),
 ];
 
 const DEFAULT_EDGES: EdgeDefinition[] = [
@@ -72,7 +88,23 @@ const DEFAULT_EDGES: EdgeDefinition[] = [
   edge('e7', 'B10', 'state', 'B11', 'state', 'motor_state'),
 ];
 
+/** Read-only default graph document for product-path contract tests. */
+export function getDefaultGraphDocument(): {
+  nodes: BlockInstance[];
+  edges: EdgeDefinition[];
+} {
+  return {
+    nodes: DEFAULT_NODES.map((node) => ({
+      ...node,
+      position: { ...node.position },
+      params: { ...node.params },
+    })),
+    edges: DEFAULT_EDGES.map((e) => ({ ...e })),
+  };
+}
+
 interface GraphStore {
+  graphId: string;
   nodes: BlockInstance[];
   edges: EdgeDefinition[];
   selectedId: string | null;
@@ -106,6 +138,7 @@ interface GraphStore {
 }
 
 export const useGraphStore = create<GraphStore>((set, get) => ({
+  graphId: initialGraphId(),
   nodes: DEFAULT_NODES,
   edges: DEFAULT_EDGES,
   selectedId: 'B1',
@@ -142,8 +175,8 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
         type: src.type,
         name: `${src.name} copy`,
         position: {
-          x: Math.max(8, Math.min(CANVAS_WIDTH - NODE_WIDTH - 8, src.position.x + 40)),
-          y: Math.max(8, Math.min(CANVAS_HEIGHT - 140, src.position.y + 40)),
+          x: Math.max(8, Math.min(WORKSPACE_MAX - NODE_WIDTH - 8, src.position.x + 40)),
+          y: Math.max(8, Math.min(WORKSPACE_MAX - 280, src.position.y + 40)),
         },
         params: { ...src.params },
         status: 'idle',
@@ -255,12 +288,15 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
     return issues;
   },
 
-  serialize: () => serializeGraph(get().nodes, get().edges),
+  serialize: () => serializeGraph(get().nodes, get().edges, get().graphId),
 
   load: (json) => {
     const doc = deserializeGraph(json);
     const firstId = doc.nodes[0]?.id ?? null;
+    const graphId = doc.graphId || createGraphId();
+    try { localStorage.setItem(GRAPH_ID_KEY, graphId); } catch { /* storage is optional */ }
     set({
+      graphId,
       nodes: doc.nodes,
       edges: doc.edges,
       selectedId: firstId,
