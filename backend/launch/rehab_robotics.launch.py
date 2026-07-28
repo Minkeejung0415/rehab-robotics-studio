@@ -36,6 +36,8 @@ def generate_launch_description():
         DeclareLaunchArgument('model_path', default_value=''),
         DeclareLaunchArgument('stale_timeout_s', default_value='1.0'),
         DeclareLaunchArgument('status_topic', default_value='/opensim/status'),
+        DeclareLaunchArgument('joint_angle_topic', default_value='/opensim/joint_angle'),
+        DeclareLaunchArgument('publish_joint_angle_enabled', default_value='false'),
         DeclareLaunchArgument('enable_opensim_bridge', default_value='true'),
         DeclareLaunchArgument('enable_opensim_test_publisher', default_value='false'),
         DeclareLaunchArgument('enable_recorder', default_value='true'),
@@ -78,6 +80,8 @@ def generate_launch_description():
         'model_path': LaunchConfiguration('model_path'),
         'stale_timeout_s': LaunchConfiguration('stale_timeout_s'),
         'status_topic': LaunchConfiguration('status_topic'),
+        'joint_angle_topic': LaunchConfiguration('joint_angle_topic'),
+        'publish_joint_angle_enabled': LaunchConfiguration('publish_joint_angle_enabled'),
     }], condition=IfCondition(LaunchConfiguration('enable_opensim_bridge')))
     opensim_test_publisher = Node(
         package='rehab_robotics_bridge', executable='opensim_test_publisher',

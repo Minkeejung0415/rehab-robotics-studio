@@ -11,11 +11,12 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile
 from sensor_msgs.msg import Imu
-from std_msgs.msg import String
+from std_msgs.msg import Float64, String
 
 from .opensim_adapter import (
     VisualizerAdapter,
     create_visualizer_adapter,
+    relative_orientation_angle_deg,
     ros_xyzw_to_opensim_rotation,
 )
 
@@ -48,6 +49,7 @@ class _SensorState:
     state: str = "waiting"
     last_valid_monotonic: float | None = None
     last_source_timestamp_ns: int | None = None
+    last_xyzw: tuple[float, float, float, float] | None = None
     updates: int = 0
     last_error: str = ""
 
@@ -76,6 +78,8 @@ class OpenSimBridgeNode(Node):
             "model_path": "",
             "stale_timeout_s": 1.0,
             "status_topic": "/opensim/status",
+            "joint_angle_topic": "/opensim/joint_angle",
+            "publish_joint_angle_enabled": False,
         }
         values = {
             name: self.declare_parameter(name, default).value
@@ -118,6 +122,25 @@ class OpenSimBridgeNode(Node):
             str(values["status_topic"]),
             10,
         )
+        raw_flag = values["publish_joint_angle_enabled"]
+        if isinstance(raw_flag, str):
+            self._publish_joint_angle_enabled = raw_flag.strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+        else:
+            self._publish_joint_angle_enabled = bool(raw_flag)
+        self._joint_angle_publisher = None
+        self._last_joint_angle_deg: float | None = None
+        self._joint_angle_baseline_deg: float | None = None
+        if self._publish_joint_angle_enabled:
+            self._joint_angle_publisher = self.create_publisher(
+                Float64,
+                str(values["joint_angle_topic"]),
+                10,
+            )
         self._master_subscription = self.create_subscription(
             Imu,
             self._sensor_states["master"].topic,
@@ -187,8 +210,39 @@ class OpenSimBridgeNode(Node):
         sensor.last_valid_monotonic = self._monotonic_clock()
         if source_timestamp_ns is not None:
             sensor.last_source_timestamp_ns = source_timestamp_ns
+        sensor.last_xyzw = (
+            float(orientation.x),
+            float(orientation.y),
+            float(orientation.z),
+            float(orientation.w),
+        )
         sensor.updates += 1
         self._set_sensor_state(role, "live", "")
+        self._publish_joint_angle_if_ready()
+
+    def _publish_joint_angle_if_ready(self) -> None:
+        if not self._publish_joint_angle_enabled or self._joint_angle_publisher is None:
+            return
+        master = self._sensor_states["master"]
+        slave = self._sensor_states["slave"]
+        if master.last_xyzw is None or slave.last_xyzw is None:
+            return
+        if master.state != "live" or slave.state != "live":
+            return
+        try:
+            absolute = relative_orientation_angle_deg(
+                master.last_xyzw,
+                slave.last_xyzw,
+            )
+        except (TypeError, ValueError):
+            return
+        if self._joint_angle_baseline_deg is None:
+            self._joint_angle_baseline_deg = absolute
+        angle_deg = absolute - self._joint_angle_baseline_deg
+        self._last_joint_angle_deg = angle_deg
+        message = Float64()
+        message.data = float(angle_deg)
+        self._joint_angle_publisher.publish(message)
 
     def _set_sensor_state(
         self,
@@ -279,6 +333,11 @@ class OpenSimBridgeNode(Node):
             "schema": _SCHEMA,
             "visualization": visualization,
             "sensors": sensors,
+            "joint_angle_deg": (
+                self._last_joint_angle_deg
+                if self._publish_joint_angle_enabled
+                else None
+            ),
         }
 
     def _publish_status(self) -> None:

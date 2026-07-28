@@ -23,6 +23,14 @@ def generate_launch_description():
         DeclareLaunchArgument("stale_timeout_s", default_value="1.0"),
         DeclareLaunchArgument("status_topic", default_value="/opensim/status"),
         DeclareLaunchArgument(
+            "joint_angle_topic",
+            default_value="/opensim/joint_angle",
+        ),
+        DeclareLaunchArgument(
+            "publish_joint_angle_enabled",
+            default_value="false",
+        ),
+        DeclareLaunchArgument(
             "enable_test_publisher",
             default_value="false",
         ),
@@ -41,6 +49,10 @@ def generate_launch_description():
             "model_path": LaunchConfiguration("model_path"),
             "stale_timeout_s": LaunchConfiguration("stale_timeout_s"),
             "status_topic": LaunchConfiguration("status_topic"),
+            "joint_angle_topic": LaunchConfiguration("joint_angle_topic"),
+            "publish_joint_angle_enabled": LaunchConfiguration(
+                "publish_joint_angle_enabled"
+            ),
         }],
     )
     test_publisher = Node(

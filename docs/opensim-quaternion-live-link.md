@@ -10,6 +10,12 @@ calibrated model pose, inverse-kinematics result, joint angle, clinical
 measurement, or biomechanical-validity claim. The bridge does not mutate model
 coordinates.
 
+Custom relative-quaternion `std_msgs/Float64` on `/opensim/joint_angle` is
+**not** product OpenSim IK. That debug publisher is gated by
+`publish_joint_angle_enabled` and defaults to **OFF**. Leave it off for product
+use; the live link remains triad orientations only. Calibrated
+`/opensim/joint_states` (Phases 17–19) is the future product angle path.
+
 ## Build and launch
 
 This repository includes PowerShell wrappers that use the installed
@@ -61,6 +67,8 @@ The locked defaults are:
 | `model_path` | empty |
 | `stale_timeout_s` | `1.0` |
 | `status_topic` | `/opensim/status` |
+| `joint_angle_topic` | `/opensim/joint_angle` (debug only) |
+| `publish_joint_angle_enabled` | `false` |
 | `enable_opensim_bridge` | `true` |
 | `enable_opensim_test_publisher` | `false` |
 

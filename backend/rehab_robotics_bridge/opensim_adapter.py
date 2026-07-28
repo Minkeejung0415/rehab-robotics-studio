@@ -79,6 +79,30 @@ def ros_xyzw_to_opensim_rotation(
     )
 
 
+def relative_orientation_angle_deg(
+    master_xyzw: tuple[float, float, float, float],
+    slave_xyzw: tuple[float, float, float, float],
+) -> float:
+    """Debug/utility: signed relative orientation angle between two ROS quaternions.
+
+    Uses ``q_rel = conj(q_master) * q_slave`` and ``2 * atan2(||xyz||, w)``.
+    This is a non-product sensor-relative diagnostic — **not** OpenSim IK and
+    must not feed the GUI product knee/angle path. Values are degrees in
+    approximately ``(-180, 180]``.
+    """
+
+    master = ros_xyzw_to_opensim_rotation(*master_xyzw)
+    slave = ros_xyzw_to_opensim_rotation(*slave_xyzw)
+    wm, xm, ym, zm = master.scalar_first
+    ws, xs, ys, zs = slave.scalar_first
+    # q_rel = conj(q_master) * q_slave
+    wr = wm * ws + xm * xs + ym * ys + zm * zs
+    xr = wm * xs - xm * ws - ym * zs + zm * ys
+    yr = wm * ys + xm * zs - ym * ws - zm * xs
+    zr = wm * zs - xm * ys + ym * xs - zm * ws
+    return math.degrees(2.0 * math.atan2(math.hypot(xr, yr, zr), wr))
+
+
 class VisualizerAdapter(Protocol):
     """OpenSim-free interface consumed by the ROS subscription layer."""
 
