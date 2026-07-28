@@ -445,11 +445,11 @@ class FakeWebSocket {
     return undefined;
   }
 
-  getSentServices(): Array<{ id: string; service: string; args: unknown }> {
+  getSentServices(): Array<{ id: string; service: string; type?: string; args: unknown }> {
     return this.sent
-      .map((s) => JSON.parse(s) as { op?: string; id?: string; service?: string; args?: unknown })
+      .map((s) => JSON.parse(s) as { op?: string; id?: string; service?: string; type?: string; args?: unknown })
       .filter((m) => m.op === 'call_service')
-      .map((m) => ({ id: m.id!, service: m.service!, args: m.args }));
+      .map((m) => ({ id: m.id!, service: m.service!, type: m.type, args: m.args }));
   }
 }
 
@@ -583,6 +583,52 @@ describe('RosbridgeDataSource — 09-02-03 service names and ACK', () => {
     // The important thing is that the result correctly reports failure.
     // Document: the compensating-restore attempt is logged as a warning to console.warn.
     // Future enhancement: track prior confirmed values to enable exact restore.
+  });
+
+});
+
+describe('RosbridgeDataSource — OpenSim calibration Trigger services', () => {
+
+  it('captureCalibration calls /opensim/calibration/capture as std_srvs/srv/Trigger', async () => {
+    const fakeWs = new FakeWebSocket();
+    const ds = makeConnectedStub(fakeWs);
+    const promise = ds.captureCalibration();
+    const services = fakeWs.getSentServices();
+    assert.equal(services.length, 1);
+    assert.equal(services[0].service, '/opensim/calibration/capture');
+    assert.equal(services[0].type, 'std_srvs/srv/Trigger');
+    assert.deepEqual(services[0].args, {});
+    fakeWs.respondToLatest(true, 'capturing');
+    const result = await promise;
+    assert.equal(result.success, true);
+    assert.equal(result.message, 'capturing');
+  });
+
+  it('clearCalibration calls /opensim/calibration/clear as std_srvs/srv/Trigger', async () => {
+    const fakeWs = new FakeWebSocket();
+    const ds = makeConnectedStub(fakeWs);
+    const promise = ds.clearCalibration();
+    const services = fakeWs.getSentServices();
+    assert.equal(services.length, 1);
+    assert.equal(services[0].service, '/opensim/calibration/clear');
+    assert.equal(services[0].type, 'std_srvs/srv/Trigger');
+    fakeWs.respondToLatest(true, 'cleared');
+    const result = await promise;
+    assert.equal(result.success, true);
+  });
+
+  it('captureCalibration returns failure when rosbridge is disconnected', async () => {
+    const ds = new RosbridgeDataSource('ws://localhost:9090');
+    const result = await ds.captureCalibration();
+    assert.equal(result.success, false);
+    assert.match(result.message, /not connected/i);
+  });
+
+  it('clearCalibration returns failure when rosbridge is disconnected', async () => {
+    const ds = new RosbridgeDataSource('ws://localhost:9090');
+    const result = await ds.clearCalibration();
+    assert.equal(result.success, false);
+    assert.match(result.message, /not connected/i);
   });
 
 });

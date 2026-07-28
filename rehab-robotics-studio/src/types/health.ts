@@ -49,6 +49,16 @@ export type OpenSimStatusSnapshot = {
     reason?: string;
     model_path?: string;
   };
+  /** Phase 17 reference-pose calibration status from opensim_bridge. */
+  calibration?: {
+    state?: string;
+    reason?: string;
+    known_pose?: string;
+    sample_count?: number;
+    window_s?: number;
+    calibration_id?: string | null;
+    has_offsets?: boolean;
+  };
   /**
    * Deprecated status field from optional debug Float64 publisher.
    * Do not present as product OpenSim IK — use waiting/calibration UX instead.

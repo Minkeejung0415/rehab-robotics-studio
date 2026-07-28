@@ -259,6 +259,24 @@ export class RosbridgeDataSource implements DataSource {
     return this.callService('/esp/recording/set', { data: on });
   }
 
+  /** Begin OpenSim reference-pose capture (standing, knees extended). */
+  captureCalibration(): Promise<RecordingCommandResult> {
+    return this.callService(
+      '/opensim/calibration/capture',
+      {},
+      'std_srvs/srv/Trigger',
+    );
+  }
+
+  /** Clear OpenSim mounting-offset calibration → UNCALIBRATED. */
+  clearCalibration(): Promise<RecordingCommandResult> {
+    return this.callService(
+      '/opensim/calibration/clear',
+      {},
+      'std_srvs/srv/Trigger',
+    );
+  }
+
   requestSampleRate(rateHz: number): Promise<RecordingCommandResult> {
     return this.requestImuControl('sample_rate_hz', rateHz);
   }
