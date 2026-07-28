@@ -1,6 +1,12 @@
-import { reconnectHardware } from '../../data/appDataSource';
+import { normalizeLiveKneeReason } from '../../data/liveKneeAngle';
 import { useSystemStore } from '../../state/systemStore';
-import type { EspHealthSnapshot } from '../../types/health';
+import type {
+  EspHealthSnapshot,
+  LiveKneeAngleSnapshot,
+  OpenSimIkStatusSnapshot,
+  OpenSimStatusSnapshot,
+  OpenSimVisualizerRequestSnapshot,
+} from '../../types/health';
 import { formatCalibrationStatus } from './calibrationStatus';
 
 /**
@@ -43,13 +49,117 @@ function NodeHealth({ label, node }: { label: string; node: EspHealthSnapshot | 
   );
 }
 
+export type OpenSimHealthTone = 'waiting' | 'attention' | 'ok' | 'fault';
+
+export interface OpenSimHealthView {
+  calibrationState: string;
+  calibrationReason: string;
+  ikSolution: string;
+  ikInputAge: string;
+  calibrationId: string;
+  kneeAngle: string;
+  model: string;
+  visualizer: string;
+  visualizerTone: OpenSimHealthTone;
+}
+
+function normalizedReason(value: unknown, fallback = 'Unknown reason'): string {
+  return normalizeLiveKneeReason(value, fallback);
+}
+
+export function formatOpenSimHealth(
+  openSim: OpenSimStatusSnapshot | null | undefined,
+  ikStatus: OpenSimIkStatusSnapshot | null | undefined,
+  liveKneeAngle: LiveKneeAngleSnapshot,
+  visualizerRequest: OpenSimVisualizerRequestSnapshot,
+): OpenSimHealthView {
+  const calibration = formatCalibrationStatus(openSim);
+  const backendVisualizerState = openSim?.visualization?.state?.toLowerCase();
+  const backendVisualizerReason = openSim?.visualization?.reason;
+
+  let visualizer = 'Waiting';
+  let visualizerTone: OpenSimHealthTone = 'waiting';
+  if (backendVisualizerState === 'opening') {
+    visualizer = 'Opening…';
+    visualizerTone = 'attention';
+  } else if (backendVisualizerState === 'open') {
+    visualizer = 'Open';
+    visualizerTone = 'ok';
+  } else if (visualizerRequest.state === 'opening') {
+    visualizer = 'Opening…';
+    visualizerTone = 'attention';
+  } else if (visualizerRequest.state === 'failed') {
+    visualizer = `Failed — ${normalizedReason(visualizerRequest.reason)}`;
+    visualizerTone = 'fault';
+  } else if (
+    backendVisualizerState === 'failed'
+    || backendVisualizerState === 'unavailable'
+    || openSim?.visualization?.available === false
+  ) {
+    const label = backendVisualizerState === 'failed' ? 'Failed' : 'Unavailable';
+    visualizer = `${label} — ${normalizedReason(
+      backendVisualizerReason,
+      'OpenSim visualizer is unavailable',
+    )}`;
+    visualizerTone = 'fault';
+  }
+
+  let ikSolution = 'Waiting';
+  if (ikStatus?.solution_valid === true) {
+    ikSolution = 'Valid';
+  } else if (ikStatus?.solution_valid === false) {
+    ikSolution = `Invalid — ${normalizedReason(
+      ikStatus.reason,
+      'No valid OpenSim IK solution',
+    )}`;
+  }
+
+  const inputAge = ikStatus?.input_age_s;
+  const kneeAngle = liveKneeAngle.state === 'live'
+    ? `${liveKneeAngle.valueDeg.toFixed(1)} deg`
+    : liveKneeAngle.state === 'stale'
+      ? 'Stale'
+      : 'Waiting for calibrated IK';
+
+  return {
+    calibrationState: calibration.state,
+    calibrationReason: calibration.reason
+      ? normalizedReason(calibration.reason)
+      : '—',
+    ikSolution,
+    ikInputAge: Number.isFinite(inputAge) && Number(inputAge) >= 0
+      ? `${Number(inputAge).toFixed(2)} s`
+      : '—',
+    calibrationId: display(openSim?.calibration?.calibration_id, '—'),
+    kneeAngle,
+    model: display(openSim?.visualization?.model_path, 'Not loaded'),
+    visualizer,
+    visualizerTone,
+  };
+}
+
+function visualizerClass(tone: OpenSimHealthTone): string {
+  if (tone === 'fault') return 'health-error';
+  if (tone === 'ok') return 'recording-finalized';
+  if (tone === 'attention') return 'recording-finalizing';
+  return '';
+}
+
 export function HealthPanel() {
   const health = useSystemStore((state) => state.pairHealth);
   const openSim = useSystemStore((state) => state.openSimStatus);
+  const ikStatus = useSystemStore((state) => state.openSimIkStatus);
+  const liveKneeAngle = useSystemStore((state) => state.liveKneeAngle);
+  const visualizerRequest = useSystemStore((state) => state.openSimVisualizerRequest);
   const addLog = useSystemStore((state) => state.addLog);
   const recording = health?.master?.recording;
   const state = recording?.state ?? 'idle';
-  const calibration = formatCalibrationStatus(openSim);
+  const openSimHealth = formatOpenSimHealth(
+    openSim,
+    ikStatus,
+    liveKneeAngle,
+    visualizerRequest,
+  );
 
   // Show the reconnect button when:
   //  1. Recording is in error state, OR
@@ -61,7 +171,8 @@ export function HealthPanel() {
     health?.master?.connection_state !== 'connected' ||
     isStale(health?.master);
 
-  const retry = () => {
+  const retry = async () => {
+    const { reconnectHardware } = await import('../../data/appDataSource');
     const result = reconnectHardware();
     addLog(result.success ? 'INFO' : 'ERROR', result.message);
   };
@@ -91,18 +202,26 @@ export function HealthPanel() {
           <span>Slave quaternion</span>
           <strong>{display(openSim?.sensors?.slave?.state, 'Waiting')}</strong>
           <span>Calibration state</span>
-          <strong>{calibration.state}</strong>
+          <strong>{openSimHealth.calibrationState}</strong>
           <span>Calibration reason</span>
-          <strong>{calibration.reason || '—'}</strong>
-          <span>OpenSim IK angles</span>
-          <strong>Waiting (requires calibration)</strong>
+          <strong>{openSimHealth.calibrationReason}</strong>
+          <span>IK solution</span>
+          <strong>{openSimHealth.ikSolution}</strong>
+          <span>IK input age</span>
+          <strong>{openSimHealth.ikInputAge}</strong>
+          <span>Calibration ID</span>
+          <strong>{openSimHealth.calibrationId}</strong>
+          <span>OpenSim knee angle</span>
+          <strong>{openSimHealth.kneeAngle}</strong>
           <span>Model</span>
-          <strong>{display(openSim?.visualization?.model_path, 'Not loaded')}</strong>
+          <strong>{openSimHealth.model}</strong>
           <span>3D visualizer</span>
-          <strong>
-            {openSim?.visualization?.available
-              ? 'Available'
-              : display(openSim?.visualization?.reason, 'Unavailable')}
+          <strong
+            className={visualizerClass(openSimHealth.visualizerTone)}
+            role="status"
+            aria-live="polite"
+          >
+            {openSimHealth.visualizer}
           </strong>
         </div>
       </div>
@@ -126,7 +245,7 @@ export function HealthPanel() {
         )}
       </div>
       {recoveryNeeded && (
-        <button className="mini-btn" onClick={retry}>
+        <button className="mini-btn" onClick={() => void retry()}>
           {isStale(health?.master) ? 'Stream stale — Reconnect ROS' : 'Reconnect ROS'}
         </button>
       )}

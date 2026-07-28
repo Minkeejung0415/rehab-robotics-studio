@@ -5,9 +5,14 @@ import { actions } from '../../state/actions';
 import {
   captureOpenSimCalibration,
   clearOpenSimCalibration,
+  openOpenSimVisualizer,
   setHardwareRecording,
 } from '../../data/appDataSource';
-import { Toast } from '../common/Toast';
+import {
+  createVisualizerRequestController,
+  Toast,
+  type VisualizerRequestController,
+} from '../common/Toast';
 import type { RuntimeState } from '../../types/system';
 import { colors } from '../../theme/tokens';
 
@@ -34,13 +39,31 @@ export function Toolbar() {
   const setRecording = useSystemStore((s) => s.setRecording);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastTone, setToastTone] = useState<'status' | 'error'>('status');
   const [toastKey, setToastKey] = useState(0);
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [deployBusy, setDeployBusy] = useState(false);
   const [calibrateBusy, setCalibrateBusy] = useState(false);
   const [clearCalBusy, setClearCalBusy] = useState(false);
+  const [visualizerBusy, setVisualizerBusy] = useState(false);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const visualizerControllerRef = useRef<VisualizerRequestController | null>(null);
+  if (visualizerControllerRef.current === null) {
+    visualizerControllerRef.current = createVisualizerRequestController({
+      request: openOpenSimVisualizer,
+      onBusyChange: setVisualizerBusy,
+      onFailure: (reason, alertMessage) => {
+        useSystemStore.getState().setOpenSimVisualizerRequest({
+          state: 'failed',
+          reason,
+        });
+        setToastTone('error');
+        setToastMessage(alertMessage);
+        setToastKey((key) => key + 1);
+      },
+    });
+  }
   const blocked = state === 'estopped' || state === 'fault';
   const calBusy = calibrateBusy || clearCalBusy;
 
@@ -58,6 +81,7 @@ export function Toolbar() {
     setDeployBusy(true);
     const result = await actions.deployProcessingBlocks();
     setDeployBusy(false);
+    setToastTone('status');
     setToastMessage(result.message);
     setToastKey((k) => k + 1);
   };
@@ -74,12 +98,14 @@ export function Toolbar() {
       return;
     }
     useSystemStore.getState().addLog('ERROR', result.message);
+    setToastTone('status');
     setToastMessage(result.message);
     setToastKey((key) => key + 1);
   };
 
   const onCalibrate = async () => {
     if (calBusy) return;
+    setToastTone('status');
     setToastMessage(CALIBRATE_INSTRUCTION);
     setToastKey((key) => key + 1);
     useSystemStore.getState().addLog('INFO', CALIBRATE_INSTRUCTION);
@@ -88,6 +114,7 @@ export function Toolbar() {
     setCalibrateBusy(false);
     useSystemStore.getState().addLog(result.success ? 'INFO' : 'ERROR', result.message);
     if (!result.success) {
+      setToastTone('status');
       setToastMessage(result.message);
       setToastKey((key) => key + 1);
     }
@@ -99,6 +126,7 @@ export function Toolbar() {
     const result = await clearOpenSimCalibration();
     setClearCalBusy(false);
     useSystemStore.getState().addLog(result.success ? 'INFO' : 'ERROR', result.message);
+    setToastTone('status');
     setToastMessage(result.message);
     setToastKey((key) => key + 1);
   };
@@ -154,6 +182,16 @@ export function Toolbar() {
       >
         {clearCalBusy ? 'Clearing…' : 'Clear cal'}
       </button>
+      <button
+        className="btn"
+        onClick={() => void visualizerControllerRef.current?.open()}
+        disabled={blocked || visualizerBusy}
+        aria-busy={visualizerBusy ? 'true' : undefined}
+        title="Open or show the native OpenSim 3D visualizer"
+        style={{ minWidth: 112 }}
+      >
+        {visualizerBusy ? 'Opening…' : 'Open visualizer'}
+      </button>
       <button className="btn" onClick={() => actions.saveProject()}>
         Save
       </button>
@@ -189,6 +227,7 @@ export function Toolbar() {
         <Toast
           key={toastKey}
           message={toastMessage}
+          tone={toastTone}
           onDismiss={() => setToastMessage(null)}
         />
       )}
