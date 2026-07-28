@@ -15,7 +15,7 @@ Milestone v1.5 replaces the incorrect custom relative-quaternion angle with offi
 ## Phases
 
 - [x] **Phase 15: OpenSim Quaternion Live Link** - Live ESP quaternions map into OpenSim frames/status (prerequisite).
-- [ ] **Phase 16: Retire Custom Angle + IK Contracts** - Remove fake IK angle path; define OpenSim IK input/output and pairing contracts.
+- [x] **Phase 16: Retire Custom Angle + IK Contracts** - Remove fake IK angle path; define OpenSim IK input/output and pairing contracts.
 - [ ] **Phase 17: Reference-Pose Calibration** - Toolbar Calibrate / Clear cal; mounting offsets; hard gate until CALIBRATED.
 - [ ] **Phase 18: Real-Time OpenSim IK Outputs** - Official OpenSim orientation IK publishes joint states + status.
 - [ ] **Phase 19: Studio Controls + Live Angle Display** - Toolbar visualizer button; GUI displays calibrated OpenSim IK angles only.
@@ -27,12 +27,12 @@ Milestone v1.5 replaces the incorrect custom relative-quaternion angle with offi
 **Goal**: Stop treating custom relative-quat math as IK, and lock the ROS contracts the solver and GUI will use.
 **Depends on**: Phase 15
 **Requirements**: IK-00
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [x] 16-01-PLAN.md — Demote backend custom `/opensim/joint_angle` product path (default OFF)
 - [x] 16-02-PLAN.md — Retire GUI default `opensim_ik_live`/HealthPanel custom-angle presentation
-- [ ] 16-03-PLAN.md — Lock `/opensim/joint_states` + calibration-gate contracts (docs + constants)
+- [x] 16-03-PLAN.md — Lock `/opensim/joint_states` + calibration-gate contracts (docs + constants)
 
 **Success Criteria**:
 1. `/opensim/joint_angle` custom publisher and GUI `opensim_ik_live` dependency on it are removed or clearly demoted as non-IK debug only (default graph no longer uses them as product IK).
@@ -78,7 +78,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 15. OpenSim Quaternion Live Link | 3/3 | human_needed (prerequisite) | 2026-07-27 |
-| 16. Retire Custom Angle + IK Contracts | 2/3 | In Progress|  |
+| 16. Retire Custom Angle + IK Contracts | 3/3 | Complete   | 2026-07-28 |
 | 17. Reference-Pose Calibration | 0/TBD | Not started | - |
 | 18. Real-Time OpenSim IK Outputs | 0/TBD | Not started | - |
 | 19. Studio Controls + Live Angle Display | 0/TBD | Not started | - |
