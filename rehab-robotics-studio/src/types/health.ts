@@ -65,3 +65,50 @@ export type OpenSimStatusSnapshot = {
    */
   joint_angle_deg?: number | null;
 };
+
+/** ROS 2 builtin_interfaces/Time represented without unsafe nanosecond arithmetic. */
+export type RosStamp = {
+  sec: number;
+  nanosec: number;
+};
+
+/** Rosbridge-friendly `/opensim/ik_status` payload. */
+export type OpenSimIkStatusSnapshot = {
+  schema?: string;
+  solution_valid?: boolean;
+  reason?: string;
+  calibration_id?: string | null;
+  orientation_residual_rms?: number | null;
+  orientation_residual_max?: number | null;
+  input_age_s?: number | null;
+  backend?: string;
+};
+
+/** Validated `/opensim/joint_states` data at the frontend transport boundary. */
+export type OpenSimJointStateSnapshot = {
+  stamp: RosStamp;
+  names: readonly string[];
+  positions: readonly number[];
+  /** Local monotonic receipt time. Never compare this with the ROS source clock. */
+  receivedAtMs: number;
+};
+
+/** Ephemeral browser request state; backend visualization status remains authoritative. */
+export type OpenSimVisualizerRequestSnapshot =
+  | { state: 'idle'; reason: '' }
+  | { state: 'opening'; reason: '' }
+  | { state: 'failed'; reason: string };
+
+export type LiveKneeAngleSnapshot =
+  | {
+      state: 'live';
+      valueDeg: number;
+      reason: '';
+      sourceStamp: RosStamp;
+      receivedAtMs: number;
+    }
+  | {
+      state: 'waiting' | 'invalid' | 'stale';
+      valueDeg: null;
+      reason: string;
+    };

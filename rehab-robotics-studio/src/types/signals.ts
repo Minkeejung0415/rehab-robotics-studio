@@ -84,4 +84,9 @@ export interface Frame {
    * calibrated `/opensim/joint_states`.
    */
   jointAngleDeg?: number;
+  /**
+   * Official, fail-closed OpenSim IK knee angle from `/opensim/joint_states`.
+   * `null` means the calibrated/valid/fresh product gate is closed.
+   */
+  openSimKneeAngleDeg?: number | null;
 }
