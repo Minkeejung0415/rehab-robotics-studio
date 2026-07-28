@@ -199,8 +199,14 @@ from rehab_robotics_bridge.opensim.ik_contracts import (  # noqa: E402
     CALIBRATION_CAPTURE_SERVICE,
     CALIBRATION_CLEAR_SERVICE,
     CALIBRATION_STATUS_TOPIC,
+    DIAGNOSTICS_TOPIC,
+    IK_STATUS_TOPIC,
     JOINT_STATES_TOPIC,
     CalibrationState,
+)
+from rehab_robotics_bridge.opensim.orientation_ik import (  # noqa: E402
+    FakeOrientationIkSolver,
+    UnavailableOrientationIkSolver,
 )
 from rehab_robotics_bridge.opensim_adapter import (  # noqa: E402
     UnavailableVisualizerAdapter,
@@ -660,11 +666,14 @@ class OpenSimNodeCalibrationTests(unittest.TestCase):
         _StubNode.parameter_overrides = {}
         self.clock = _Clock()
 
-    def _node(self, adapter=None, calibration=None):
+    def _node(self, adapter=None, calibration=None, ik_solver=None):
         return opensim_node.OpenSimBridgeNode(
             adapter=adapter or _FakeAdapter(),
             monotonic_clock=self.clock,
             calibration_controller=calibration,
+            ik_solver=ik_solver if ik_solver is not None else UnavailableOrientationIkSolver(
+                "test_default_unavailable"
+            ),
         )
 
     def _service(self, node, name):
@@ -672,6 +681,19 @@ class OpenSimNodeCalibrationTests(unittest.TestCase):
             if service.name == name:
                 return service
         self.fail(f"missing service {name}")
+
+    def _calibrate_live(self, node, *, stamp_sec=100):
+        node._on_master_imu(_Imu(stamp_sec=stamp_sec))
+        node._on_slave_imu(_Imu(stamp_sec=stamp_sec))
+        self._service(node, CALIBRATION_CAPTURE_SERVICE).callback(
+            _TriggerRequest(),
+            _TriggerResponse(),
+        )
+        for i in range(6):
+            self.clock.now = 10.0 + i * 0.1
+            node._on_master_imu(_Imu(stamp_sec=stamp_sec + 1 + i))
+            node._on_slave_imu(_Imu(stamp_sec=stamp_sec + 1 + i))
+        self.assertEqual(node.status_snapshot()["calibration"]["state"], "CALIBRATED")
 
     def test_constructs_capture_and_clear_trigger_services(self):
         node = self._node()
@@ -759,26 +781,133 @@ class OpenSimNodeCalibrationTests(unittest.TestCase):
 
     def test_joint_states_empty_while_uncalibrated_and_when_calibrated_without_ik(self):
         fast = CalibrationController(window_s=0.3, min_samples=4)
-        node = self._node(calibration=fast)
+        node = self._node(
+            calibration=fast,
+            ik_solver=UnavailableOrientationIkSolver("opensim_ik_api_unavailable"),
+        )
         joint_pub = next(p for p in node.publishers if p.topic == JOINT_STATES_TOPIC)
 
         node._maybe_publish_joint_states()
         self.assertEqual(joint_pub.messages, [])
 
-        node._on_master_imu(_Imu())
-        node._on_slave_imu(_Imu())
+        node._on_master_imu(_Imu(stamp_sec=1))
+        node._on_slave_imu(_Imu(stamp_sec=1))
         self._service(node, CALIBRATION_CAPTURE_SERVICE).callback(
             _TriggerRequest(),
             _TriggerResponse(),
         )
         for i in range(6):
             self.clock.now = 10.0 + i * 0.1
-            node._on_master_imu(_Imu())
-            node._on_slave_imu(_Imu())
+            node._on_master_imu(_Imu(stamp_sec=2 + i))
+            node._on_slave_imu(_Imu(stamp_sec=2 + i))
         self.assertEqual(node.status_snapshot()["calibration"]["state"], "CALIBRATED")
         node._maybe_publish_joint_states()
-        # Phase 17: gate open but no IK solution — still no fabricated JointState
+        # Unavailable solver — still no fabricated JointState
         self.assertEqual(joint_pub.messages, [])
+
+    def test_fake_solver_publishes_stamped_joint_states_when_calibrated(self):
+        fast = CalibrationController(window_s=0.3, min_samples=4)
+        node = self._node(calibration=fast, ik_solver=FakeOrientationIkSolver())
+        joint_pub = next(p for p in node.publishers if p.topic == JOINT_STATES_TOPIC)
+        self._calibrate_live(node, stamp_sec=50)
+        node._on_master_imu(_Imu(stamp_sec=200))
+        node._on_slave_imu(_Imu(stamp_sec=200))
+        self.assertGreaterEqual(len(joint_pub.messages), 1)
+        message = joint_pub.messages[-1]
+        self.assertEqual(list(message.name), ["knee_angle_r"])
+        self.assertEqual(len(message.position), 1)
+        self.assertAlmostEqual(message.position[0], 0.0, places=5)
+        self.assertEqual(message.header.stamp.sec, 200)
+        self.assertEqual(message.header.stamp.nanosec, 0)
+
+    def test_clear_stops_joint_states_and_resets_solution(self):
+        fast = CalibrationController(window_s=0.3, min_samples=4)
+        node = self._node(calibration=fast, ik_solver=FakeOrientationIkSolver())
+        joint_pub = next(p for p in node.publishers if p.topic == JOINT_STATES_TOPIC)
+        self._calibrate_live(node, stamp_sec=50)
+        node._on_master_imu(_Imu(stamp_sec=210))
+        node._on_slave_imu(_Imu(stamp_sec=210))
+        self.assertGreaterEqual(len(joint_pub.messages), 1)
+        count_before = len(joint_pub.messages)
+
+        self._service(node, CALIBRATION_CLEAR_SERVICE).callback(
+            _TriggerRequest(),
+            _TriggerResponse(),
+        )
+        self.assertIsNone(node._ik_solution)
+        node._on_master_imu(_Imu(stamp_sec=220))
+        node._on_slave_imu(_Imu(stamp_sec=220))
+        self.assertEqual(len(joint_pub.messages), count_before)
+
+    def test_invalid_solution_publishes_ik_status_not_joint_states(self):
+        fast = CalibrationController(window_s=0.3, min_samples=4)
+
+        class _InvalidFake(FakeOrientationIkSolver):
+            def solve(self, **kwargs):
+                result = super().solve(**kwargs)
+                return result.__class__(
+                    solution_valid=False,
+                    reason="forced_invalid",
+                    joint_names=result.joint_names,
+                    positions_rad=[],
+                    source_timestamp_ns=result.source_timestamp_ns,
+                    orientation_residual_rms=None,
+                    orientation_residual_max=None,
+                    calibration_id=result.calibration_id,
+                    input_age_s=result.input_age_s,
+                    solve_duration_s=result.solve_duration_s,
+                )
+
+        node = self._node(calibration=fast, ik_solver=_InvalidFake())
+        joint_pub = next(p for p in node.publishers if p.topic == JOINT_STATES_TOPIC)
+        ik_pub = next(p for p in node.publishers if p.topic == IK_STATUS_TOPIC)
+        self._calibrate_live(node, stamp_sec=50)
+        before = len(joint_pub.messages)
+        node._on_master_imu(_Imu(stamp_sec=300))
+        node._on_slave_imu(_Imu(stamp_sec=300))
+        self.assertEqual(len(joint_pub.messages), before)
+        self.assertGreaterEqual(len(ik_pub.messages), 1)
+        payload = json.loads(ik_pub.messages[-1].data)
+        self.assertFalse(payload["solution_valid"])
+        self.assertEqual(payload["reason"], "forced_invalid")
+
+    def test_missing_source_timestamp_blocks_joint_states(self):
+        fast = CalibrationController(window_s=0.3, min_samples=4)
+        node = self._node(calibration=fast, ik_solver=FakeOrientationIkSolver())
+        joint_pub = next(p for p in node.publishers if p.topic == JOINT_STATES_TOPIC)
+        ik_pub = next(p for p in node.publishers if p.topic == IK_STATUS_TOPIC)
+        self._calibrate_live(node, stamp_sec=50)
+        before = len(joint_pub.messages)
+        # Clear stored stamps so subsequent unstamped IMUs cannot reuse them.
+        node._sensor_states["master"].last_source_timestamp_ns = None
+        node._sensor_states["slave"].last_source_timestamp_ns = None
+        node._on_master_imu(_Imu())  # no stamp
+        node._on_slave_imu(_Imu())
+        self.assertEqual(len(joint_pub.messages), before)
+        payload = json.loads(ik_pub.messages[-1].data)
+        self.assertFalse(payload["solution_valid"])
+        self.assertIn("missing_source_timestamp", payload["reason"])
+
+    def test_status_snapshot_embeds_ik_object(self):
+        fast = CalibrationController(window_s=0.3, min_samples=4)
+        node = self._node(calibration=fast, ik_solver=FakeOrientationIkSolver())
+        self._calibrate_live(node, stamp_sec=50)
+        node._on_master_imu(_Imu(stamp_sec=400))
+        node._on_slave_imu(_Imu(stamp_sec=400))
+        status = node.status_snapshot()
+        self.assertIn("ik", status)
+        self.assertIn("solution_valid", status["ik"])
+        self.assertIn("calibration_id", status["ik"])
+
+    def test_diagnostics_heartbeat_publishes_on_timer(self):
+        fast = CalibrationController(window_s=0.3, min_samples=4)
+        node = self._node(calibration=fast, ik_solver=FakeOrientationIkSolver())
+        diag_pub = next(p for p in node.publishers if p.topic == DIAGNOSTICS_TOPIC)
+        self.assertEqual(diag_pub.messages, [])
+        node._on_status_timer()
+        self.assertGreaterEqual(len(diag_pub.messages), 1)
+        payload = json.loads(diag_pub.messages[-1].data)
+        self.assertIn("solution_valid", payload)
 
 
 if __name__ == "__main__":
