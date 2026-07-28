@@ -27,11 +27,11 @@ Milestone v1.5 replaces the incorrect custom relative-quaternion angle with offi
 **Goal**: Stop treating custom relative-quat math as IK, and lock the ROS contracts the solver and GUI will use.
 **Depends on**: Phase 15
 **Requirements**: IK-00
-**Plans:** 1/3 plans executed
+**Plans:** 2/3 plans executed
 
 Plans:
 - [x] 16-01-PLAN.md — Demote backend custom `/opensim/joint_angle` product path (default OFF)
-- [ ] 16-02-PLAN.md — Retire GUI default `opensim_ik_live`/HealthPanel custom-angle presentation
+- [x] 16-02-PLAN.md — Retire GUI default `opensim_ik_live`/HealthPanel custom-angle presentation
 - [ ] 16-03-PLAN.md — Lock `/opensim/joint_states` + calibration-gate contracts (docs + constants)
 
 **Success Criteria**:
@@ -78,7 +78,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 15. OpenSim Quaternion Live Link | 3/3 | human_needed (prerequisite) | 2026-07-27 |
-| 16. Retire Custom Angle + IK Contracts | 1/3 | In Progress|  |
+| 16. Retire Custom Angle + IK Contracts | 2/3 | In Progress|  |
 | 17. Reference-Pose Calibration | 0/TBD | Not started | - |
 | 18. Real-Time OpenSim IK Outputs | 0/TBD | Not started | - |
 | 19. Studio Controls + Live Angle Display | 0/TBD | Not started | - |
