@@ -1,6 +1,6 @@
 import type { OpenSimStatusSnapshot } from '../../types/health';
 
-function display(value: string | number | null | undefined, fallback: string | number = 'Unknown') {
+function display(value: string | number | null | undefined, fallback = 'Unknown'): string {
   return value === null || value === undefined || value === '' ? fallback : String(value);
 }
 
