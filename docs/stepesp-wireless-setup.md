@@ -72,6 +72,83 @@ wsl -d Ubuntu-22.04 -- bash -lc "tail -80 /home/justi/stepesp_processing_observe
 wsl -d Ubuntu-22.04 -- bash -lc "tail -80 /home/justi/stepesp_opensim_bridge.log"
 ```
 
+## One-page OpenSim IK operator checklist
+
+Use this fixed sequence for a wireless standing-calibration and live-angle run.
+The Studio browser only calls the bounded ROS service
+`/opensim/visualizer/open` (`std_srvs/Trigger`); it never runs a shell command
+or launches WSL/OpenSim itself.
+
+1. **Start the complete stack.** Power the master, then the slave, and run this
+   from the repository root in PowerShell:
+
+   ```powershell
+   .\scripts\start_stepesp_wireless.ps1
+   ```
+
+   Wait for Studio to open at `http://127.0.0.1:5173`. Remaining on the
+   `STEP_ESP32` network with **No internet** is expected.
+
+2. **Confirm both devices and the three OpenSim contracts.**
+
+   ```powershell
+   wsl -d Ubuntu-22.04 -- bash -lc "source /opt/ros/humble/setup.bash; source /home/justi/.rehab-install-v12/setup.bash; ros2 topic echo /esp/status/pair --once --field data"
+   wsl -d Ubuntu-22.04 -- bash -lc "source /opt/ros/humble/setup.bash; source /home/justi/.rehab-install-v12/setup.bash; ros2 topic list | grep -E '^/opensim/(status|ik_status|joint_states)$'"
+   ```
+
+   Continue only when both connection states are `connected`,
+   `pair_available` is `true`, and all three OpenSim topics are listed.
+
+3. **Connect Studio and request the visualizer.** Select `Run`, then select
+   `Open visualizer`. HealthPanel must advance from `Opening…` to `Open`.
+   `Unavailable` or `Failed` is not a reason to stop IK: read the persistent
+   reason, correct the runtime problem, and select `Open visualizer` again.
+
+4. **Capture the standing reference.** Stand still with knees extended, select
+   `Calibrate`, and hold the pose until HealthPanel reports
+   `Calibration state: CALIBRATED`. Do not use an angle while calibration is
+   `UNCALIBRATED`, `CAPTURING`, or `FAILED`.
+
+5. **Verify the official live angle.** Confirm `IK solution: Valid`, then move
+   the knee gently. The `Knee` value in **Front Panel**, the
+   **Joint Angle Display** in **Block Diagram**, and `OpenSim knee angle` in
+   HealthPanel must agree in degrees. A valid straight-knee result may be
+   `0.0 deg`; missing, invalid, or data older than 2 seconds must show `—` and
+   `Waiting for calibrated IK`, never a fabricated or retained zero.
+
+6. **Recover without bypassing the safety gates.**
+
+   - `JointState stale`: restore the ESP/rosbridge connection and wait for a
+     fresh `/opensim/joint_states`; do not clear the warning or reuse the old
+     number.
+   - `IK invalid`: return to the standing pose and inspect the IK/calibration
+     reason. Recalibrate only when the sensors are stable.
+   - `3D visualizer Failed/Unavailable`: inspect the bridge log, restore the
+     Simbody runtime, and retry the same toolbar button. IK and recording may
+     continue while the optional native window is unavailable.
+
+   ```powershell
+   wsl -d Ubuntu-22.04 -- bash -lc "tail -80 /home/justi/stepesp_opensim_bridge.log"
+   wsl -d Ubuntu-22.04 -- bash -lc "source /opt/ros/humble/setup.bash; source /home/justi/.rehab-install-v12/setup.bash; ros2 topic echo /opensim/status --once --field data"
+   wsl -d Ubuntu-22.04 -- bash -lc "source /opt/ros/humble/setup.bash; source /home/justi/.rehab-install-v12/setup.bash; ros2 topic echo /opensim/ik_status --once --field data"
+   ```
+
+7. **Stop cleanly.** Stop any active recording in Studio, select `Stop`, then
+   restore normal Wi-Fi and terminate the managed processes:
+
+   ```powershell
+   .\scripts\stop_stepesp_wireless.ps1
+   ```
+
+**`human_needed` native-window boundary:** automated QA proves the fixed Trigger,
+failure/retry state, calibration gate, official JointState angle, staleness,
+and reconnect isolation. It cannot prove a real Simbody window appeared.
+When `simbody-visualizer` is installed and discoverable on WSL's `PATH`, a
+human must confirm that the native window opens, updates during calibrated IK,
+and reopens on retry without stopping IK or recording. When that executable is
+absent, record this check as `human_needed`; the documented failure state is
+the honest expected result.
+
 ## One-shot 250 Hz hardware verification
 
 The bounded verifier captures only the active Wi-Fi profile name (never a
