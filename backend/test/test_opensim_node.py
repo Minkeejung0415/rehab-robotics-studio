@@ -106,6 +106,11 @@ class _String:
         self.data = ""
 
 
+class _Float64:
+    def __init__(self):
+        self.data = 0.0
+
+
 def _install_ros_stubs():
     backend_root = str(Path(__file__).parents[1])
     if backend_root not in sys.path:
@@ -139,6 +144,7 @@ def _install_ros_stubs():
     std_msgs = types.ModuleType("std_msgs")
     std_msgs.msg = types.ModuleType("std_msgs.msg")
     std_msgs.msg.String = _String
+    std_msgs.msg.Float64 = _Float64
     sys.modules["std_msgs"] = std_msgs
     sys.modules["std_msgs.msg"] = std_msgs.msg
 
@@ -207,6 +213,7 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
         )
         self.assertEqual(len(node.publishers), 1)
         self.assertEqual(node.publishers[0].topic, "/opensim/status")
+        self.assertFalse(node.parameters.get("publish_joint_angle_enabled", True))
 
     def test_parameter_overrides_control_topics_frames_model_timeout_and_status(self):
         _StubNode.parameter_overrides = {
@@ -217,6 +224,8 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
             "model_path": "model.osim",
             "stale_timeout_s": 2.5,
             "status_topic": "/custom/status",
+            "joint_angle_topic": "/custom/joint_angle",
+            "publish_joint_angle_enabled": True,
         }
         factory_calls = []
 
@@ -234,10 +243,51 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
             ["/custom/master", "/custom/slave"],
         )
         self.assertEqual(node.publishers[0].topic, "/custom/status")
+        self.assertEqual(node.publishers[1].topic, "/custom/joint_angle")
+        self.assertIs(node.publishers[1].message_type, _Float64)
         self.assertEqual(
             factory_calls,
             [("model.osim", {"master": "pelvis_imu", "slave": "torso_imu"})],
         )
+
+    def test_default_path_never_publishes_custom_joint_angle_as_product(self):
+        node = self._node()
+        self.assertEqual(len(node.publishers), 1)
+        self.assertEqual(node.publishers[0].topic, "/opensim/status")
+
+        node._on_master_imu(_Imu())
+        node._on_slave_imu(
+            _Imu(z=math.sqrt(0.5), w=math.sqrt(0.5)),
+        )
+
+        status = node.status_snapshot()
+        self.assertTrue(
+            "joint_angle_deg" not in status or status.get("joint_angle_deg") is None,
+        )
+        self.assertEqual(len(node.publishers[0].messages), 0)
+
+    def test_debug_flag_publishes_relative_joint_angle_when_enabled(self):
+        _StubNode.parameter_overrides = {
+            "publish_joint_angle_enabled": True,
+        }
+        node = self._node()
+        angle_pub = node.publishers[1]
+        self.assertEqual(angle_pub.topic, "/opensim/joint_angle")
+
+        node._on_master_imu(_Imu())  # identity
+        self.assertEqual(angle_pub.messages, [])
+
+        node._on_slave_imu(
+            _Imu(z=math.sqrt(0.5), w=math.sqrt(0.5)),  # +90 deg about Z
+        )
+        self.assertEqual(len(angle_pub.messages), 1)
+        # First paired sample establishes the baseline, so published angle is 0.
+        self.assertAlmostEqual(angle_pub.messages[0].data, 0.0, places=6)
+
+        # Move slave back toward identity — relative angle should leave zero.
+        node._on_slave_imu(_Imu())
+        self.assertEqual(len(angle_pub.messages), 2)
+        self.assertAlmostEqual(angle_pub.messages[1].data, -90.0, places=5)
 
     def test_master_and_slave_update_independently_with_normalized_rotations(self):
         adapter = _FakeAdapter()

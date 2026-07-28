@@ -231,6 +231,8 @@ class OpenSimLaunchContractTests(unittest.TestCase):
             "model_path": "",
             "stale_timeout_s": "1.0",
             "status_topic": "/opensim/status",
+            "joint_angle_topic": "/opensim/joint_angle",
+            "publish_joint_angle_enabled": "false",
             "enable_opensim_bridge": "true",
             "enable_opensim_test_publisher": "false",
         }
@@ -268,6 +270,8 @@ class OpenSimLaunchContractTests(unittest.TestCase):
             "model_path",
             "stale_timeout_s",
             "status_topic",
+            "joint_angle_topic",
+            "publish_joint_angle_enabled",
         ):
             with self.subTest(parameter=parameter):
                 self.assertIn(

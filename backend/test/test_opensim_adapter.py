@@ -14,6 +14,7 @@ from rehab_robotics_bridge.opensim_adapter import (
     OpenSimVisualizerAdapter,
     UnavailableVisualizerAdapter,
     create_visualizer_adapter,
+    relative_orientation_angle_deg,
     ros_xyzw_to_opensim_rotation,
 )
 
@@ -42,6 +43,24 @@ class QuaternionConversionTests(unittest.TestCase):
                 (0.0, 1.0, 0.0),
                 (0.0, 0.0, 1.0),
             ),
+        )
+
+    def test_relative_orientation_angle_identity_is_zero(self):
+        self.assertAlmostEqual(
+            relative_orientation_angle_deg((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 1.0)),
+            0.0,
+            places=9,
+        )
+
+    def test_relative_orientation_angle_positive_ninety_about_z(self):
+        half = math.sqrt(0.5)
+        self.assertAlmostEqual(
+            relative_orientation_angle_deg(
+                (0.0, 0.0, 0.0, 1.0),
+                (0.0, 0.0, half, half),
+            ),
+            90.0,
+            places=6,
         )
 
     def test_positive_ninety_degree_x_rotation(self):
