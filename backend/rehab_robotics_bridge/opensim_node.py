@@ -26,6 +26,7 @@ from .opensim.ik_contracts import (
     DIAGNOSTICS_TOPIC,
     IK_STATUS_TOPIC,
     JOINT_STATES_TOPIC,
+    VISUALIZER_OPEN_SERVICE,
     may_publish_joint_states,
 )
 from .opensim.opensim_orientation_ik import create_orientation_ik_solver
@@ -167,6 +168,7 @@ class OpenSimBridgeNode(Node):
             if adapter is not None
             else adapter_factory(self._model_path, frame_mappings)
         )
+        self._visualizer_request_status: tuple[bool, str, str] | None = None
         self._last_visualization_signature: tuple[bool, str, str] | None = None
 
         if calibration_controller is not None:
@@ -271,6 +273,11 @@ class OpenSimBridgeNode(Node):
             Trigger,
             CALIBRATION_CLEAR_SERVICE,
             self._on_calibration_clear,
+        )
+        self._visualizer_open_service = self.create_service(
+            Trigger,
+            VISUALIZER_OPEN_SERVICE,
+            self._on_visualizer_open,
         )
         self._status_timer = self.create_timer(
             min(self._stale_timeout_s / 2.0, 0.5),
@@ -382,6 +389,47 @@ class OpenSimBridgeNode(Node):
         response.message = "cleared"
         self._publish_calibration_status(force=True)
         self._publish_ik_status()
+        return response
+
+    def _on_visualizer_open(
+        self,
+        _request: Trigger.Request,
+        response: Trigger.Response,
+    ) -> Trigger.Response:
+        """Delegate one bounded, argument-free open request to the adapter."""
+
+        del _request
+        adapter_available, _, _ = self._adapter_visualization_signature()
+        self._set_visualizer_request_status(
+            adapter_available,
+            "opening",
+            "",
+        )
+        try:
+            result = self._adapter.open_visualizer()
+            if not isinstance(result, tuple) or len(result) != 2:
+                raise ValueError("visualizer_open_result_invalid")
+            success = bool(result[0])
+            message = str(result[1] or "")
+        except Exception:
+            success = False
+            message = "visualizer_open_failed"
+
+        if success:
+            message = message or "visualizer_open"
+            self._set_visualizer_request_status(True, "open", "")
+        else:
+            adapter_status = self._adapter_visualization_signature()
+            state = (
+                "unavailable"
+                if adapter_status[1] == "unavailable"
+                else "failed"
+            )
+            reason = message or adapter_status[2] or "visualizer_open_failed"
+            self._set_visualizer_request_status(False, state, reason)
+
+        response.success = success
+        response.message = message
         return response
 
     def _feed_calibration_if_capturing(self) -> None:
@@ -517,7 +565,7 @@ class OpenSimBridgeNode(Node):
         else:
             self.get_logger().warning(message)
 
-    def _visualization_signature(self) -> tuple[bool, str, str]:
+    def _adapter_visualization_signature(self) -> tuple[bool, str, str]:
         try:
             adapter_status = self._adapter.status()
             return (
@@ -527,6 +575,50 @@ class OpenSimBridgeNode(Node):
             )
         except Exception:
             return (False, "unavailable", "adapter_status_failed")
+
+    def _visualization_signature(self) -> tuple[bool, str, str]:
+        adapter_signature = self._adapter_visualization_signature()
+        request_signature = self._visualizer_request_status
+        if request_signature is None:
+            return adapter_signature
+        if request_signature[1] in ("opening", "failed", "unavailable"):
+            return request_signature
+        if adapter_signature[1] in ("failed", "unavailable"):
+            return adapter_signature
+        return request_signature
+
+    def _record_visualization_transition(
+        self,
+        signature: tuple[bool, str, str],
+    ) -> None:
+        if signature == self._last_visualization_signature:
+            return
+        available, state, reason = signature
+        message = (
+            "OpenSim visualization state "
+            f"available={available} state={state} reason={reason}"
+        )
+        if state in ("opening", "open"):
+            self.get_logger().info(message)
+        else:
+            self.get_logger().warning(message)
+        self._last_visualization_signature = signature
+
+    def _set_visualizer_request_status(
+        self,
+        available: bool,
+        state: str,
+        reason: str,
+    ) -> None:
+        self._visualizer_request_status = (
+            bool(available),
+            str(state),
+            str(reason),
+        )
+        self._record_visualization_transition(
+            self._visualizer_request_status,
+        )
+        self._publish_status()
 
     def _on_status_timer(self) -> None:
         now = self._monotonic_clock()
@@ -540,18 +632,9 @@ class OpenSimBridgeNode(Node):
             if now - freshness_baseline > self._stale_timeout_s:
                 self._set_sensor_state(role, "stale", "stale_timeout")
 
-        visualization_signature = self._visualization_signature()
-        if visualization_signature != self._last_visualization_signature:
-            available, state, reason = visualization_signature
-            message = (
-                "OpenSim visualization state "
-                f"available={available} state={state} reason={reason}"
-            )
-            if available:
-                self.get_logger().info(message)
-            else:
-                self.get_logger().warning(message)
-            self._last_visualization_signature = visualization_signature
+        self._record_visualization_transition(
+            self._visualization_signature(),
+        )
         self._publish_status()
         self._publish_calibration_status()
         self._publish_ik_status()

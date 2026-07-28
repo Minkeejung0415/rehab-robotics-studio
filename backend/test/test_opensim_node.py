@@ -202,6 +202,7 @@ from rehab_robotics_bridge.opensim.ik_contracts import (  # noqa: E402
     DIAGNOSTICS_TOPIC,
     IK_STATUS_TOPIC,
     JOINT_STATES_TOPIC,
+    VISUALIZER_OPEN_SERVICE,
     CalibrationState,
 )
 from rehab_robotics_bridge.opensim.orientation_ik import (  # noqa: E402
@@ -214,14 +215,35 @@ from rehab_robotics_bridge.opensim_adapter import (  # noqa: E402
 
 
 class _FakeAdapter:
-    def __init__(self, *, accepted=True, available=True, reason=""):
+    def __init__(
+        self,
+        *,
+        accepted=True,
+        available=True,
+        reason="",
+        open_result=(True, "visualizer_open"),
+    ):
         self.accepted = accepted
         self.calls = []
+        self.open_calls = 0
+        self.open_result = open_result
         self._status = {
             "available": available,
             "state": "ready" if available else "unavailable",
             "reason": reason,
         }
+
+    def open_visualizer(self):
+        self.open_calls += 1
+        if isinstance(self.open_result, BaseException):
+            raise self.open_result
+        success, message = self.open_result
+        self._status = {
+            "available": bool(success),
+            "state": "open" if success else "failed",
+            "reason": "" if success else str(message),
+        }
+        return self.open_result
 
     def update_sensor(self, sensor_id, frame_name, rotation):
         self.calls.append((sensor_id, frame_name, rotation))
@@ -273,6 +295,108 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
         self.assertIn(CALIBRATION_STATUS_TOPIC, topics)
         self.assertIn(JOINT_STATES_TOPIC, topics)
         self.assertFalse(node.parameters.get("publish_joint_angle_enabled", True))
+
+    def test_visualizer_trigger_is_unique_typed_and_delegates_once_per_request(self):
+        adapter = _FakeAdapter()
+        node = self._node(adapter)
+        services = [
+            service
+            for service in node.services
+            if service.name == VISUALIZER_OPEN_SERVICE
+        ]
+
+        self.assertEqual(len(services), 1)
+        self.assertIs(services[0].srv_type, _Trigger)
+        response = services[0].callback(
+            _TriggerRequest(),
+            _TriggerResponse(),
+        )
+        self.assertTrue(response.success)
+        self.assertEqual(response.message, "visualizer_open")
+        self.assertEqual(adapter.open_calls, 1)
+        status_messages = [
+            json.loads(message.data)["visualization"]["state"]
+            for message in node.publishers[0].messages[-2:]
+        ]
+        self.assertEqual(status_messages, ["opening", "open"])
+
+        retry = services[0].callback(
+            _TriggerRequest(),
+            _TriggerResponse(),
+        )
+        self.assertTrue(retry.success)
+        self.assertEqual(adapter.open_calls, 2)
+
+    def test_visualizer_trigger_contains_exception_and_malformed_results(self):
+        for result in (RuntimeError("native failed"), None):
+            with self.subTest(result=result):
+                adapter = _FakeAdapter()
+                adapter.open_result = result
+                node = self._node(adapter)
+                service = next(
+                    service
+                    for service in node.services
+                    if service.name == VISUALIZER_OPEN_SERVICE
+                )
+
+                response = service.callback(
+                    _TriggerRequest(),
+                    _TriggerResponse(),
+                )
+
+                self.assertFalse(response.success)
+                self.assertEqual(
+                    response.message,
+                    "visualizer_open_failed",
+                )
+                self.assertEqual(adapter.open_calls, 1)
+                self.assertEqual(
+                    node.status_snapshot()["visualization"],
+                    {
+                        "available": False,
+                        "state": "failed",
+                        "reason": "visualizer_open_failed",
+                        "model_path": "",
+                    },
+                )
+
+    def test_visualizer_trigger_retry_replaces_persistent_failure(self):
+        adapter = _FakeAdapter(
+            open_result=(False, "visualizer_native_failed"),
+        )
+        node = self._node(adapter)
+        service = next(
+            service
+            for service in node.services
+            if service.name == VISUALIZER_OPEN_SERVICE
+        )
+
+        failed = service.callback(
+            _TriggerRequest(),
+            _TriggerResponse(),
+        )
+        self.assertFalse(failed.success)
+        self.assertEqual(
+            node.status_snapshot()["visualization"]["reason"],
+            "visualizer_native_failed",
+        )
+
+        adapter.open_result = (True, "visualizer_open")
+        recovered = service.callback(
+            _TriggerRequest(),
+            _TriggerResponse(),
+        )
+        self.assertTrue(recovered.success)
+        self.assertEqual(adapter.open_calls, 2)
+        self.assertEqual(
+            node.status_snapshot()["visualization"],
+            {
+                "available": True,
+                "state": "open",
+                "reason": "",
+                "model_path": "",
+            },
+        )
 
     def test_parameter_overrides_control_topics_frames_model_timeout_and_status(self):
         _StubNode.parameter_overrides = {
@@ -706,6 +830,63 @@ class OpenSimNodeCalibrationTests(unittest.TestCase):
                 CALIBRATION_CLEAR_SERVICE,
             ):
                 self.assertIs(service.srv_type, _Trigger)
+
+    def test_visualizer_failure_does_not_interrupt_ik_or_timer_publishers(self):
+        fast = CalibrationController(window_s=0.3, min_samples=4)
+        adapter = _FakeAdapter(
+            open_result=(False, "visualizer_native_failed"),
+        )
+        node = self._node(
+            adapter=adapter,
+            calibration=fast,
+            ik_solver=FakeOrientationIkSolver(),
+        )
+        visualizer_service = self._service(
+            node,
+            VISUALIZER_OPEN_SERVICE,
+        )
+        response = visualizer_service.callback(
+            _TriggerRequest(),
+            _TriggerResponse(),
+        )
+        self.assertFalse(response.success)
+        self.assertEqual(response.message, "visualizer_native_failed")
+        self.assertEqual(
+            node.status_snapshot()["visualization"]["state"],
+            "failed",
+        )
+
+        joint_pub = next(
+            publisher
+            for publisher in node.publishers
+            if publisher.topic == JOINT_STATES_TOPIC
+        )
+        ik_pub = next(
+            publisher
+            for publisher in node.publishers
+            if publisher.topic == IK_STATUS_TOPIC
+        )
+        diag_pub = next(
+            publisher
+            for publisher in node.publishers
+            if publisher.topic == DIAGNOSTICS_TOPIC
+        )
+        self._calibrate_live(node, stamp_sec=500)
+        node._on_master_imu(_Imu(stamp_sec=600))
+        node._on_slave_imu(_Imu(stamp_sec=600))
+        self.assertGreaterEqual(len(joint_pub.messages), 1)
+        self.assertGreaterEqual(len(ik_pub.messages), 1)
+
+        diagnostics_before = len(diag_pub.messages)
+        node._on_status_timer()
+        node._on_status_timer()
+        self.assertEqual(len(diag_pub.messages), diagnostics_before + 2)
+        failure_logs = [
+            message
+            for message in node.logger.warning_messages
+            if "state=failed reason=visualizer_native_failed" in message
+        ]
+        self.assertEqual(len(failure_logs), 1)
 
     def test_status_snapshot_includes_uncalibrated_calibration_object(self):
         node = self._node()
