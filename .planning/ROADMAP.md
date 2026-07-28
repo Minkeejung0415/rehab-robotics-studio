@@ -17,7 +17,7 @@ Milestone v1.5 replaces the incorrect custom relative-quaternion angle with offi
 - [x] **Phase 15: OpenSim Quaternion Live Link** - Live ESP quaternions map into OpenSim frames/status (prerequisite).
 - [x] **Phase 16: Retire Custom Angle + IK Contracts** - Remove fake IK angle path; define OpenSim IK input/output and pairing contracts.
 - [x] **Phase 17: Reference-Pose Calibration** - Toolbar Calibrate / Clear cal; mounting offsets; hard gate until CALIBRATED.
-- [ ] **Phase 18: Real-Time OpenSim IK Outputs** - Official OpenSim orientation IK publishes joint states + status.
+- [x] **Phase 18: Real-Time OpenSim IK Outputs** - Official OpenSim orientation IK publishes joint states + status. (completed 2026-07-28)
 - [ ] **Phase 19: Studio Controls + Live Angle Display** - Toolbar visualizer button; GUI displays calibrated OpenSim IK angles only.
 
 ## Phase Details
@@ -63,6 +63,13 @@ Plans:
 **Goal**: After calibration, OpenSim orientation IK solves and publishes joint coordinates the GUI can trust as OpenSim results.
 **Depends on**: Phase 17
 **Requirements**: IK-05, IK-06, IK-07
+**Plans**: 3 plans
+
+Plans:
+- [x] 18-01-PLAN.md — OrientationIkSolver seam + Fake/Unavailable + mounting offsets (TDD)
+- [x] 18-02-PLAN.md — OpenSim 4.5.2 Python orientation IK adapter + capability probe
+- [x] 18-03-PLAN.md — opensim_bridge JointState + ik_status/diagnostics wiring
+
 **Success Criteria**:
 1. Calibrated master/slave orientations produce OpenSim-solved joint coordinates (not custom relative-quat degrees).
 2. Coordinates publish on the agreed joint-state topic with source-aligned timestamps.
@@ -88,7 +95,7 @@ Plans:
 | 15. OpenSim Quaternion Live Link | 3/3 | human_needed (prerequisite) | 2026-07-27 |
 | 16. Retire Custom Angle + IK Contracts | 3/3 | Complete   | 2026-07-28 |
 | 17. Reference-Pose Calibration | 3/3 | Complete   | 2026-07-28 |
-| 18. Real-Time OpenSim IK Outputs | 0/TBD | Not started | - |
+| 18. Real-Time OpenSim IK Outputs | 3/3 | Complete   | 2026-07-28 |
 | 19. Studio Controls + Live Angle Display | 0/TBD | Not started | - |
 
 ---

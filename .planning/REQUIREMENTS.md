@@ -19,9 +19,9 @@
 
 ### Official OpenSim IK
 
-- [ ] **IK-05**: After calibration, OpenSim (OpenSense-compatible orientation IK) solves joint coordinates from the paired master/slave IMU orientations.
-- [ ] **IK-06**: Solved coordinates are published on a standard ROS joint-state topic for the GUI to display.
-- [ ] **IK-07**: IK validity, residuals, input age, and calibration identity are observable via status/diagnostics (not only logs).
+- [x] **IK-05**: After calibration, OpenSim (OpenSense-compatible orientation IK) solves joint coordinates from the paired master/slave IMU orientations.
+- [x] **IK-06**: Solved coordinates are published on a standard ROS joint-state topic for the GUI to display.
+- [x] **IK-07**: IK validity, residuals, input age, and calibration identity are observable via status/diagnostics (not only logs).
 
 ### Visualizer Control
 
@@ -52,9 +52,9 @@
 | IK-02 | Phase 17 | Complete |
 | IK-03 | Phase 17 | Complete |
 | IK-04 | Phase 17 | Complete |
-| IK-05 | Phase 18 | Pending |
-| IK-06 | Phase 18 | Pending |
-| IK-07 | Phase 18 | Pending |
+| IK-05 | Phase 18 | Complete |
+| IK-06 | Phase 18 | Complete |
+| IK-07 | Phase 18 | Complete |
 | VIS-01 | Phase 19 | Pending |
 | VIS-02 | Phase 19 | Pending |
 

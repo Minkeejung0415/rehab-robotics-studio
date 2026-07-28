@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: OpenSim IK + Calibration + Visualizer Control
-status: Phase 17 complete — ready for Phase 18
-last_updated: "2026-07-28T18:12:00.000Z"
-last_activity: 2026-07-28 — Executed 17-01, 17-02, 17-03; wrote 17-VERIFICATION.md
+status: Phase 18 complete — ready for Phase 19
+last_updated: "2026-07-28T18:55:00.000Z"
+last_activity: 2026-07-28 — Executed 18-01, 18-02, 18-03; wrote 18-VERIFICATION.md
 progress:
   total_phases: 4
-  completed_phases: 2
-  total_plans: 9
-  completed_plans: 7
-  percent: 50
+  completed_phases: 3
+  total_plans: 12
+  completed_plans: 10
+  percent: 75
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-07-28)
 
 **Core value:** Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline into usable filtered, biomechanical, and recorded outputs.
-**Current focus:** Phase 17 complete — next is Phase 18 (Real-Time OpenSim IK Outputs) when started
+**Current focus:** Phase 18 complete — next is Phase 19 (Studio Controls + Live Angle Display) when started
 
 ## Current Position
 
-Phase: 17 (Reference-Pose Calibration) — COMPLETE
+Phase: 18 (Real-Time OpenSim IK Outputs) — COMPLETE
 Plan: 03/03
-Status: Phase 17 complete — ready for Phase 18
-Last activity: 2026-07-28 — Executed 17-01, 17-02, 17-03; wrote 17-VERIFICATION.md
+Status: Phase 18 complete — ready for Phase 19
+Last activity: 2026-07-28 — Executed 18-01, 18-02, 18-03; wrote 18-VERIFICATION.md
 
 Current Plan: 3 of 3
 Total Plans in Phase: 3
@@ -44,8 +44,11 @@ Total Plans in Phase: 3
 | 17-01 | ~12min | 2 | 3 |
 | 17-02 | ~15min | 2 | 3 |
 | 17-03 | ~18min | 2 | 8 |
+| 18-01 | ~15min | 2 | 3 |
+| 18-02 | ~20min | 2 | 3 |
+| 18-03 | ~25min | 2 | 5 |
 
-- Total plans completed: 6 (v1.5 phases 16–17)
+- Total plans completed: 9 (v1.5 phases 16–18)
 
 ## Accumulated Context
 
@@ -65,6 +68,10 @@ Total Plans in Phase: 3
 - [v1.5 D-17]: Failed re-capture while CALIBRATED keeps prior artifact (transactional).
 - [v1.5 D-17]: Phase 17 never fabricates JointState even when CALIBRATED (solver = Phase 18).
 - [v1.5 D-17]: Clear cal on toolbar only (no HealthPanel mirror).
+- [v1.5 D-18-01]: Product angles only via OrientationIkSolver; never relative_orientation_angle_deg for JointState.
+- [v1.5 D-18-02]: Prefer OpenSim 4.5.2 Python in opensim_bridge; C++ package deferred.
+- [v1.5 D-18-03]: Unavailable fail-closed when OpenSim IK APIs/model missing.
+- [v1.5 D-18-06]: ik_status String JSON + diagnostics String JSON (DiagnosticArray deferred).
 
 ### Pending Todos
 
@@ -72,9 +79,10 @@ None recorded.
 
 ### Blockers/Concerns
 
-- Full OpenSense-compatible IK may require a dedicated solver process (research preferred C++ package); Phase 18 must choose deployable approach against current WSL OpenSim 4.5.2 Python path.
+- Real OpenSim IK path is **Unavailable** on the Windows agent Python host (`opensim` not installed); validate Available path under WSL micromamba OpenSim 4.5.2 with a real `model_path`.
+- Research still prefers dedicated C++ 4.6 streaming package long-term; Python path is the v1.5 pragmatic choice.
 - Phase 15 native visualizer human smoke remains dependency-sensitive (`simbody-visualizer`).
-- Phase 17 live hardware/rosbridge Calibrate smoke remains operator-side (unit/integration verified).
+- Phase 17/18 live hardware/rosbridge smoke remains operator-side (unit/integration verified).
 
 ## Deferred Items
 
@@ -84,6 +92,8 @@ None recorded.
 | Clinical validation | External-reference accuracy claims | Out of v1.5 | v1.5 |
 | Embedded Studio 3D | In-app solved-model renderer | Out of v1.5 | v1.5 |
 | Calibration persistence | Cross-session versioned save/load | Deferred | Phase 17 |
+| C++ OpenSense package | rehab_robotics_opensim 4.6 streaming | Deferred | Phase 18 |
+| Typed IkStatus.msg | rehab_robotics_interfaces | Deferred | Phase 18 |
 
 ---
 *State updated: 2026-07-28*
