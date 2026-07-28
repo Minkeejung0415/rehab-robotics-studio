@@ -16,7 +16,7 @@ Milestone v1.5 replaces the incorrect custom relative-quaternion angle with offi
 
 - [x] **Phase 15: OpenSim Quaternion Live Link** - Live ESP quaternions map into OpenSim frames/status (prerequisite).
 - [x] **Phase 16: Retire Custom Angle + IK Contracts** - Remove fake IK angle path; define OpenSim IK input/output and pairing contracts.
-- [ ] **Phase 17: Reference-Pose Calibration** - Toolbar Calibrate / Clear cal; mounting offsets; hard gate until CALIBRATED.
+- [x] **Phase 17: Reference-Pose Calibration** - Toolbar Calibrate / Clear cal; mounting offsets; hard gate until CALIBRATED.
 - [ ] **Phase 18: Real-Time OpenSim IK Outputs** - Official OpenSim orientation IK publishes joint states + status.
 - [ ] **Phase 19: Studio Controls + Live Angle Display** - Toolbar visualizer button; GUI displays calibrated OpenSim IK angles only.
 
@@ -44,17 +44,18 @@ Plans:
 **Goal**: Operator can capture mounting offsets from a fixed standing / knees-extended pose via top-level Studio controls; IK remains gated until CALIBRATED.
 **Depends on**: Phase 16
 **Requirements**: IK-01, IK-02, IK-03, IK-04
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
+**Status:** Complete
 
 Plans:
 - [x] 17-01-PLAN.md — Pure-Python CalibrationController + stable-window mounting offsets (TDD)
 - [x] 17-02-PLAN.md — opensim_bridge capture/clear services, status publish, joint_states gate
-- [ ] 17-03-PLAN.md — Toolbar Calibrate/Clear cal + HealthPanel status via rosbridge
+- [x] 17-03-PLAN.md — Toolbar Calibrate/Clear cal + HealthPanel status via rosbridge
 
 **Success Criteria**:
 1. Toolbar **Calibrate** starts a bounded stable-window capture in the fixed known pose and transitions status through CAPTURING → CALIBRATED or FAILED with reason.
 2. Toolbar/control **Clear cal** returns to UNCALIBRATED and invalidates active offsets.
-3. No joint-angle publication occurs while UNCALIBRATED.
+3. No joint-angle publication occurs while UNCALIBRATED (Phase 17 leaves IK solution absent — gate seam ready for Phase 18).
 4. Front Panel shows calibration state and last error/reason.
 
 ### Phase 18: Real-Time OpenSim IK Outputs
@@ -86,7 +87,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 15. OpenSim Quaternion Live Link | 3/3 | human_needed (prerequisite) | 2026-07-27 |
 | 16. Retire Custom Angle + IK Contracts | 3/3 | Complete   | 2026-07-28 |
-| 17. Reference-Pose Calibration | 2/3 | In Progress|  |
+| 17. Reference-Pose Calibration | 3/3 | Complete   | 2026-07-28 |
 | 18. Real-Time OpenSim IK Outputs | 0/TBD | Not started | - |
 | 19. Studio Controls + Live Angle Display | 0/TBD | Not started | - |
 
