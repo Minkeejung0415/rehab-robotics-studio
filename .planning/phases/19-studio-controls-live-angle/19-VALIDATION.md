@@ -1,80 +1,117 @@
 ---
 phase: 19
 slug: studio-controls-live-angle
-status: draft
-nyquist_compliant: false
+status: approved
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-07-28
+reviewed: 2026-07-28
 ---
 
 # Phase 19 — Validation Strategy
 
-> Per-phase validation contract for feedback sampling during execution.
+> Every implementation task has a bounded automated command plus source, behavior,
+> test, security, preservation, and (where applicable) UI acceptance criteria.
+> Wave 0 remains incomplete only because new test/harness files are created during
+> execution; their exact owning tasks and commands are already specified.
 
----
+**Plan count:** 7 plans across 6 execution waves.
 
 ## Test Infrastructure
 
 | Property | Value |
 |----------|-------|
-| **Framework** | Node `--test` through `tsx`; Python `unittest` |
-| **Config file** | `rehab-robotics-studio/package.json`; backend tests are self-contained |
-| **Quick run command** | `cd rehab-robotics-studio && npm test` or `python -m unittest backend.test.test_opensim_node backend.test.test_opensim_adapter` |
-| **Full suite command** | `cd rehab-robotics-studio && npm test && npm run typecheck && npm run build`; then `python -m unittest discover -s backend/test -p "test_*.py"` |
-| **Estimated runtime** | ~120 seconds |
+| **Framework** | Node `--test` through installed `tsx`; Python `unittest`; installed Playwright for production DOM |
+| **Config** | `rehab-robotics-studio/package.json`; backend tests are self-contained |
+| **Quick frontend** | `cd rehab-robotics-studio; npm test` |
+| **Quick backend** | `$env:PYTHONPATH='backend'; python -m unittest backend.test.test_opensim_node backend.test.test_opensim_adapter -v` |
+| **Full gate** | Frontend test + typecheck + production fake-rosbridge E2E, then backend discovery |
+| **Feedback target** | Narrow task command after each task; complete gate in Plan 05 |
 
----
+## Wave Structure
 
-## Sampling Rate
-
-- **After every task commit:** Run the narrow test file named in that task
-- **After every plan wave:** Run the affected frontend or backend suite
-- **Before `$gsd-verify-work`:** Full suite must be green
-- **Max feedback latency:** 120 seconds
-
----
+| Wave | Plan | Ownership |
+|------|------|-----------|
+| 1 | 19-01 | Dirty-worktree checkpoint; backend visualizer adapter + Trigger |
+| 2 | 19-02 | Live-angle types, pure contract, monotonic stale timer |
+| 3 | 19-03 | Typed rosbridge/store/service/session integration |
+| 4 | 19-04 | Default graph/SignalBus product routing |
+| 4 | 19-05 | Toolbar + HealthPanel fast tests and plan-level production DOM |
+| 5 | 19-06 | Nullable readouts, series clearing, approved CSS |
+| 6 | 19-07 | QA syntax/contract gate, complete production E2E, full regression, runbook |
 
 ## Per-Task Verification Map
 
-| Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
-|---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 19-01-01 | 01 | 1 | VIS-01 | T-19-01 | Browser invokes only the bounded ROS Trigger service; backend isolates adapter exceptions | backend unit | `python -m unittest backend.test.test_opensim_node backend.test.test_opensim_adapter` | ✅ | ⬜ pending |
-| 19-02-01 | 02 | 1 | VIS-02, IK-06 | T-19-02 | Malformed, invalid, uncalibrated, and stale samples fail closed | frontend unit | `cd rehab-robotics-studio && npm test` | ✅ | ⬜ pending |
-| 19-03-01 | 03 | 2 | VIS-01, VIS-02 | T-19-03 | Late rosbridge replies and stale samples cannot restore obsolete UI state | integration/build | `cd rehab-robotics-studio && npm test && npm run typecheck && npm run build` | ✅ | ⬜ pending |
-| 19-03-02 | 03 | 2 | VIS-01, VIS-02 | — | Wireless operator sequence is repeatable and records native-window limitation | documentation + smoke | production-preview fake-rosbridge scenario | ❌ W0 | ⬜ pending |
+| Task ID | Plan | Wave | Requirement | Threat Ref | Automated Command | Test Artifact State |
+|---------|------|------|-------------|------------|-------------------|---------------------|
+| 19-PF | 01 | 1 | Preservation gate | dirty-worktree | Exact-path `git status --short -- <all planned targets>` plus tracked diff/untracked content+SHA baseline | `19-WORKTREE-BASELINE.local.md` created before source edits |
+| 19-01-01 | 01 | 1 | VIS-01, VIS-02 | T-19-01..04 | `$env:PYTHONPATH='backend'; python -m unittest backend.test.test_opensim_adapter -v` | Existing test extended |
+| 19-01-02 | 01 | 1 | VIS-01, VIS-02 | T-19-01..04 | `$env:PYTHONPATH='backend'; python -m unittest backend.test.test_opensim_node backend.test.test_opensim_adapter -v` | Existing tests extended |
+| 19-02-01 | 02 | 2 | IK-06, VIS-02 | T-19-05..11 | `cd rehab-robotics-studio; npm exec -- tsx --test src/data/liveKneeAngle.test.ts` | ❌ Wave 0: created in task |
+| 19-03-01 | 03 | 3 | VIS-01, VIS-02, IK-06 | T-19-05,07,10,11 | `cd rehab-robotics-studio; npm exec -- tsx --test src/data/RosbridgeDataSource.test.ts` | Existing rosbridge test extended |
+| 19-04-01 | 04 | 4 | IK-06, VIS-02 | T-19-13,19 | Direct `productKneeReadout.test.ts` + `liveKneeAngle.test.ts`, then typecheck | Existing graph test extended |
+| 19-05-01 | 05 | 4 | VIS-01, VIS-02 | T-19-12,15,18 | Direct `HealthPanel.test.ts` + `Toolbar.test.ts` | Health test exists; Toolbar test created in task |
+| 19-06-01 | 06 | 5 | IK-06, VIS-02 | T-19-13,19 | Direct `liveKneeAngle.test.ts`, then typecheck and build | Created by 19-02-01, extended here |
+| 19-07-01 | 07 | 6 | VIS-01, VIS-02, IK-06 | T-19-14,17,20 | `node --check scripts/phase19-qa.mjs`, then `--contract-check` | QA script created by 19-05, completed here |
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+## Required Deterministic Assertions
 
----
+- Backend: fixed argument-free `/opensim/visualizer/open` Trigger; idempotent open;
+  native exceptions isolated from calibration, IK, JointState, diagnostics, recording.
+- Rosbridge: malformed envelopes fail closed; all callbacks/replies/timeouts are
+  socket-identity and generation guarded; obsolete sessions cannot mutate current UI.
+- Live angle: CALIBRATED + valid + matching non-empty calibration ID + named finite
+  coordinate + usable ordered source stamp + local receipt age <= 2,000 ms.
+- Product path: PI/2 -> `90.0 deg`; valid zero -> `0.0 deg`; every closed gate -> `—`
+  plus waiting copy and an empty/new trace.
+- Plan 05 fast tests: toolbar order/controller, pending, duplicate suppression, settlement,
+  retry, and all HealthPanel format/replacement cases.
+- Plan 05 plan-level production DOM: exact toolbar order, `Opening…`, `aria-busy=true`,
+  same-button focus preservation, one service request under duplicate attempts, failure
+  persistence, enabled retry, and backend Open replacement.
+- Final production flow: Open visualizer -> Calibrate -> invalid waiting -> valid live
+  angle -> stale clearing -> recovery, plus malformed and superseded-session messages.
 
 ## Wave 0 Requirements
 
-- [ ] Add focused frontend test coverage for JointState parsing, calibrated/valid/fresh
-  gating, visualizer Trigger lifecycle, and stale-session protection.
-- [ ] Add focused backend service tests for visualizer success, failure, idempotence,
-  and exception isolation.
-- [ ] Add a deterministic production-preview fake-rosbridge smoke script or test
-  covering Toolbar → Calibrate → live angle → stale angle.
+- [ ] `19-02-01` creates `src/data/liveKneeAngle.test.ts` before its command runs.
+- [ ] `19-05-01` creates `Toolbar.test.ts` and `scripts/phase19-qa.mjs` with
+  `--toolbar-only` before its
+  production-DOM command runs.
+- [ ] `19-07-01` completes the same QA script, adds `--contract-check`, and adds
+  `test:phase19`.
+- [ ] The preflight creates the local baseline record before any source edit.
 
-Existing Node and Python test infrastructure requires no new framework.
+Wave 0 is intentionally marked incomplete at planning time because these files do not
+yet exist. Nyquist compliance is true because every missing artifact has an owning
+task, exact behavior criteria, and an automated command; execution must not mark
+`wave_0_complete: true` until the files exist and their first commands pass.
 
----
+## Manual-Only Verification
 
-## Manual-Only Verifications
+| Behavior | Requirement | Classification | Instructions |
+|----------|-------------|----------------|--------------|
+| Native Simbody window opens/updates/reopens under WSLg | VIS-01 | `human_needed` only when `simbody-visualizer` runtime is absent | Follow the updated wireless runbook; confirm window behavior while calibrated IK and recording remain operational |
 
-| Behavior | Requirement | Why Manual | Test Instructions |
-|----------|-------------|------------|-------------------|
-| Native Simbody window opens and remains live under WSLg | VIS-01 | Current WSL runtime lacks the native `simbody-visualizer` component; fake adapters can verify the service contract but not OS window presentation | Start the OpenSim node in WSL with the runtime installed, connect Studio wirelessly, click `Open visualizer`, calibrate, confirm the native window updates, then retry/reopen while IK and recording remain alive |
+## Dirty-Worktree Preservation Gate
 
----
+- One blocking checkpoint precedes all source work in Plan 01.
+- It rechecks every planned exact path, including known modified `app.css` and
+  untracked `DataSource.ts`, `signalBus.ts`, `systemStore.ts`, `MiniChart.tsx`,
+  and `MotorPanel.tsx`; it also checks the newly planned `Toolbar.test.ts`.
+- Tracked diffs and complete untracked contents/hashes are recorded before approval.
+- Executors must never stash/reset/checkout/clean/replace these files.
+- Every task rechecks its exact paths and stages only explicit phase-owned files;
+  broad `git add .`, `git add -A`, and globs are prohibited.
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 120s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] Every implementation task has `<read_first>`.
+- [x] Every implementation task has independently checkable `<acceptance_criteria>`.
+- [x] Every implementation task has an `<automated>` command.
+- [x] No three consecutive implementation tasks lack automated feedback.
+- [x] High-severity service, message, session, stale-data, and native-adapter threats are blocked by tests.
+- [x] Production build and fake-rosbridge E2E are owned by final Plan 07.
+- [ ] Wave 0 artifacts created and first commands green — execution-time gate.
 
-**Approval:** pending
+**Approval:** approved planning contract — reviewed 2026-07-28
