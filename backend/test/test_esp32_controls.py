@@ -90,6 +90,49 @@ class Esp32ControlContractTests(unittest.TestCase):
         self.assertEqual(fields['file_checksum'], '7a12ff00')
         self.assertIsNone(bridge.control_int(fields, 'missing'))
 
+    def test_repeated_recording_commands_are_idempotent(self):
+        start_line = (
+            'REC ERR code=already_recording '
+            'session_id=20260728_155910 retryable=false detail=active'
+        )
+        stop_line = (
+            'REC ERR code=not_recording '
+            'session_id=20260728_155910 retryable=false detail=idle'
+        )
+
+        self.assertEqual(
+            bridge.normalize_recording_reply(True, start_line),
+            (
+                True,
+                'REC ACTIVE session_id=20260728_155910 '
+                'detail=already_recording',
+            ),
+        )
+        self.assertEqual(
+            bridge.normalize_recording_reply(False, stop_line),
+            (
+                True,
+                'REC IDLE session_id=20260728_155910 '
+                'detail=not_recording',
+            ),
+        )
+
+    def test_recording_observer_keeps_already_active_session_live(self):
+        node = _make_stub_node()
+        node._recording_state = 'idle'
+        node._recording_session_id = ''
+        node._recording_error = ''
+        node._recording_health = {}
+
+        node._observe_control_response(
+            'REC ERR code=already_recording '
+            'session_id=20260728_155910 retryable=false detail=active',
+        )
+
+        self.assertEqual(node._recording_state, 'recording')
+        self.assertEqual(node._recording_session_id, '20260728_155910')
+        self.assertEqual(node._recording_error, '')
+
     def test_tcp_header_resync_skips_payload_left_after_inline_control_reply(self):
         payload = bytes(range(bridge.NUM_CHANNELS * 2))
         frame = bridge.OE_HEADER.pack(1234, len(payload), 3, 2, bridge.NUM_CHANNELS, 1) + payload

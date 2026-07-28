@@ -135,6 +135,31 @@ def control_int(fields: dict[str, str], name: str) -> int | None:
         return None
 
 
+def normalize_recording_reply(
+    requested_on: bool,
+    line: str,
+) -> tuple[bool, str]:
+    """Make repeated start/stop requests idempotent at the ROS boundary."""
+
+    expected = 'REC STARTED' if requested_on else 'REC FINALIZING'
+    if line.startswith(expected):
+        return True, line
+    fields = parse_control_fields(line)
+    code = fields.get('code', '')
+    session_id = fields.get('session_id', 'unknown')
+    if requested_on and code == 'already_recording':
+        return (
+            True,
+            f'REC ACTIVE session_id={session_id} detail=already_recording',
+        )
+    if not requested_on and code == 'not_recording':
+        return (
+            True,
+            f'REC IDLE session_id={session_id} detail=not_recording',
+        )
+    return False, line
+
+
 class Esp32BridgeNode(Node):
     def __init__(self) -> None:
         super().__init__('esp32_bridge_node')
@@ -272,18 +297,25 @@ class Esp32BridgeNode(Node):
             )
             return response
 
-        response.success = result.startswith(expected)
-        response.message = result
+        response.success, response.message = normalize_recording_reply(
+            bool(request.data),
+            result,
+        )
+        self._observe_control_response(result)
         if response.success and request.data:
-            for field in result.split():
-                if field.startswith('session_id='):
-                    self._recording_session_id = field.split('=', 1)[1]
-                    break
+            fields = parse_control_fields(result)
+            self._recording_session_id = fields.get(
+                'session_id',
+                self._recording_session_id,
+            )
             self._recording_state = 'recording'
             self._recording_error = ''
         if response.success and not request.data:
-            self._recording_state = 'finalizing'
-        self._observe_control_response(result)
+            self._recording_state = (
+                'idle'
+                if parse_control_fields(result).get('code') == 'not_recording'
+                else 'finalizing'
+            )
         return response
 
     def _set_sample_rate(
@@ -390,8 +422,20 @@ class Esp32BridgeNode(Node):
         elif line.startswith('REC FINALIZED'):
             self._recording_state = 'finalized'
         elif line.startswith('REC ERR'):
-            self._recording_state = 'error'
-            self._recording_error = fields.get('detail', line)
+            code = fields.get('code', '')
+            if code == 'already_recording':
+                self._recording_state = 'recording'
+                self._recording_session_id = fields.get(
+                    'session_id',
+                    self._recording_session_id,
+                )
+                self._recording_error = ''
+            elif code == 'not_recording':
+                self._recording_state = 'idle'
+                self._recording_error = ''
+            else:
+                self._recording_state = 'error'
+                self._recording_error = fields.get('detail', line)
 
         if line.startswith(('REC STATUS_OK', 'SD_STATUS', 'SD_FINAL ', 'REC FINALIZED')):
             self._recording_health.update({

@@ -17,12 +17,43 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 import math
+import os
 from pathlib import Path
 import shutil
 from typing import Any, Mapping, Protocol
 
 
 _MIN_QUATERNION_NORM = 1e-8
+
+
+def configure_opensim_geometry_search_paths(
+    opensim_module: Any,
+    model_path: str,
+) -> None:
+    """Register model-local and runtime skeleton geometry directories."""
+
+    visualizer_type = getattr(opensim_module, "ModelVisualizer", None)
+    add_directory = getattr(
+        visualizer_type,
+        "addDirToGeometrySearchPaths",
+        None,
+    )
+    if not callable(add_directory):
+        return
+    candidates = [Path(model_path).expanduser().resolve().parent / "Geometry"]
+    configured = os.environ.get("OPENSIM_GEOMETRY_PATH", "")
+    candidates.extend(
+        Path(value).expanduser()
+        for value in configured.split(os.pathsep)
+        if value.strip()
+    )
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = str(candidate.resolve())
+        if normalized in seen or not candidate.is_dir():
+            continue
+        add_directory(normalized)
+        seen.add(normalized)
 
 
 @dataclass(frozen=True)
@@ -196,6 +227,10 @@ class OpenSimVisualizerAdapter:
         self._reason = ""
 
         try:
+            configure_opensim_geometry_search_paths(
+                self._opensim,
+                model_path,
+            )
             self._model = self._opensim.Model(model_path)
         except Exception as exc:
             raise _AdapterInitializationError("model_load_failed") from exc
@@ -314,6 +349,10 @@ class OpenSimVisualizerAdapter:
         text = self._opensim.DecorativeText(
             f"{sensor_id}: {component_path}",
         )
+        if callable(getattr(text, "setScale", None)):
+            text.setScale(0.035)
+        if callable(getattr(text, "setFaceCamera", None)):
+            text.setFaceCamera(True)
         color_values = self._ROLE_COLORS.get(
             sensor_id,
             (0.85, 0.85, 0.85),

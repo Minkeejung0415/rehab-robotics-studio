@@ -214,6 +214,70 @@ class OpenSimOrientationIkBindingTests(unittest.TestCase):
             )
             self.assertGreater(flexed.positions_rad[0], 0.0)
 
+    def test_runtime_skeleton_uses_bone_meshes_and_equal_sensor_sensitivity(self):
+        import opensim
+
+        model_path = (
+            Path(__file__).resolve().parents[2]
+            / "examples"
+            / "opensim_quaternion_demo.osim"
+        )
+        self.assertTrue(model_path.is_file())
+        model_xml = model_path.read_text(encoding="utf-8")
+        self.assertIn("rehab_lower_limb_skeleton_live_link", model_xml)
+        for mesh_file in (
+            "r_pelvis.vtp",
+            "femur_r.vtp",
+            "tibia_r.vtp",
+        ):
+            self.assertIn(f"<mesh_file>{mesh_file}</mesh_file>", model_xml)
+
+        artifact = _identity_artifact()
+        identity = (0.0, 0.0, 0.0, 1.0)
+
+        def solve_changed(
+            master_xyzw,
+            slave_xyzw,
+        ) -> float:
+            solver = create_orientation_ik_solver(
+                model_path=str(model_path),
+                master_frame="femur_r_imu",
+                slave_frame="tibia_r_imu",
+                coordinate_paths=["knee_angle_r"],
+                opensim_module=opensim,
+            )
+            baseline = solver.solve(
+                master_xyzw=identity,
+                slave_xyzw=identity,
+                calibration=artifact,
+                source_timestamp_ns=10,
+                input_age_s=0.01,
+                joint_names=["knee_angle_r"],
+            )
+            changed = solver.solve(
+                master_xyzw=master_xyzw,
+                slave_xyzw=slave_xyzw,
+                calibration=artifact,
+                source_timestamp_ns=20,
+                input_age_s=0.01,
+                joint_names=["knee_angle_r"],
+            )
+            self.assertTrue(baseline.solution_valid, baseline.reason)
+            self.assertTrue(changed.solution_valid, changed.reason)
+            return changed.positions_rad[0] - baseline.positions_rad[0]
+
+        rotation = _quat_about_z(math.radians(30.0))
+        slave_delta = solve_changed(identity, rotation)
+        master_delta = solve_changed(rotation, identity)
+
+        self.assertGreater(slave_delta, 0.4)
+        self.assertLess(master_delta, -0.4)
+        self.assertAlmostEqual(
+            abs(master_delta),
+            abs(slave_delta),
+            delta=0.05,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

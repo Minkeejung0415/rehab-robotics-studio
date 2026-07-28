@@ -11,6 +11,8 @@ ENV_PYTHON="${MAMBA_ROOT_PREFIX}/envs/${ENV_NAME}/bin/python"
 DEMO_MODEL="${PROJECT_DIR}/examples/opensim_quaternion_demo.osim"
 RUNTIME_DEMO_MODEL="${WS_DIR}/opensim_quaternion_demo.osim"
 RUNTIME_RUNNER="${WS_DIR}/run_opensim_live_link_wsl.sh"
+OPENSENSE_EXAMPLE_DIR="${MAMBA_ROOT_PREFIX}/envs/${ENV_NAME}/share/doc/OpenSim/Code/Python/OpenSenseExample"
+RUNTIME_GEOMETRY_DIR="${WS_DIR}/Geometry"
 
 if [[ ! -f /opt/ros/humble/setup.bash ]]; then
     echo "ROS 2 Humble is not installed at /opt/ros/humble." >&2
@@ -56,6 +58,12 @@ set -u
 
 "${ENV_PYTHON}" "${PROJECT_DIR}/scripts/create_opensim_demo_model.py" \
     "${DEMO_MODEL}"
+if [[ ! -d "${OPENSENSE_EXAMPLE_DIR}/Geometry" ]]; then
+    echo "OpenSim OpenSense skeleton Geometry directory is unavailable." >&2
+    exit 1
+fi
+mkdir -p "${RUNTIME_GEOMETRY_DIR}"
+cp -a "${OPENSENSE_EXAMPLE_DIR}/Geometry/." "${RUNTIME_GEOMETRY_DIR}/"
 cp -f "${DEMO_MODEL}" "${RUNTIME_DEMO_MODEL}"
 cp -f "${PROJECT_DIR}/scripts/run_opensim_live_link_wsl.sh" \
     "${RUNTIME_RUNNER}"

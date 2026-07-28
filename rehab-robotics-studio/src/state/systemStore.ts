@@ -126,7 +126,23 @@ export const useSystemStore = create<SystemStore>((set) => ({
       },
     })),
 
-  setPairHealth: (pairHealth) => set({ pairHealth }),
+  setPairHealth: (pairHealth) =>
+    set((s) => {
+      const recordingState = pairHealth.master?.recording?.state?.toLowerCase();
+      if (!recordingState) return { pairHealth };
+      const recordingOn = recordingState === 'recording';
+      return {
+        pairHealth,
+        status: {
+          ...s.status,
+          recording: {
+            ...s.status.recording,
+            value: recordingOn ? 'On' : 'Off',
+            level: recordingOn ? 'fault' : 'idle',
+          },
+        },
+      };
+    }),
   setOpenSimStatus: (openSimStatus) =>
     set((s) => {
       let logs = s.logs;

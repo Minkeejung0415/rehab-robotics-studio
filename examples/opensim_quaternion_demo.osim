@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <OpenSimDocument Version="40600">
-	<Model name="rehab_quaternion_live_link_demo">
+	<Model name="rehab_lower_limb_skeleton_live_link">
 		<!--List of components that this component owns and serializes.-->
 		<components>
 			<PhysicalOffsetFrame name="femur_r_imu">
@@ -14,7 +14,7 @@
 				<!--Path to a Component that satisfies the Socket 'parent' of type C (description: The parent frame to this frame.).-->
 				<socket_parent>/bodyset/femur_r</socket_parent>
 				<!--Translational offset (in meters) of this frame's origin from the parent frame's origin, expressed in the parent frame.-->
-				<translation>0 0.10000000000000001 0</translation>
+				<translation>0 -0.14999999999999999 0</translation>
 			</PhysicalOffsetFrame>
 			<PhysicalOffsetFrame name="tibia_r_imu">
 				<!--The geometry used to display the axes of this Frame.-->
@@ -27,7 +27,7 @@
 				<!--Path to a Component that satisfies the Socket 'parent' of type C (description: The parent frame to this frame.).-->
 				<socket_parent>/bodyset/tibia_r</socket_parent>
 				<!--Translational offset (in meters) of this frame's origin from the parent frame's origin, expressed in the parent frame.-->
-				<translation>0 0.10000000000000001 0</translation>
+				<translation>0 -0.14999999999999999 0</translation>
 			</PhysicalOffsetFrame>
 		</components>
 		<!--The model's ground reference frame.-->
@@ -43,6 +43,42 @@
 		<!--List of bodies that make up this model.-->
 		<BodySet name="bodyset">
 			<objects>
+				<Body name="pelvis">
+					<!--The geometry used to display the axes of this Frame.-->
+					<FrameGeometry name="frame_geometry">
+						<!--Path to a Component that satisfies the Socket 'frame' of type Frame.-->
+						<socket_frame>..</socket_frame>
+						<!--Scale factors in X, Y, Z directions respectively.-->
+						<scale_factors>0.20000000000000001 0.20000000000000001 0.20000000000000001</scale_factors>
+					</FrameGeometry>
+					<!--List of geometry attached to this Frame. Note, the geometry are treated as fixed to the frame and they share the transform of the frame when visualized-->
+					<attached_geometry>
+						<Mesh name="pelvis_geom_1">
+							<!--Path to a Component that satisfies the Socket 'frame' of type Frame.-->
+							<socket_frame>..</socket_frame>
+							<!--Name of geometry file.-->
+							<mesh_file>r_pelvis.vtp</mesh_file>
+						</Mesh>
+						<Mesh name="pelvis_geom_2">
+							<!--Path to a Component that satisfies the Socket 'frame' of type Frame.-->
+							<socket_frame>..</socket_frame>
+							<!--Name of geometry file.-->
+							<mesh_file>l_pelvis.vtp</mesh_file>
+						</Mesh>
+						<Mesh name="pelvis_geom_3">
+							<!--Path to a Component that satisfies the Socket 'frame' of type Frame.-->
+							<socket_frame>..</socket_frame>
+							<!--Name of geometry file.-->
+							<mesh_file>sacrum.vtp</mesh_file>
+						</Mesh>
+					</attached_geometry>
+					<!--The mass of the body (kg)-->
+					<mass>10</mass>
+					<!--The location (Vec3) of the mass center in the body frame.-->
+					<mass_center>0 0 0</mass_center>
+					<!--The elements of the inertia tensor (Vec6) as [Ixx Iyy Izz Ixy Ixz Iyz] measured about the mass_center and not the body origin.-->
+					<inertia>0.10000000000000001 0.10000000000000001 0.10000000000000001 0 0 0</inertia>
+				</Body>
 				<Body name="femur_r">
 					<!--The geometry used to display the axes of this Frame.-->
 					<FrameGeometry name="frame_geometry">
@@ -53,22 +89,15 @@
 					</FrameGeometry>
 					<!--List of geometry attached to this Frame. Note, the geometry are treated as fixed to the frame and they share the transform of the frame when visualized-->
 					<attached_geometry>
-						<Cylinder name="femur_r_geom_1">
+						<Mesh name="femur_r_geom_1">
 							<!--Path to a Component that satisfies the Socket 'frame' of type Frame.-->
 							<socket_frame>..</socket_frame>
-							<!--Default appearance attributes for this Geometry-->
-							<Appearance>
-								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>0.20000000000000001 0.55000000000000004 0.94999999999999996</color>
-							</Appearance>
-							<!--Radius of cylinder.-->
-							<radius>0.044999999999999998</radius>
-							<!--Half-Height of cylinder.-->
-							<half_height>0.22500000000000001</half_height>
-						</Cylinder>
+							<!--Name of geometry file.-->
+							<mesh_file>femur_r.vtp</mesh_file>
+						</Mesh>
 					</attached_geometry>
 					<!--The mass of the body (kg)-->
-					<mass>1</mass>
+					<mass>8</mass>
 					<!--The location (Vec3) of the mass center in the body frame.-->
 					<mass_center>0 0 0</mass_center>
 					<!--The elements of the inertia tensor (Vec6) as [Ixx Iyy Izz Ixy Ixz Iyz] measured about the mass_center and not the body origin.-->
@@ -84,22 +113,27 @@
 					</FrameGeometry>
 					<!--List of geometry attached to this Frame. Note, the geometry are treated as fixed to the frame and they share the transform of the frame when visualized-->
 					<attached_geometry>
-						<Cylinder name="tibia_r_geom_1">
+						<Mesh name="tibia_r_geom_1">
 							<!--Path to a Component that satisfies the Socket 'frame' of type Frame.-->
 							<socket_frame>..</socket_frame>
-							<!--Default appearance attributes for this Geometry-->
-							<Appearance>
-								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>0.94999999999999996 0.55000000000000004 0.20000000000000001</color>
-							</Appearance>
-							<!--Radius of cylinder.-->
-							<radius>0.040000000000000001</radius>
-							<!--Half-Height of cylinder.-->
-							<half_height>0.22500000000000001</half_height>
-						</Cylinder>
+							<!--Name of geometry file.-->
+							<mesh_file>tibia_r.vtp</mesh_file>
+						</Mesh>
+						<Mesh name="tibia_r_geom_2">
+							<!--Path to a Component that satisfies the Socket 'frame' of type Frame.-->
+							<socket_frame>..</socket_frame>
+							<!--Name of geometry file.-->
+							<mesh_file>r_fibula.vtp</mesh_file>
+						</Mesh>
+						<Mesh name="tibia_r_geom_3">
+							<!--Path to a Component that satisfies the Socket 'frame' of type Frame.-->
+							<socket_frame>..</socket_frame>
+							<!--Name of geometry file.-->
+							<mesh_file>r_patella.vtp</mesh_file>
+						</Mesh>
 					</attached_geometry>
 					<!--The mass of the body (kg)-->
-					<mass>1</mass>
+					<mass>4</mass>
 					<!--The location (Vec3) of the mass center in the body frame.-->
 					<mass_center>0 0 0</mass_center>
 					<!--The elements of the inertia tensor (Vec6) as [Ixx Iyy Izz Ixy Ixz Iyz] measured about the mass_center and not the body origin.-->
@@ -111,11 +145,11 @@
 		<!--List of joints that connect the bodies.-->
 		<JointSet name="jointset">
 			<objects>
-				<WeldJoint name="hip_r">
+				<WeldJoint name="pelvis_ground">
 					<!--Path to a Component that satisfies the Socket 'parent_frame' of type PhysicalFrame (description: The parent frame for the joint.).-->
 					<socket_parent_frame>ground_offset</socket_parent_frame>
 					<!--Path to a Component that satisfies the Socket 'child_frame' of type PhysicalFrame (description: The child frame for the joint.).-->
-					<socket_child_frame>femur_r_offset</socket_child_frame>
+					<socket_child_frame>pelvis_offset</socket_child_frame>
 					<!--Physical offset frames owned by the Joint that are typically used to satisfy the owning Joint's parent and child frame connections (sockets). PhysicalOffsetFrames are often used to describe the fixed transformation from a Body's origin to another location of interest on the Body (e.g., the joint center). When the joint is deleted, so are the PhysicalOffsetFrame components in this list.-->
 					<frames>
 						<PhysicalOffsetFrame name="ground_offset">
@@ -129,7 +163,58 @@
 							<!--Path to a Component that satisfies the Socket 'parent' of type C (description: The parent frame to this frame.).-->
 							<socket_parent>/ground</socket_parent>
 							<!--Translational offset (in meters) of this frame's origin from the parent frame's origin, expressed in the parent frame.-->
-							<translation>0 0.90000000000000002 0</translation>
+							<translation>0 1 0</translation>
+							<!--Orientation offset (in radians) of this frame in its parent frame, expressed as a frame-fixed x-y-z rotation sequence.-->
+							<orientation>0 0 0</orientation>
+						</PhysicalOffsetFrame>
+						<PhysicalOffsetFrame name="pelvis_offset">
+							<!--The geometry used to display the axes of this Frame.-->
+							<FrameGeometry name="frame_geometry">
+								<!--Path to a Component that satisfies the Socket 'frame' of type Frame.-->
+								<socket_frame>..</socket_frame>
+								<!--Scale factors in X, Y, Z directions respectively.-->
+								<scale_factors>0.20000000000000001 0.20000000000000001 0.20000000000000001</scale_factors>
+							</FrameGeometry>
+							<!--Path to a Component that satisfies the Socket 'parent' of type C (description: The parent frame to this frame.).-->
+							<socket_parent>/bodyset/pelvis</socket_parent>
+							<!--Translational offset (in meters) of this frame's origin from the parent frame's origin, expressed in the parent frame.-->
+							<translation>0 0 0</translation>
+							<!--Orientation offset (in radians) of this frame in its parent frame, expressed as a frame-fixed x-y-z rotation sequence.-->
+							<orientation>0 0 0</orientation>
+						</PhysicalOffsetFrame>
+					</frames>
+				</WeldJoint>
+				<BallJoint name="hip_r">
+					<!--Path to a Component that satisfies the Socket 'parent_frame' of type PhysicalFrame (description: The parent frame for the joint.).-->
+					<socket_parent_frame>pelvis_offset</socket_parent_frame>
+					<!--Path to a Component that satisfies the Socket 'child_frame' of type PhysicalFrame (description: The child frame for the joint.).-->
+					<socket_child_frame>femur_r_offset</socket_child_frame>
+					<!--List containing the generalized coordinates (q's) that parameterize this joint.-->
+					<coordinates>
+						<Coordinate name="hip_flexion_r">
+							<!--All properties of this object have their default values.-->
+						</Coordinate>
+						<Coordinate name="hip_adduction_r">
+							<!--All properties of this object have their default values.-->
+						</Coordinate>
+						<Coordinate name="hip_rotation_r">
+							<!--All properties of this object have their default values.-->
+						</Coordinate>
+					</coordinates>
+					<!--Physical offset frames owned by the Joint that are typically used to satisfy the owning Joint's parent and child frame connections (sockets). PhysicalOffsetFrames are often used to describe the fixed transformation from a Body's origin to another location of interest on the Body (e.g., the joint center). When the joint is deleted, so are the PhysicalOffsetFrame components in this list.-->
+					<frames>
+						<PhysicalOffsetFrame name="pelvis_offset">
+							<!--The geometry used to display the axes of this Frame.-->
+							<FrameGeometry name="frame_geometry">
+								<!--Path to a Component that satisfies the Socket 'frame' of type Frame.-->
+								<socket_frame>..</socket_frame>
+								<!--Scale factors in X, Y, Z directions respectively.-->
+								<scale_factors>0.20000000000000001 0.20000000000000001 0.20000000000000001</scale_factors>
+							</FrameGeometry>
+							<!--Path to a Component that satisfies the Socket 'parent' of type C (description: The parent frame to this frame.).-->
+							<socket_parent>/bodyset/pelvis</socket_parent>
+							<!--Translational offset (in meters) of this frame's origin from the parent frame's origin, expressed in the parent frame.-->
+							<translation>-0.056276 -0.078490000000000004 0.077259999999999995</translation>
 							<!--Orientation offset (in radians) of this frame in its parent frame, expressed as a frame-fixed x-y-z rotation sequence.-->
 							<orientation>0 0 0</orientation>
 						</PhysicalOffsetFrame>
@@ -144,12 +229,12 @@
 							<!--Path to a Component that satisfies the Socket 'parent' of type C (description: The parent frame to this frame.).-->
 							<socket_parent>/bodyset/femur_r</socket_parent>
 							<!--Translational offset (in meters) of this frame's origin from the parent frame's origin, expressed in the parent frame.-->
-							<translation>0 0.22500000000000001 0</translation>
+							<translation>0 0 0</translation>
 							<!--Orientation offset (in radians) of this frame in its parent frame, expressed as a frame-fixed x-y-z rotation sequence.-->
 							<orientation>0 0 0</orientation>
 						</PhysicalOffsetFrame>
 					</frames>
-				</WeldJoint>
+				</BallJoint>
 				<PinJoint name="knee_r">
 					<!--Path to a Component that satisfies the Socket 'parent_frame' of type PhysicalFrame (description: The parent frame for the joint.).-->
 					<socket_parent_frame>femur_r_offset</socket_parent_frame>
@@ -158,7 +243,8 @@
 					<!--List containing the generalized coordinates (q's) that parameterize this joint.-->
 					<coordinates>
 						<Coordinate name="knee_angle_r">
-							<!--All properties of this object have their default values.-->
+							<!--The minimum and maximum values that the coordinate can range between. Rotational coordinate range in radians and Translational in meters.-->
+							<range>-2.0943999999999998 2.0943999999999998</range>
 						</Coordinate>
 					</coordinates>
 					<!--Physical offset frames owned by the Joint that are typically used to satisfy the owning Joint's parent and child frame connections (sockets). PhysicalOffsetFrames are often used to describe the fixed transformation from a Body's origin to another location of interest on the Body (e.g., the joint center). When the joint is deleted, so are the PhysicalOffsetFrame components in this list.-->
@@ -174,7 +260,7 @@
 							<!--Path to a Component that satisfies the Socket 'parent' of type C (description: The parent frame to this frame.).-->
 							<socket_parent>/bodyset/femur_r</socket_parent>
 							<!--Translational offset (in meters) of this frame's origin from the parent frame's origin, expressed in the parent frame.-->
-							<translation>0 -0.22500000000000001 0</translation>
+							<translation>-0.00809 -0.40795999999999999 -0.0027499999999999998</translation>
 							<!--Orientation offset (in radians) of this frame in its parent frame, expressed as a frame-fixed x-y-z rotation sequence.-->
 							<orientation>0 0 0</orientation>
 						</PhysicalOffsetFrame>
@@ -189,7 +275,7 @@
 							<!--Path to a Component that satisfies the Socket 'parent' of type C (description: The parent frame to this frame.).-->
 							<socket_parent>/bodyset/tibia_r</socket_parent>
 							<!--Translational offset (in meters) of this frame's origin from the parent frame's origin, expressed in the parent frame.-->
-							<translation>0 0.22500000000000001 0</translation>
+							<translation>-0.00809 -0.0035349999999999999 -0.001485</translation>
 							<!--Orientation offset (in radians) of this frame in its parent frame, expressed as a frame-fixed x-y-z rotation sequence.-->
 							<orientation>0 0 0</orientation>
 						</PhysicalOffsetFrame>

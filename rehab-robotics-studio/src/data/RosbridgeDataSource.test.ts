@@ -1039,3 +1039,35 @@ describe('systemStore - persistent visualizer request state', () => {
     });
   });
 });
+
+describe('systemStore - recording health synchronization', () => {
+  it('reflects an already-active hardware session before another Rec click', () => {
+    const store = useSystemStore.getState();
+    store.setRecording(false);
+    store.setPairHealth({
+      master: {
+        recording: {
+          state: 'recording',
+          session_id: '20260728_155910',
+        },
+      },
+    });
+    assert.equal(
+      useSystemStore.getState().status.recording.value,
+      'On',
+    );
+
+    useSystemStore.getState().setPairHealth({
+      master: {
+        recording: {
+          state: 'idle',
+          session_id: '20260728_155910',
+        },
+      },
+    });
+    assert.equal(
+      useSystemStore.getState().status.recording.value,
+      'Off',
+    );
+  });
+});

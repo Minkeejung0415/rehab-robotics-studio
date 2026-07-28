@@ -20,7 +20,10 @@ from rehab_robotics_bridge.opensim.orientation_ik import (
     UnavailableOrientationIkSolver,
     apply_mounting_offsets,
 )
-from rehab_robotics_bridge.opensim_adapter import ros_xyzw_to_opensim_rotation
+from rehab_robotics_bridge.opensim_adapter import (
+    configure_opensim_geometry_search_paths,
+    ros_xyzw_to_opensim_rotation,
+)
 
 
 def probe_opensim_orientation_ik_apis(opensim_module: Any) -> dict[str, bool]:
@@ -84,6 +87,10 @@ class OpenSimOrientationIkSolver:
         self._last_calibration_id: str | None = None
         self._time_s = 0.0
 
+        configure_opensim_geometry_search_paths(
+            self._osim,
+            model_path,
+        )
         self._model = self._osim.Model(str(model_path))
         self._model.setUseVisualizer(False)
         self._state = self._model.initSystem()
