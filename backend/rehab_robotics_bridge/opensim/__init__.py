@@ -1,1 +1,1 @@
-"""OpenSim IK contract package (constants only in Phase 16)."""
+"""OpenSim IK contract package (Phase 16+) with Phase 17 calibration controller."""
