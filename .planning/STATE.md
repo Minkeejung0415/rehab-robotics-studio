@@ -2,15 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: OpenSim IK + Calibration + Visualizer Control
-status: ready_for_next_phase
-stopped_at: null
-last_updated: "2026-07-28T17:55:00Z"
-last_activity: 2026-07-28 -- Phase 16 complete (16-01/02/03); do not start Phase 17 yet
+status: Ready for Phase 17 (not started)
+last_updated: "2026-07-28T17:37:41.801Z"
+last_activity: 2026-07-28 — Executed 16-01, 16-02, 16-03; wrote 16-VERIFICATION.md
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 6
+  completed_plans: 4
   percent: 25
 ---
 

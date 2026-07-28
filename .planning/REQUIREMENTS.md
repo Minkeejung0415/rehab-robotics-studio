@@ -12,9 +12,9 @@
 
 ### Calibration / Mounting Offset
 
-- [ ] **IK-01**: Operator can press a top-level toolbar **Calibrate** control to capture a bounded stable window in a fixed standing / knees-extended pose and compute sensor-to-model mounting offsets.
-- [ ] **IK-02**: Operator can press **Clear cal** to invalidate the active calibration and return to UNCALIBRATED.
-- [ ] **IK-03**: Joint-angle publication is hard-gated — no IK angles are published until calibration state is CALIBRATED.
+- [x] **IK-01**: Operator can press a top-level toolbar **Calibrate** control to capture a bounded stable window in a fixed standing / knees-extended pose and compute sensor-to-model mounting offsets.
+- [x] **IK-02**: Operator can press **Clear cal** to invalidate the active calibration and return to UNCALIBRATED.
+- [x] **IK-03**: Joint-angle publication is hard-gated — no IK angles are published until calibration state is CALIBRATED.
 - [ ] **IK-04**: Calibration status (UNCALIBRATED / CAPTURING / CALIBRATED / FAILED + reason) is visible in the Front Panel OpenSim section.
 
 ### Official OpenSim IK
@@ -48,9 +48,9 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | IK-00 | Phase 16 | Complete |
-| IK-01 | Phase 17 | Pending |
-| IK-02 | Phase 17 | Pending |
-| IK-03 | Phase 17 | Pending |
+| IK-01 | Phase 17 | Complete |
+| IK-02 | Phase 17 | Complete |
+| IK-03 | Phase 17 | Complete |
 | IK-04 | Phase 17 | Pending |
 | IK-05 | Phase 18 | Pending |
 | IK-06 | Phase 18 | Pending |
