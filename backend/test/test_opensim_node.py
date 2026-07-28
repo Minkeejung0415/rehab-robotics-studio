@@ -42,6 +42,7 @@ class _StubNode:
         self.parameters = {}
         self.subscriptions = []
         self.publishers = []
+        self.services = []
         self.timers = []
         self.logger = _Logger()
 
@@ -70,6 +71,15 @@ class _StubNode:
         publisher.qos = qos
         self.publishers.append(publisher)
         return publisher
+
+    def create_service(self, srv_type, name, callback):
+        service = types.SimpleNamespace(
+            srv_type=srv_type,
+            name=name,
+            callback=callback,
+        )
+        self.services.append(service)
+        return service
 
     def create_timer(self, period, callback):
         timer = types.SimpleNamespace(period=period, callback=callback)
@@ -111,6 +121,32 @@ class _Float64:
         self.data = 0.0
 
 
+class _JointState:
+    def __init__(self):
+        self.name = []
+        self.position = []
+        self.velocity = []
+        self.effort = []
+        self.header = types.SimpleNamespace(
+            stamp=types.SimpleNamespace(sec=0, nanosec=0),
+        )
+
+
+class _TriggerRequest:
+    pass
+
+
+class _TriggerResponse:
+    def __init__(self):
+        self.success = False
+        self.message = ""
+
+
+class _Trigger:
+    Request = _TriggerRequest
+    Response = _TriggerResponse
+
+
 def _install_ros_stubs():
     backend_root = str(Path(__file__).parents[1])
     if backend_root not in sys.path:
@@ -138,6 +174,7 @@ def _install_ros_stubs():
     sensor_msgs = types.ModuleType("sensor_msgs")
     sensor_msgs.msg = types.ModuleType("sensor_msgs.msg")
     sensor_msgs.msg.Imu = _Imu
+    sensor_msgs.msg.JointState = _JointState
     sys.modules["sensor_msgs"] = sensor_msgs
     sys.modules["sensor_msgs.msg"] = sensor_msgs.msg
 
@@ -148,9 +185,23 @@ def _install_ros_stubs():
     sys.modules["std_msgs"] = std_msgs
     sys.modules["std_msgs.msg"] = std_msgs.msg
 
+    std_srvs = types.ModuleType("std_srvs")
+    std_srvs.srv = types.ModuleType("std_srvs.srv")
+    std_srvs.srv.Trigger = _Trigger
+    sys.modules["std_srvs"] = std_srvs
+    sys.modules["std_srvs.srv"] = std_srvs.srv
+
 
 _install_ros_stubs()
 from rehab_robotics_bridge import opensim_node  # noqa: E402
+from rehab_robotics_bridge.opensim.calibration import CalibrationController  # noqa: E402
+from rehab_robotics_bridge.opensim.ik_contracts import (  # noqa: E402
+    CALIBRATION_CAPTURE_SERVICE,
+    CALIBRATION_CLEAR_SERVICE,
+    CALIBRATION_STATUS_TOPIC,
+    JOINT_STATES_TOPIC,
+    CalibrationState,
+)
 from rehab_robotics_bridge.opensim_adapter import (  # noqa: E402
     UnavailableVisualizerAdapter,
 )
@@ -211,8 +262,10 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
         self.assertTrue(
             all(subscription.qos.depth == 1 for subscription in node.subscriptions)
         )
-        self.assertEqual(len(node.publishers), 1)
-        self.assertEqual(node.publishers[0].topic, "/opensim/status")
+        topics = [publisher.topic for publisher in node.publishers]
+        self.assertIn("/opensim/status", topics)
+        self.assertIn(CALIBRATION_STATUS_TOPIC, topics)
+        self.assertIn(JOINT_STATES_TOPIC, topics)
         self.assertFalse(node.parameters.get("publish_joint_angle_enabled", True))
 
     def test_parameter_overrides_control_topics_frames_model_timeout_and_status(self):
@@ -243,8 +296,13 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
             ["/custom/master", "/custom/slave"],
         )
         self.assertEqual(node.publishers[0].topic, "/custom/status")
-        self.assertEqual(node.publishers[1].topic, "/custom/joint_angle")
-        self.assertIs(node.publishers[1].message_type, _Float64)
+        joint_angle_pubs = [
+            publisher
+            for publisher in node.publishers
+            if publisher.topic == "/custom/joint_angle"
+        ]
+        self.assertEqual(len(joint_angle_pubs), 1)
+        self.assertIs(joint_angle_pubs[0].message_type, _Float64)
         self.assertEqual(
             factory_calls,
             [("model.osim", {"master": "pelvis_imu", "slave": "torso_imu"})],
@@ -252,8 +310,9 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
 
     def test_default_path_never_publishes_custom_joint_angle_as_product(self):
         node = self._node()
-        self.assertEqual(len(node.publishers), 1)
-        self.assertEqual(node.publishers[0].topic, "/opensim/status")
+        status_topics = [publisher.topic for publisher in node.publishers]
+        self.assertIn("/opensim/status", status_topics)
+        self.assertNotIn("/opensim/joint_angle", status_topics)
 
         node._on_master_imu(_Imu())
         node._on_slave_imu(
@@ -264,14 +323,15 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
         self.assertTrue(
             "joint_angle_deg" not in status or status.get("joint_angle_deg") is None,
         )
-        self.assertEqual(len(node.publishers[0].messages), 0)
+        status_pub = next(p for p in node.publishers if p.topic == "/opensim/status")
+        self.assertEqual(len(status_pub.messages), 0)
 
     def test_debug_flag_publishes_relative_joint_angle_when_enabled(self):
         _StubNode.parameter_overrides = {
             "publish_joint_angle_enabled": True,
         }
         node = self._node()
-        angle_pub = node.publishers[1]
+        angle_pub = next(p for p in node.publishers if p.topic == "/opensim/joint_angle")
         self.assertEqual(angle_pub.topic, "/opensim/joint_angle")
 
         node._on_master_imu(_Imu())  # identity
@@ -593,6 +653,132 @@ class OpenSimNodeStatusTests(unittest.TestCase):
         )
         self.assertEqual(status["sensors"]["master"]["state"], "live")
         self.assertEqual(status["sensors"]["slave"]["state"], "live")
+
+
+class OpenSimNodeCalibrationTests(unittest.TestCase):
+    def setUp(self):
+        _StubNode.parameter_overrides = {}
+        self.clock = _Clock()
+
+    def _node(self, adapter=None, calibration=None):
+        return opensim_node.OpenSimBridgeNode(
+            adapter=adapter or _FakeAdapter(),
+            monotonic_clock=self.clock,
+            calibration_controller=calibration,
+        )
+
+    def _service(self, node, name):
+        for service in node.services:
+            if service.name == name:
+                return service
+        self.fail(f"missing service {name}")
+
+    def test_constructs_capture_and_clear_trigger_services(self):
+        node = self._node()
+        names = [service.name for service in node.services]
+        self.assertIn(CALIBRATION_CAPTURE_SERVICE, names)
+        self.assertIn(CALIBRATION_CLEAR_SERVICE, names)
+        for service in node.services:
+            if service.name in (
+                CALIBRATION_CAPTURE_SERVICE,
+                CALIBRATION_CLEAR_SERVICE,
+            ):
+                self.assertIs(service.srv_type, _Trigger)
+
+    def test_status_snapshot_includes_uncalibrated_calibration_object(self):
+        node = self._node()
+        status = node.status_snapshot()
+        self.assertIn("calibration", status)
+        calibration = status["calibration"]
+        self.assertEqual(calibration["state"], "UNCALIBRATED")
+        self.assertIn("reason", calibration)
+
+    def test_clear_service_returns_uncalibrated(self):
+        fast = CalibrationController(window_s=0.2, min_samples=3)
+        node = self._node(calibration=fast)
+        # Force calibrated then clear
+        fast.begin_capture()
+        identity = (0.0, 0.0, 0.0, 1.0)
+        for i in range(5):
+            fast.feed_pair(identity, identity, monotonic_time=10.0 + i * 0.1)
+        self.assertEqual(fast.state, CalibrationState.CALIBRATED)
+
+        response = _TriggerResponse()
+        self._service(node, CALIBRATION_CLEAR_SERVICE).callback(
+            _TriggerRequest(),
+            response,
+        )
+        self.assertTrue(response.success)
+        self.assertEqual(node.status_snapshot()["calibration"]["state"], "UNCALIBRATED")
+
+    def test_capture_requires_live_sensors_and_not_single_pair(self):
+        fast = CalibrationController(window_s=1.5, min_samples=10)
+        node = self._node(calibration=fast)
+        response = _TriggerResponse()
+        self._service(node, CALIBRATION_CAPTURE_SERVICE).callback(
+            _TriggerRequest(),
+            response,
+        )
+        self.assertFalse(response.success)
+
+        node._on_master_imu(_Imu())
+        node._on_slave_imu(_Imu())
+        response = _TriggerResponse()
+        self._service(node, CALIBRATION_CAPTURE_SERVICE).callback(
+            _TriggerRequest(),
+            response,
+        )
+        self.assertTrue(response.success)
+        self.assertEqual(node.status_snapshot()["calibration"]["state"], "CAPTURING")
+
+        # One additional pair after begin is not enough for CALIBRATED
+        self.clock.now += 0.05
+        node._on_master_imu(_Imu())
+        node._on_slave_imu(_Imu())
+        self.assertNotEqual(
+            node.status_snapshot()["calibration"]["state"],
+            "CALIBRATED",
+        )
+
+    def test_stable_feeds_reach_calibrated_via_imu_path(self):
+        fast = CalibrationController(window_s=0.3, min_samples=4)
+        node = self._node(calibration=fast)
+        node._on_master_imu(_Imu())
+        node._on_slave_imu(_Imu())
+        response = _TriggerResponse()
+        self._service(node, CALIBRATION_CAPTURE_SERVICE).callback(
+            _TriggerRequest(),
+            response,
+        )
+        self.assertTrue(response.success)
+        for i in range(6):
+            self.clock.now = 10.0 + i * 0.1
+            node._on_master_imu(_Imu())
+            node._on_slave_imu(_Imu())
+        self.assertEqual(node.status_snapshot()["calibration"]["state"], "CALIBRATED")
+
+    def test_joint_states_empty_while_uncalibrated_and_when_calibrated_without_ik(self):
+        fast = CalibrationController(window_s=0.3, min_samples=4)
+        node = self._node(calibration=fast)
+        joint_pub = next(p for p in node.publishers if p.topic == JOINT_STATES_TOPIC)
+
+        node._maybe_publish_joint_states()
+        self.assertEqual(joint_pub.messages, [])
+
+        node._on_master_imu(_Imu())
+        node._on_slave_imu(_Imu())
+        self._service(node, CALIBRATION_CAPTURE_SERVICE).callback(
+            _TriggerRequest(),
+            _TriggerResponse(),
+        )
+        for i in range(6):
+            self.clock.now = 10.0 + i * 0.1
+            node._on_master_imu(_Imu())
+            node._on_slave_imu(_Imu())
+        self.assertEqual(node.status_snapshot()["calibration"]["state"], "CALIBRATED")
+        node._maybe_publish_joint_states()
+        # Phase 17: gate open but no IK solution — still no fabricated JointState
+        self.assertEqual(joint_pub.messages, [])
 
 
 if __name__ == "__main__":
