@@ -2,41 +2,86 @@
 
 ## Overview
 
-Milestone v1.4 is a single-phase proof of connection between the paired ESP quaternion topics and OpenSim. It replaces the placeholder one-topic UDP forwarder with a directly testable ROS subscription and OpenSim live-orientation update path. IK, calibration, production packaging, and embedded visualization remain deferred.
+Milestone v1.5 replaces the incorrect custom relative-quaternion angle with official OpenSim orientation IK, adds operator calibration/mounting-offset capture from the Studio toolbar, and adds a toolbar control for the OpenSim 3D visualizer. Phase 15 (quaternion live link) remains the prerequisite acquisition/visualizer substrate.
 
 ## Milestones
 
 - **v1.1 Acquisition Operations** - Phases 5-8 completed and archived.
 - **v1.2 Block Deployment** - Parked without phases.
 - **v1.3 Acquisition Integrity** - Unfinished prior scope preserved in repository history and existing Phase 9 artifacts.
-- **v1.4 OpenSim Quaternion Live Link** - Phase 15 planned.
+- **v1.4 OpenSim Quaternion Live Link** - Phase 15 implemented (human visualizer/hardware smoke still noted).
+- **v1.5 OpenSim IK + Calibration + Visualizer Control** - Phases 16-19.
 
 ## Phases
 
-- [ ] **Phase 15: OpenSim Quaternion Live Link** - An operator can launch OpenSim integration and see the model receive the quaternion orientations already published by the master and slave ESP devices.
+- [x] **Phase 15: OpenSim Quaternion Live Link** - Live ESP quaternions map into OpenSim frames/status (prerequisite).
+- [ ] **Phase 16: Retire Custom Angle + IK Contracts** - Remove fake IK angle path; define OpenSim IK input/output and pairing contracts.
+- [ ] **Phase 17: Reference-Pose Calibration** - Toolbar Calibrate / Clear cal; mounting offsets; hard gate until CALIBRATED.
+- [ ] **Phase 18: Real-Time OpenSim IK Outputs** - Official OpenSim orientation IK publishes joint states + status.
+- [ ] **Phase 19: Studio Controls + Live Angle Display** - Toolbar visualizer button; GUI displays calibrated OpenSim IK angles only.
 
 ## Phase Details
 
-### Phase 15: OpenSim Quaternion Live Link
+### Phase 16: Retire Custom Angle + IK Contracts
 
-**Goal**: Prove the complete live path from the existing ESP `sensor_msgs/Imu` quaternion topics through `opensim_bridge` into mapped OpenSim model-frame orientation updates.
-**Depends on**: Existing ESP native IMU publishers
-**Requirements**: LINK-01, LINK-02, LINK-03, LINK-04, LINK-05, LINK-06
+**Goal**: Stop treating custom relative-quat math as IK, and lock the ROS contracts the solver and GUI will use.
+**Depends on**: Phase 15
+**Requirements**: IK-00
+**Plans:** 3 plans
+
+Plans:
+- [ ] 16-01-PLAN.md — Demote backend custom `/opensim/joint_angle` product path (default OFF)
+- [ ] 16-02-PLAN.md — Retire GUI default `opensim_ik_live`/HealthPanel custom-angle presentation
+- [ ] 16-03-PLAN.md — Lock `/opensim/joint_states` + calibration-gate contracts (docs + constants)
+
 **Success Criteria**:
-1. Launching the stack starts `opensim_bridge` with configurable master/slave IMU topics, model path, and frame mappings.
-2. Publishing known valid quaternions on both configured topics produces corresponding orientation updates in the OpenSim adapter or native visualizer demonstration.
-3. ROS `(x, y, z, w)` ordering and the OpenSim rotation convention are documented and covered by deterministic identity and known-axis tests.
-4. Missing runtime/model assets, invalid inputs, unknown mappings, and stale streams are visible through logs or a status topic.
-5. The local verification path passes without connected ESP hardware.
-**Plans**: TBD
+1. `/opensim/joint_angle` custom publisher and GUI `opensim_ik_live` dependency on it are removed or clearly demoted as non-IK debug only (default graph no longer uses them as product IK).
+2. Documented contracts exist for paired IMU inputs, calibration gate, `/opensim/joint_states` (or agreed name), and IK/calibration status topics/services.
+3. Deterministic tests fail closed when attempting to present uncalibrated custom angle as the product knee readout.
+
+### Phase 17: Reference-Pose Calibration
+
+**Goal**: Operator can capture mounting offsets from a fixed standing / knees-extended pose via top-level Studio controls; IK remains gated until CALIBRATED.
+**Depends on**: Phase 16
+**Requirements**: IK-01, IK-02, IK-03, IK-04
+**Success Criteria**:
+1. Toolbar **Calibrate** starts a bounded stable-window capture in the fixed known pose and transitions status through CAPTURING → CALIBRATED or FAILED with reason.
+2. Toolbar/control **Clear cal** returns to UNCALIBRATED and invalidates active offsets.
+3. No joint-angle publication occurs while UNCALIBRATED.
+4. Front Panel shows calibration state and last error/reason.
+
+### Phase 18: Real-Time OpenSim IK Outputs
+
+**Goal**: After calibration, OpenSim orientation IK solves and publishes joint coordinates the GUI can trust as OpenSim results.
+**Depends on**: Phase 17
+**Requirements**: IK-05, IK-06, IK-07
+**Success Criteria**:
+1. Calibrated master/slave orientations produce OpenSim-solved joint coordinates (not custom relative-quat degrees).
+2. Coordinates publish on the agreed joint-state topic with source-aligned timestamps.
+3. Status/diagnostics expose solution validity, residuals/age, and calibration identity.
+4. Hardware-free deterministic fixtures prove a known pose → expected coordinate direction.
+
+### Phase 19: Studio Controls + Live Angle Display
+
+**Goal**: Operator runs the experiment from Studio chrome: open visualizer, calibrate, and see live OpenSim IK angles.
+**Depends on**: Phase 18
+**Requirements**: VIS-01, VIS-02, (consumes IK-06 display path)
+**Success Criteria**:
+1. Toolbar button starts/shows the OpenSim 3D visualizer when runtime allows; failure reason remains visible otherwise.
+2. Default angle display subscribes to OpenSim IK joint states and updates only when CALIBRATED + valid solution.
+3. End-to-end operator checklist for the wireless stack is documented and runnable.
 
 ## Progress
 
-**Execution Order:** Phase 15
+**Execution Order:** 16 → 17 → 18 → 19
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 15. OpenSim Quaternion Live Link | 0/TBD | Not started | - |
+| 15. OpenSim Quaternion Live Link | 3/3 | human_needed (prerequisite) | 2026-07-27 |
+| 16. Retire Custom Angle + IK Contracts | 0/3 | Planned | - |
+| 17. Reference-Pose Calibration | 0/TBD | Not started | - |
+| 18. Real-Time OpenSim IK Outputs | 0/TBD | Not started | - |
+| 19. Studio Controls + Live Angle Display | 0/TBD | Not started | - |
 
 ---
-*Roadmap created: 2026-07-27 for milestone v1.4 OpenSim Quaternion Live Link*
+*Roadmap created: 2026-07-28 for milestone v1.5*
