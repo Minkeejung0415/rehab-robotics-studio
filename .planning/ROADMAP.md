@@ -44,11 +44,11 @@ Plans:
 **Goal**: Operator can capture mounting offsets from a fixed standing / knees-extended pose via top-level Studio controls; IK remains gated until CALIBRATED.
 **Depends on**: Phase 16
 **Requirements**: IK-01, IK-02, IK-03, IK-04
-**Plans:** 1/3 plans executed
+**Plans:** 2/3 plans executed
 
 Plans:
 - [x] 17-01-PLAN.md — Pure-Python CalibrationController + stable-window mounting offsets (TDD)
-- [ ] 17-02-PLAN.md — opensim_bridge capture/clear services, status publish, joint_states gate
+- [x] 17-02-PLAN.md — opensim_bridge capture/clear services, status publish, joint_states gate
 - [ ] 17-03-PLAN.md — Toolbar Calibrate/Clear cal + HealthPanel status via rosbridge
 
 **Success Criteria**:
@@ -86,7 +86,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 15. OpenSim Quaternion Live Link | 3/3 | human_needed (prerequisite) | 2026-07-27 |
 | 16. Retire Custom Angle + IK Contracts | 3/3 | Complete   | 2026-07-28 |
-| 17. Reference-Pose Calibration | 1/3 | In Progress|  |
+| 17. Reference-Pose Calibration | 2/3 | In Progress|  |
 | 18. Real-Time OpenSim IK Outputs | 0/TBD | Not started | - |
 | 19. Studio Controls + Live Angle Display | 0/TBD | Not started | - |
 
