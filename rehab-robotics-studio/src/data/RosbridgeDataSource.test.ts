@@ -31,6 +31,7 @@ if (typeof g.window === 'undefined') {
 
 // Import after global setup
 const { RosbridgeDataSource } = await import('./RosbridgeDataSource.js');
+const { useSystemStore } = await import('../state/systemStore.js');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -160,6 +161,9 @@ function makeStub(callbacks: {
   onConnectionChange?: (connected: boolean) => void;
   onUnavailable?: () => void;
   onPairHealth?: (health: unknown) => void;
+  onOpenSimStatus?: (status: import('../types/health').OpenSimStatusSnapshot) => void;
+  onOpenSimIkStatus?: (status: import('../types/health').OpenSimIkStatusSnapshot) => void;
+  onOpenSimJointState?: (jointState: import('../types/health').OpenSimJointStateSnapshot) => void;
 } = {}) {
   const MASTER_TOPIC = '/esp/raw/master';
   const SLAVE_TOPIC = '/esp/raw/slave';
@@ -173,6 +177,9 @@ function makeStub(callbacks: {
     callbacks.onFrameReceived,
     callbacks.onPairHealth as ((h: import('../types/health').PairHealthSnapshot) => void) | undefined,
     callbacks.onWarnScaleMissing,
+    callbacks.onOpenSimStatus,
+    callbacks.onOpenSimIkStatus,
+    callbacks.onOpenSimJointState,
   );
 
   // Expose internal handleMessage for testing without a live WebSocket
@@ -453,6 +460,47 @@ class FakeWebSocket {
   }
 }
 
+class SessionWebSocket extends FakeWebSocket {
+  static instances: SessionWebSocket[] = [];
+
+  constructor(_url: string) {
+    super();
+    SessionWebSocket.instances.push(this);
+  }
+}
+
+function withSessionWebSockets<T>(run: () => T): T {
+  const prior = g.WebSocket;
+  SessionWebSocket.instances = [];
+  g.WebSocket = SessionWebSocket;
+  try {
+    return run();
+  } finally {
+    g.WebSocket = prior;
+  }
+}
+
+function withFakeTimers<T>(run: (timers: Map<number, { callback: () => void; delay: number }>) => T): T {
+  const priorSetTimeout = g.window.setTimeout;
+  const priorClearTimeout = g.window.clearTimeout;
+  const timers = new Map<number, { callback: () => void; delay: number }>();
+  let nextTimer = 0;
+  g.window.setTimeout = (callback: () => void, delay: number) => {
+    const id = ++nextTimer;
+    timers.set(id, { callback, delay });
+    return id;
+  };
+  g.window.clearTimeout = (id: number) => {
+    timers.delete(id);
+  };
+  try {
+    return run(timers);
+  } finally {
+    g.window.setTimeout = priorSetTimeout;
+    g.window.clearTimeout = priorClearTimeout;
+  }
+}
+
 /**
  * Create a RosbridgeDataSource with an injected FakeWebSocket (already connected).
  */
@@ -639,4 +687,355 @@ describe('RosbridgeDataSource — OpenSim calibration Trigger services', () => {
     assert.match(result.message, /not connected/i);
   });
 
+});
+
+describe('RosbridgeDataSource - typed OpenSim routing', () => {
+  it('subscribes to status, IK status, and JointState as three distinct contracts', () => {
+    withSessionWebSockets(() => {
+      const ds = new RosbridgeDataSource(
+        'ws://localhost:9090',
+        '/esp/raw/master',
+        '/esp/raw/slave',
+      );
+      ds.start(100);
+      const socket = SessionWebSocket.instances[0];
+      assert.ok(socket);
+      socket.onopen?.();
+
+      const subscriptions = socket.sent
+        .map((message) => JSON.parse(message) as { op?: string; topic?: string; type?: string })
+        .filter((message) => message.op === 'subscribe');
+      const byTopic = new Map(subscriptions.map((message) => [message.topic, message.type]));
+
+      assert.equal(byTopic.get('/opensim/status'), 'std_msgs/msg/String');
+      assert.equal(byTopic.get('/opensim/ik_status'), 'std_msgs/msg/String');
+      assert.equal(byTopic.get('/opensim/joint_states'), 'sensor_msgs/msg/JointState');
+      ds.stop();
+    });
+  });
+
+  it('shape-validates and routes each OpenSim topic without conflating payloads', () => {
+    const statuses: import('../types/health').OpenSimStatusSnapshot[] = [];
+    const ikStatuses: import('../types/health').OpenSimIkStatusSnapshot[] = [];
+    const jointStates: import('../types/health').OpenSimJointStateSnapshot[] = [];
+    const { handleMessage } = makeStub({
+      onOpenSimStatus: (status) => statuses.push(status),
+      onOpenSimIkStatus: (status) => ikStatuses.push(status),
+      onOpenSimJointState: (jointState) => jointStates.push(jointState),
+    });
+
+    handleMessage(makePublishEnvelope('/opensim/status', JSON.stringify({
+      schema: 'rehab.opensim_status.1',
+      calibration: {
+        state: 'CALIBRATED',
+        reason: '',
+        calibration_id: 'cal-1',
+      },
+      visualization: {
+        available: true,
+        state: 'open',
+        reason: '',
+      },
+    })));
+    handleMessage(makePublishEnvelope('/opensim/ik_status', JSON.stringify({
+      schema: 'rehab.opensim_ik_status.1',
+      solution_valid: true,
+      reason: '',
+      calibration_id: 'cal-1',
+      input_age_s: 0.02,
+    })));
+    handleMessage(JSON.stringify({
+      op: 'publish',
+      topic: '/opensim/joint_states',
+      msg: {
+        header: { stamp: { sec: 12, nanosec: 34 } },
+        name: ['hip_flexion_r', 'knee_angle_r'],
+        position: [0.1, Math.PI / 2],
+      },
+    }));
+
+    assert.equal(statuses.length, 1);
+    assert.equal(statuses[0].calibration?.state, 'CALIBRATED');
+    assert.equal(ikStatuses.length, 1);
+    assert.equal(ikStatuses[0].solution_valid, true);
+    assert.equal(jointStates.length, 1);
+    assert.deepEqual(jointStates[0].names, ['hip_flexion_r', 'knee_angle_r']);
+    assert.equal(jointStates[0].positions[1], Math.PI / 2);
+    assert.ok(Number.isFinite(jointStates[0].receivedAtMs));
+  });
+
+  it('rejects malformed OpenSim payloads and never exposes raw reasons', () => {
+    const statuses: import('../types/health').OpenSimStatusSnapshot[] = [];
+    const ikStatuses: import('../types/health').OpenSimIkStatusSnapshot[] = [];
+    const jointStates: import('../types/health').OpenSimJointStateSnapshot[] = [];
+    const { handleMessage } = makeStub({
+      onOpenSimStatus: (status) => statuses.push(status),
+      onOpenSimIkStatus: (status) => ikStatuses.push(status),
+      onOpenSimJointState: (jointState) => jointStates.push(jointState),
+    });
+
+    handleMessage(makePublishEnvelope('/opensim/status', JSON.stringify({
+      calibration: { state: 'SPOOFED' },
+    })));
+    handleMessage(makePublishEnvelope('/opensim/ik_status', JSON.stringify({
+      solution_valid: 'true',
+      reason: { stack: 'secret' },
+    })));
+    handleMessage(JSON.stringify({
+      op: 'publish',
+      topic: '/opensim/joint_states',
+      msg: {
+        header: { stamp: { sec: 1, nanosec: 1_000_000_000 } },
+        name: ['knee_angle_r'],
+        position: [0],
+      },
+    }));
+    handleMessage('{not-json');
+
+    assert.equal(statuses.length, 0);
+    assert.equal(ikStatuses.length, 0);
+    assert.equal(jointStates.length, 0);
+
+    handleMessage(makePublishEnvelope('/opensim/ik_status', JSON.stringify({
+      solution_valid: false,
+      reason: '[object Object]',
+      calibration_id: 'cal-1',
+    })));
+    assert.equal(ikStatuses.length, 1);
+    assert.equal(ikStatuses[0].reason, 'No valid OpenSim IK solution');
+  });
+});
+
+describe('RosbridgeDataSource - visualizer Trigger', () => {
+  it('calls only the fixed visualizer Trigger and normalizes explicit failure', async () => {
+    const socket = new FakeWebSocket();
+    const ds = makeConnectedStub(socket);
+    const promise = ds.openVisualizer();
+    const services = socket.getSentServices();
+
+    assert.equal(services.length, 1);
+    assert.equal(services[0].service, '/opensim/visualizer/open');
+    assert.equal(services[0].type, 'std_srvs/srv/Trigger');
+    assert.deepEqual(services[0].args, {});
+
+    socket.respondToLatest(false, 'simbody_runtime_unavailable');
+    assert.deepEqual(await promise, {
+      success: false,
+      message: 'Simbody runtime unavailable',
+    });
+  });
+
+  it('uses the exact 10-second timeout and allows a later retry', async () => {
+    const socket = new FakeWebSocket();
+    const ds = makeConnectedStub(socket);
+    const first = withFakeTimers((timers) => {
+      const promise = ds.openVisualizer();
+      const timer = [...timers.values()][0];
+      assert.equal(timer.delay, 10_000);
+      timer.callback();
+      return promise;
+    });
+
+    assert.deepEqual(await first, {
+      success: false,
+      message: 'No response from the OpenSim service within 10 s',
+    });
+
+    const retry = ds.openVisualizer();
+    assert.equal(socket.getSentServices().length, 2);
+    socket.respondToLatest(true, 'opened');
+    assert.equal((await retry).success, true);
+  });
+
+  it('settles duplicate service replies exactly once', async () => {
+    const socket = new FakeWebSocket();
+    const ds = makeConnectedStub(socket);
+    let settlements = 0;
+    const promise = ds.openVisualizer().then((result) => {
+      settlements++;
+      return result;
+    });
+    const id = socket.getLatestServiceCallId();
+
+    socket.respondToLatest(true, 'opened', id);
+    socket.respondToLatest(false, 'late failure', id);
+    assert.equal((await promise).success, true);
+    await Promise.resolve();
+    assert.equal(settlements, 1);
+  });
+});
+
+describe('RosbridgeDataSource - session safety', () => {
+  it('disconnect settles only its generation and ignores old reply/close/error callbacks', async () => {
+    const prior = g.WebSocket;
+    SessionWebSocket.instances = [];
+    g.WebSocket = SessionWebSocket;
+    try {
+      const connectionStates: boolean[] = [];
+      let unavailableCount = 0;
+      const ds = new RosbridgeDataSource(
+        'ws://localhost:9090',
+        '/esp/raw/master',
+        '/esp/raw/slave',
+        () => { unavailableCount++; },
+        (connected) => connectionStates.push(connected),
+      );
+
+      ds.start(100);
+      const oldSocket = SessionWebSocket.instances[0];
+      oldSocket.onopen?.();
+      const oldRequest = ds.openVisualizer();
+      const oldId = oldSocket.getLatestServiceCallId();
+
+      ds.stop();
+      assert.deepEqual(await oldRequest, {
+        success: false,
+        message: 'ROS connection closed before the command completed',
+      });
+
+      ds.start(100);
+      const currentSocket = SessionWebSocket.instances[1];
+      currentSocket.onopen?.();
+      let currentSettled = false;
+      const currentRequest = ds.openVisualizer().then((result) => {
+        currentSettled = true;
+        return result;
+      });
+
+      oldSocket.respondToLatest(false, 'obsolete failure', oldId);
+      oldSocket.onerror?.();
+      oldSocket.onclose?.();
+      await Promise.resolve();
+      assert.equal(currentSettled, false);
+      assert.equal(connectionStates[connectionStates.length - 1], true);
+      assert.equal(unavailableCount, 0);
+
+      currentSocket.respondToLatest(true, 'opened');
+      assert.equal((await currentRequest).success, true);
+      ds.stop();
+    } finally {
+      g.WebSocket = prior;
+    }
+  });
+
+  it('an obsolete timeout cannot settle a request from the current generation', async () => {
+    const priorSocket = g.WebSocket;
+    const priorSetTimeout = g.window.setTimeout;
+    const priorClearTimeout = g.window.clearTimeout;
+    const timerCallbacks = new Map<number, () => void>();
+    let nextTimer = 0;
+    SessionWebSocket.instances = [];
+    g.WebSocket = SessionWebSocket;
+    g.window.setTimeout = (callback: () => void) => {
+      const id = ++nextTimer;
+      timerCallbacks.set(id, callback);
+      return id;
+    };
+    g.window.clearTimeout = (id: number) => {
+      timerCallbacks.delete(id);
+    };
+    try {
+      const ds = new RosbridgeDataSource(
+        'ws://localhost:9090',
+        '/esp/raw/master',
+        '/esp/raw/slave',
+      );
+      ds.start(100);
+      const oldSocket = SessionWebSocket.instances[0];
+      oldSocket.onopen?.();
+      const oldRequest = ds.openVisualizer();
+      const oldTimeout = timerCallbacks.get(1);
+      assert.ok(oldTimeout);
+
+      ds.stop();
+      await oldRequest;
+      ds.start(100);
+      const currentSocket = SessionWebSocket.instances[1];
+      currentSocket.onopen?.();
+      let currentSettled = false;
+      const currentRequest = ds.openVisualizer().then((result) => {
+        currentSettled = true;
+        return result;
+      });
+
+      oldTimeout();
+      await Promise.resolve();
+      assert.equal(currentSettled, false);
+      currentSocket.respondToLatest(true, 'opened');
+      assert.equal((await currentRequest).success, true);
+      ds.stop();
+    } finally {
+      g.WebSocket = priorSocket;
+      g.window.setTimeout = priorSetTimeout;
+      g.window.clearTimeout = priorClearTimeout;
+    }
+  });
+
+  it('ignores OpenSim publish callbacks captured by an obsolete socket', () => {
+    const prior = g.WebSocket;
+    SessionWebSocket.instances = [];
+    g.WebSocket = SessionWebSocket;
+    try {
+      const statuses: import('../types/health').OpenSimStatusSnapshot[] = [];
+      const ds = new RosbridgeDataSource(
+        'ws://localhost:9090',
+        '/esp/raw/master',
+        '/esp/raw/slave',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        (status) => statuses.push(status),
+      );
+      ds.start(100);
+      const oldSocket = SessionWebSocket.instances[0];
+      oldSocket.onopen?.();
+      ds.stop();
+      ds.start(100);
+      const currentSocket = SessionWebSocket.instances[1];
+      currentSocket.onopen?.();
+
+      const message = makePublishEnvelope('/opensim/status', JSON.stringify({
+        calibration: { state: 'CALIBRATED', reason: '', calibration_id: 'obsolete' },
+      }));
+      oldSocket.onmessage?.({ data: message });
+      assert.equal(statuses.length, 0);
+      currentSocket.onmessage?.({ data: message });
+      assert.equal(statuses.length, 1);
+      ds.stop();
+    } finally {
+      g.WebSocket = prior;
+    }
+  });
+});
+
+describe('systemStore - persistent visualizer request state', () => {
+  it('retains request failure until backend Opening/Open replaces it', () => {
+    const store = useSystemStore.getState();
+    store.setOpenSimVisualizerRequest({
+      state: 'failed',
+      reason: 'Simbody runtime unavailable',
+    });
+    store.setOpenSimStatus({
+      visualization: {
+        available: false,
+        state: 'unavailable',
+        reason: 'Simbody runtime unavailable',
+      },
+    });
+    assert.equal(useSystemStore.getState().openSimVisualizerRequest.state, 'failed');
+
+    useSystemStore.getState().setOpenSimStatus({
+      visualization: {
+        available: true,
+        state: 'opening',
+        reason: '',
+      },
+    });
+    assert.deepEqual(useSystemStore.getState().openSimVisualizerRequest, {
+      state: 'idle',
+      reason: '',
+    });
+  });
 });

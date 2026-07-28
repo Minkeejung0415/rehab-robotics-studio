@@ -1,6 +1,15 @@
-import type { DataSource } from './DataSource';
+import type { DataSource, OpenSimDataSource } from './DataSource';
 import type { Frame, ImuData } from '../types/signals';
-import type { OpenSimStatusSnapshot, PairHealthSnapshot } from '../types/health';
+import type {
+  OpenSimIkStatusSnapshot,
+  OpenSimJointStateSnapshot,
+  OpenSimStatusSnapshot,
+  PairHealthSnapshot,
+} from '../types/health';
+import {
+  isValidRosStamp,
+  normalizeLiveKneeReason,
+} from './liveKneeAngle';
 import {
   validateSensorConfig,
   accelCountToMps2,
@@ -19,7 +28,7 @@ type RawEspMessage = {
 type RosbridgeEnvelope = {
   op?: string;
   topic?: string;
-  msg?: { data?: string };
+  msg?: unknown;
   id?: string;
   values?: {
     success?: boolean;
@@ -41,6 +50,12 @@ const DEFAULT_MASTER_TOPIC = '/esp/raw/master';
 const DEFAULT_SLAVE_TOPIC = '/esp/raw/slave';
 const DEFAULT_PAIR_HEALTH_TOPIC = '/esp/status/pair';
 const DEFAULT_OPENSIM_STATUS_TOPIC = '/opensim/status';
+const DEFAULT_OPENSIM_IK_STATUS_TOPIC = '/opensim/ik_status';
+const DEFAULT_OPENSIM_JOINT_STATES_TOPIC = '/opensim/joint_states';
+const OPEN_VISUALIZER_SERVICE = '/opensim/visualizer/open';
+const TRIGGER_SERVICE_TYPE = 'std_srvs/srv/Trigger';
+const SERVICE_TIMEOUT_MS = 10_000;
+const VISUALIZER_TIMEOUT_REASON = 'No response from the OpenSim service within 10 s';
 const QUAT_SCALE = 1 / 32767;
 const GRAVITY = 9.80665;
 const CALIBRATION_WINDOW_SECONDS = 0.5;
@@ -50,6 +65,171 @@ const REST_DEADBAND_RADIANS = 0.012;
 
 function numeric(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function optionalFinite(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value.slice(0, 240) : undefined;
+}
+
+function optionalIdentifier(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, 160) : '';
+}
+
+function safeServiceMessage(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  if (
+    !trimmed
+    || trimmed === 'undefined'
+    || trimmed === 'null'
+    || trimmed === '[object Object]'
+    || trimmed.startsWith('{')
+    || trimmed.startsWith('[')
+    || trimmed.includes('\n')
+    || trimmed.includes('\r')
+  ) {
+    return fallback;
+  }
+  return trimmed.replace(/\s+/g, ' ').slice(0, 160);
+}
+
+function parseOpenSimStatus(payload: unknown): OpenSimStatusSnapshot | null {
+  if (!isRecord(payload)) return null;
+
+  const calibrationRaw = payload.calibration;
+  const visualizationRaw = payload.visualization;
+  if (
+    calibrationRaw !== undefined && !isRecord(calibrationRaw)
+    || visualizationRaw !== undefined && !isRecord(visualizationRaw)
+  ) {
+    return null;
+  }
+
+  let calibration: OpenSimStatusSnapshot['calibration'];
+  if (isRecord(calibrationRaw)) {
+    const state = optionalString(calibrationRaw.state);
+    if (
+      state === undefined
+      || !['UNCALIBRATED', 'CAPTURING', 'CALIBRATED', 'FAILED'].includes(state)
+    ) {
+      return null;
+    }
+    const calibrationId = optionalIdentifier(calibrationRaw.calibration_id);
+    if (calibrationRaw.calibration_id !== undefined && calibrationId === undefined) return null;
+    calibration = {
+      state,
+      reason: normalizeLiveKneeReason(calibrationRaw.reason, ''),
+      known_pose: optionalString(calibrationRaw.known_pose),
+      sample_count: optionalFinite(calibrationRaw.sample_count) ?? undefined,
+      window_s: optionalFinite(calibrationRaw.window_s) ?? undefined,
+      calibration_id: calibrationId,
+      has_offsets: typeof calibrationRaw.has_offsets === 'boolean'
+        ? calibrationRaw.has_offsets
+        : undefined,
+    };
+  }
+
+  let visualization: OpenSimStatusSnapshot['visualization'];
+  if (isRecord(visualizationRaw)) {
+    const state = optionalString(visualizationRaw.state)?.toLowerCase();
+    if (
+      state === undefined
+      || !['waiting', 'opening', 'open', 'unavailable', 'failed'].includes(state)
+    ) {
+      return null;
+    }
+    visualization = {
+      available: typeof visualizationRaw.available === 'boolean'
+        ? visualizationRaw.available
+        : undefined,
+      state,
+      reason: normalizeLiveKneeReason(visualizationRaw.reason, ''),
+      model_path: optionalString(visualizationRaw.model_path),
+    };
+  }
+
+  if (!calibration && !visualization && !isRecord(payload.sensors)) return null;
+  const sensorsRaw = isRecord(payload.sensors) ? payload.sensors : undefined;
+  const parseSensor = (value: unknown) => {
+    if (!isRecord(value)) return undefined;
+    return {
+      state: optionalString(value.state),
+      updates: optionalFinite(value.updates) ?? undefined,
+      age_s: optionalFinite(value.age_s),
+      last_error: normalizeLiveKneeReason(value.last_error, ''),
+    };
+  };
+
+  return {
+    schema: optionalString(payload.schema),
+    sensors: sensorsRaw ? {
+      master: parseSensor(sensorsRaw.master),
+      slave: parseSensor(sensorsRaw.slave),
+    } : undefined,
+    visualization,
+    calibration,
+    joint_angle_deg: optionalFinite(payload.joint_angle_deg),
+  };
+}
+
+function parseOpenSimIkStatus(payload: unknown): OpenSimIkStatusSnapshot | null {
+  if (!isRecord(payload) || typeof payload.solution_valid !== 'boolean') return null;
+  const calibrationId = optionalIdentifier(payload.calibration_id);
+  if (payload.calibration_id !== undefined && calibrationId === undefined) return null;
+  for (const key of ['orientation_residual_rms', 'orientation_residual_max', 'input_age_s'] as const) {
+    if (payload[key] !== undefined && optionalFinite(payload[key]) === undefined) return null;
+  }
+  return {
+    schema: optionalString(payload.schema),
+    solution_valid: payload.solution_valid,
+    reason: normalizeLiveKneeReason(payload.reason, payload.solution_valid ? '' : 'No valid OpenSim IK solution'),
+    calibration_id: calibrationId,
+    orientation_residual_rms: optionalFinite(payload.orientation_residual_rms),
+    orientation_residual_max: optionalFinite(payload.orientation_residual_max),
+    input_age_s: optionalFinite(payload.input_age_s),
+    backend: optionalString(payload.backend),
+  };
+}
+
+function parseOpenSimJointState(
+  payload: unknown,
+  receivedAtMs: number,
+): OpenSimJointStateSnapshot | null {
+  if (!isRecord(payload) || !isRecord(payload.header) || !isRecord(payload.header.stamp)) return null;
+  const stamp = {
+    sec: payload.header.stamp.sec,
+    nanosec: payload.header.stamp.nanosec,
+  };
+  if (
+    !isValidRosStamp(stamp as { sec: number; nanosec: number })
+    || !Array.isArray(payload.name)
+    || !Array.isArray(payload.position)
+    || payload.name.length !== payload.position.length
+    || !payload.name.every((name) => typeof name === 'string' && name.length <= 160)
+    || !payload.position.every((position) => typeof position === 'number' && Number.isFinite(position))
+    || !Number.isFinite(receivedAtMs)
+    || receivedAtMs < 0
+  ) {
+    return null;
+  }
+  return {
+    stamp: { sec: stamp.sec as number, nanosec: stamp.nanosec as number },
+    names: [...payload.name] as string[],
+    positions: [...payload.position] as number[],
+    receivedAtMs,
+  };
 }
 
 /**
@@ -171,7 +351,7 @@ function frameFromPair(
 }
 
 /** Rosbridge client for the canonical JSON produced by the ROS ESP bridge. */
-export class RosbridgeDataSource implements DataSource {
+export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
   private socket: WebSocket | null = null;
   private listeners = new Set<(frame: Frame) => void>();
   private running = false;
@@ -182,11 +362,14 @@ export class RosbridgeDataSource implements DataSource {
   private slaveFrame: Frame | null = null;
   private _warnedScale = false;
   private readonly angleStabilizer = new RelativeAngleStabilizer();
+  private connectionGeneration = 0;
   private nextServiceCallId = 0;
   private pendingServiceCalls = new Map<string, {
     resolve: (result: RecordingCommandResult) => void;
     timeout: number;
     toResult: (values: RosbridgeEnvelope['values']) => RecordingCommandResult;
+    generation: number;
+    socket: WebSocket;
   }>();
 
   constructor(
@@ -199,6 +382,8 @@ export class RosbridgeDataSource implements DataSource {
     private readonly onPairHealth?: (health: PairHealthSnapshot) => void,
     private readonly onWarnScaleMissing?: (deviceList: string) => void,
     private readonly onOpenSimStatus?: (status: OpenSimStatusSnapshot) => void,
+    private readonly onOpenSimIkStatus?: (status: OpenSimIkStatusSnapshot) => void,
+    private readonly onOpenSimJointState?: (jointState: OpenSimJointStateSnapshot) => void,
   ) {}
 
   start(_rateHz: number): void {
@@ -211,29 +396,41 @@ export class RosbridgeDataSource implements DataSource {
     this.receivedFrame = false;
     this.angleStabilizer.reset();
     if (this.socket) return;
-    this.socket = new WebSocket(this.url);
-    this.socket.onopen = () => {
+    const generation = ++this.connectionGeneration;
+    const socket = new WebSocket(this.url);
+    this.socket = socket;
+    socket.onopen = () => {
+      if (!this.isCurrentSession(generation, socket)) return;
       this.connected = true;
       this.onConnectionChange?.(true);
-      for (const topic of new Set([
-        this.masterTopic,
-        this.slaveTopic,
-        DEFAULT_PAIR_HEALTH_TOPIC,
-        DEFAULT_OPENSIM_STATUS_TOPIC,
-      ])) {
-        this.socket?.send(JSON.stringify({ op: 'subscribe', topic, type: 'std_msgs/msg/String' }));
+      const subscriptions = [
+        [this.masterTopic, 'std_msgs/msg/String'],
+        [this.slaveTopic, 'std_msgs/msg/String'],
+        [DEFAULT_PAIR_HEALTH_TOPIC, 'std_msgs/msg/String'],
+        [DEFAULT_OPENSIM_STATUS_TOPIC, 'std_msgs/msg/String'],
+        [DEFAULT_OPENSIM_IK_STATUS_TOPIC, 'std_msgs/msg/String'],
+        [DEFAULT_OPENSIM_JOINT_STATES_TOPIC, 'sensor_msgs/msg/JointState'],
+      ] as const;
+      for (const [topic, type] of new Map(subscriptions.map((entry) => [entry[0], entry])).values()) {
+        socket.send(JSON.stringify({ op: 'subscribe', topic, type }));
       }
     };
-    this.socket.onmessage = (event) => this.handleMessage(event.data);
-    this.socket.onerror = () => {
+    socket.onmessage = (event) => this.handleMessage(event.data, generation, socket);
+    socket.onerror = () => {
+      if (!this.isCurrentSession(generation, socket)) return;
       if (!this.connected) this.onUnavailable?.();
     };
-    this.socket.onclose = () => {
+    socket.onclose = () => {
+      if (!this.isCurrentSession(generation, socket)) return;
       const unavailable = !this.connected;
       this.connected = false;
       this.onConnectionChange?.(false);
       this.socket = null;
-      this.rejectPendingServiceCalls('ROS connection closed before the recording command completed');
+      this.rejectPendingServiceCalls(
+        'ROS connection closed before the command completed',
+        generation,
+        socket,
+      );
       if (this.running && unavailable) this.onUnavailable?.();
     };
   }
@@ -242,8 +439,18 @@ export class RosbridgeDataSource implements DataSource {
     this.running = false;
     this.paused = false;
     this.angleStabilizer.reset();
-    this.socket?.close();
+    const socket = this.socket;
+    const generation = this.connectionGeneration;
     this.socket = null;
+    this.connected = false;
+    if (socket) {
+      this.rejectPendingServiceCalls(
+        'ROS connection closed before the command completed',
+        generation,
+        socket,
+      );
+      socket.close();
+    }
   }
 
   pause(): void { this.paused = true; }
@@ -274,6 +481,25 @@ export class RosbridgeDataSource implements DataSource {
       '/opensim/calibration/clear',
       {},
       'std_srvs/srv/Trigger',
+    );
+  }
+
+  /** Ask the backend-owned OpenSim adapter to show its native visualizer. */
+  openVisualizer(): Promise<RecordingCommandResult> {
+    return this.callService(
+      OPEN_VISUALIZER_SERVICE,
+      {},
+      TRIGGER_SERVICE_TYPE,
+      (values) => ({
+        success: values?.success === true,
+        message: normalizeLiveKneeReason(
+          values?.message,
+          values?.success === true
+            ? 'OpenSim visualizer request accepted'
+            : 'OpenSim visualizer could not open',
+        ),
+      }),
+      VISUALIZER_TIMEOUT_REASON,
     );
   }
 
@@ -392,21 +618,36 @@ export class RosbridgeDataSource implements DataSource {
     type = 'std_srvs/srv/SetBool',
     toResult = (values: RosbridgeEnvelope['values']): RecordingCommandResult => ({
       success: values?.success === true,
-      message: values?.message || 'Master returned an empty response',
+      message: safeServiceMessage(values?.message, 'Master returned an empty response'),
     }),
+    timeoutMessage = 'Timed out waiting for the master recording response',
   ): Promise<RecordingCommandResult> {
-    if (!this.socket || !this.connected) {
+    const socket = this.socket;
+    const generation = this.connectionGeneration;
+    if (!socket || !this.connected || !this.isCurrentSession(generation, socket)) {
       return Promise.resolve({ success: false, message: 'ROS bridge is not connected' });
     }
-    const id = `recording-${++this.nextServiceCallId}`;
+    const id = `service-${generation}-${++this.nextServiceCallId}`;
     return new Promise((resolve) => {
       const timeout = window.setTimeout(() => {
-        if (this.pendingServiceCalls.delete(id)) {
-          resolve({ success: false, message: 'Timed out waiting for the master recording response' });
-        }
-      }, 10_000);
-      this.pendingServiceCalls.set(id, { resolve, timeout, toResult });
-      this.socket?.send(JSON.stringify({
+        const pending = this.pendingServiceCalls.get(id);
+        if (
+          !pending
+          || pending.generation !== generation
+          || pending.socket !== socket
+          || !this.isCurrentSession(generation, socket)
+        ) return;
+        this.pendingServiceCalls.delete(id);
+        resolve({ success: false, message: timeoutMessage });
+      }, SERVICE_TIMEOUT_MS);
+      this.pendingServiceCalls.set(id, {
+        resolve,
+        timeout,
+        toResult,
+        generation,
+        socket,
+      });
+      socket.send(JSON.stringify({
         op: 'call_service',
         id,
         service,
@@ -416,28 +657,60 @@ export class RosbridgeDataSource implements DataSource {
     });
   }
 
-  private handleMessage(payload: unknown): void {
+  private handleMessage(
+    payload: unknown,
+    generation = this.connectionGeneration,
+    socket = this.socket,
+  ): void {
+    if (generation !== this.connectionGeneration || socket !== this.socket) return;
     if (this.paused || typeof payload !== 'string') return;
     try {
       const envelope = JSON.parse(payload) as RosbridgeEnvelope;
       if (envelope.op === 'service_response' && envelope.id) {
         const pending = this.pendingServiceCalls.get(envelope.id);
-        if (!pending) return;
+        if (
+          !pending
+          || pending.generation !== generation
+          || pending.socket !== socket
+          || !socket
+        ) return;
         this.pendingServiceCalls.delete(envelope.id);
         window.clearTimeout(pending.timeout);
-        pending.resolve(pending.toResult(envelope.values));
+        let result: RecordingCommandResult;
+        try {
+          result = pending.toResult(envelope.values);
+        } catch {
+          result = { success: false, message: 'ROS service returned an invalid response' };
+        }
+        pending.resolve(result);
         return;
       }
-      if (envelope.op !== 'publish' || !envelope.msg?.data) return;
+      if (envelope.op !== 'publish' || !isRecord(envelope.msg)) return;
 
       if (envelope.topic === DEFAULT_PAIR_HEALTH_TOPIC) {
+        if (typeof envelope.msg.data !== 'string') return;
         this.onPairHealth?.(JSON.parse(envelope.msg.data) as PairHealthSnapshot);
         return;
       }
       if (envelope.topic === DEFAULT_OPENSIM_STATUS_TOPIC) {
-        this.onOpenSimStatus?.(JSON.parse(envelope.msg.data) as OpenSimStatusSnapshot);
+        if (typeof envelope.msg.data !== 'string') return;
+        const status = parseOpenSimStatus(JSON.parse(envelope.msg.data));
+        if (status) this.onOpenSimStatus?.(status);
         return;
       }
+      if (envelope.topic === DEFAULT_OPENSIM_IK_STATUS_TOPIC) {
+        if (typeof envelope.msg.data !== 'string') return;
+        const status = parseOpenSimIkStatus(JSON.parse(envelope.msg.data));
+        if (status) this.onOpenSimIkStatus?.(status);
+        return;
+      }
+      if (envelope.topic === DEFAULT_OPENSIM_JOINT_STATES_TOPIC) {
+        const jointState = parseOpenSimJointState(envelope.msg, performance.now());
+        if (jointState) this.onOpenSimJointState?.(jointState);
+        return;
+      }
+
+      if (typeof envelope.msg.data !== 'string') return;
 
       const isMaster = envelope.topic === this.masterTopic;
       const isSlave  = envelope.topic === this.slaveTopic;
@@ -485,11 +758,20 @@ export class RosbridgeDataSource implements DataSource {
     }
   }
 
-  private rejectPendingServiceCalls(message: string): void {
-    for (const pending of this.pendingServiceCalls.values()) {
+  private isCurrentSession(generation: number, socket: WebSocket): boolean {
+    return generation === this.connectionGeneration && socket === this.socket;
+  }
+
+  private rejectPendingServiceCalls(
+    message: string,
+    generation: number,
+    socket: WebSocket,
+  ): void {
+    for (const [id, pending] of this.pendingServiceCalls.entries()) {
+      if (pending.generation !== generation || pending.socket !== socket) continue;
       window.clearTimeout(pending.timeout);
       pending.resolve({ success: false, message });
+      this.pendingServiceCalls.delete(id);
     }
-    this.pendingServiceCalls.clear();
   }
 }
