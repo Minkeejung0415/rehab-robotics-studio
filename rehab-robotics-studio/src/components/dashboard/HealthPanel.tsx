@@ -1,6 +1,7 @@
 import { reconnectHardware } from '../../data/appDataSource';
 import { useSystemStore } from '../../state/systemStore';
 import type { EspHealthSnapshot } from '../../types/health';
+import { formatCalibrationStatus } from './calibrationStatus';
 
 /**
  * Frame age above this threshold (ms) is treated as a stale / zombie stream.
@@ -48,6 +49,7 @@ export function HealthPanel() {
   const addLog = useSystemStore((state) => state.addLog);
   const recording = health?.master?.recording;
   const state = recording?.state ?? 'idle';
+  const calibration = formatCalibrationStatus(openSim);
 
   // Show the reconnect button when:
   //  1. Recording is in error state, OR
@@ -88,6 +90,10 @@ export function HealthPanel() {
           <strong>{display(openSim?.sensors?.master?.state, 'Waiting')}</strong>
           <span>Slave quaternion</span>
           <strong>{display(openSim?.sensors?.slave?.state, 'Waiting')}</strong>
+          <span>Calibration state</span>
+          <strong>{calibration.state}</strong>
+          <span>Calibration reason</span>
+          <strong>{calibration.reason || '—'}</strong>
           <span>OpenSim IK angles</span>
           <strong>Waiting (requires calibration)</strong>
           <span>Model</span>

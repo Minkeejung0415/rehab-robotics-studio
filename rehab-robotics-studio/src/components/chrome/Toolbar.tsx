@@ -2,6 +2,11 @@ import { useRef, useState } from 'react';
 import { useRuntimeStore } from '../../state/runtimeStore';
 import { useSystemStore } from '../../state/systemStore';
 import { actions } from '../../state/actions';
+import {
+  captureOpenSimCalibration,
+  clearOpenSimCalibration,
+  setHardwareRecording,
+} from '../../data/appDataSource';
 import { Toast } from '../common/Toast';
 import type { RuntimeState } from '../../types/system';
 import { colors } from '../../theme/tokens';
@@ -14,7 +19,8 @@ const STATE_COLOR: Record<RuntimeState, string> = {
   fault: '#ec5a5a',
 };
 
-const DEPLOY_TOAST = 'Deploy (mock) started — graph would be pushed to Jetson';
+const CALIBRATE_INSTRUCTION =
+  'Stand still with knees extended, then hold while capture runs.';
 
 export function Toolbar() {
   const state = useRuntimeStore((s) => s.state);
@@ -29,9 +35,14 @@ export function Toolbar() {
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastKey, setToastKey] = useState(0);
+  const [recordingBusy, setRecordingBusy] = useState(false);
+  const [deployBusy, setDeployBusy] = useState(false);
+  const [calibrateBusy, setCalibrateBusy] = useState(false);
+  const [clearCalBusy, setClearCalBusy] = useState(false);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const blocked = state === 'estopped' || state === 'fault';
+  const calBusy = calibrateBusy || clearCalBusy;
 
   const onLoadFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -42,10 +53,54 @@ export function Toolbar() {
     e.target.value = '';
   };
 
-  const onDeployMock = () => {
-    actions.deployMock();
-    setToastMessage(DEPLOY_TOAST);
+  const onDeploy = async () => {
+    if (deployBusy) return;
+    setDeployBusy(true);
+    const result = await actions.deployProcessingBlocks();
+    setDeployBusy(false);
+    setToastMessage(result.message);
     setToastKey((k) => k + 1);
+  };
+
+  const toggleRecording = async () => {
+    if (recordingBusy) return;
+    const next = !isRecording;
+    setRecordingBusy(true);
+    const result = await setHardwareRecording(next);
+    setRecordingBusy(false);
+    if (result.success) {
+      setRecording(next);
+      useSystemStore.getState().addLog('INFO', result.message);
+      return;
+    }
+    useSystemStore.getState().addLog('ERROR', result.message);
+    setToastMessage(result.message);
+    setToastKey((key) => key + 1);
+  };
+
+  const onCalibrate = async () => {
+    if (calBusy) return;
+    setToastMessage(CALIBRATE_INSTRUCTION);
+    setToastKey((key) => key + 1);
+    useSystemStore.getState().addLog('INFO', CALIBRATE_INSTRUCTION);
+    setCalibrateBusy(true);
+    const result = await captureOpenSimCalibration();
+    setCalibrateBusy(false);
+    useSystemStore.getState().addLog(result.success ? 'INFO' : 'ERROR', result.message);
+    if (!result.success) {
+      setToastMessage(result.message);
+      setToastKey((key) => key + 1);
+    }
+  };
+
+  const onClearCal = async () => {
+    if (calBusy) return;
+    setClearCalBusy(true);
+    const result = await clearOpenSimCalibration();
+    setClearCalBusy(false);
+    useSystemStore.getState().addLog(result.success ? 'INFO' : 'ERROR', result.message);
+    setToastMessage(result.message);
+    setToastKey((key) => key + 1);
   };
 
   return (
@@ -68,9 +123,9 @@ export function Toolbar() {
       </button>
       <button
         className={`btn${isRecording ? ' btn-rec-on' : ''}`}
-        onClick={() => setRecording(!isRecording)}
-        disabled={blocked}
-        title="Toggle recording"
+        onClick={() => void toggleRecording()}
+        disabled={blocked || recordingBusy || (!isRecording && state !== 'running')}
+        title="Start or stop SD recording through the master ESP32"
       >
         {isRecording ? '● Rec' : '○ Rec'}
       </button>
@@ -80,8 +135,24 @@ export function Toolbar() {
       <button className="btn" onClick={() => actions.validateGraph()}>
         Validate Graph
       </button>
-      <button className="btn" onClick={onDeployMock} disabled={blocked}>
-        Deploy Mock
+      <button className="btn" onClick={() => void onDeploy()} disabled={blocked || deployBusy}>
+        {deployBusy ? 'Publishing…' : 'Deploy'}
+      </button>
+      <button
+        className="btn"
+        onClick={() => void onCalibrate()}
+        disabled={blocked || calBusy}
+        title="Capture standing knees-extended mounting offsets"
+      >
+        {calibrateBusy ? 'Capturing…' : 'Calibrate'}
+      </button>
+      <button
+        className="btn"
+        onClick={() => void onClearCal()}
+        disabled={blocked || calBusy}
+        title="Clear OpenSim mounting-offset calibration"
+      >
+        {clearCalBusy ? 'Clearing…' : 'Clear cal'}
       </button>
       <button className="btn" onClick={() => actions.saveProject()}>
         Save
