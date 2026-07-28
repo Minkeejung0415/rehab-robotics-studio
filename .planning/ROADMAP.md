@@ -18,7 +18,7 @@ Milestone v1.5 replaces the incorrect custom relative-quaternion angle with offi
 - [x] **Phase 16: Retire Custom Angle + IK Contracts** - Remove fake IK angle path; define OpenSim IK input/output and pairing contracts.
 - [x] **Phase 17: Reference-Pose Calibration** - Toolbar Calibrate / Clear cal; mounting offsets; hard gate until CALIBRATED.
 - [x] **Phase 18: Real-Time OpenSim IK Outputs** - Official OpenSim orientation IK publishes joint states + status. (completed 2026-07-28)
-- [ ] **Phase 19: Studio Controls + Live Angle Display** - Toolbar visualizer button; GUI displays calibrated OpenSim IK angles only.
+- [x] **Phase 19: Studio Controls + Live Angle Display** - Toolbar visualizer button; GUI displays calibrated OpenSim IK angles only. (completed 2026-07-28)
 
 ## Phase Details
 
@@ -96,7 +96,7 @@ Plans:
 | 16. Retire Custom Angle + IK Contracts | 3/3 | Complete   | 2026-07-28 |
 | 17. Reference-Pose Calibration | 3/3 | Complete   | 2026-07-28 |
 | 18. Real-Time OpenSim IK Outputs | 3/3 | Complete   | 2026-07-28 |
-| 19. Studio Controls + Live Angle Display | 6/7 | In Progress|  |
+| 19. Studio Controls + Live Angle Display | 7/7 | Complete   | 2026-07-28 |
 
 ---
 *Roadmap created: 2026-07-28 for milestone v1.5*
