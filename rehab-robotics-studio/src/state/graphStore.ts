@@ -63,6 +63,8 @@ function edge(
 
 const DEFAULT_NODES: BlockInstance[] = [
   makeNode('B7', 'esp32_imu', 40, 40),
+  // Keep the historical type id so saved default documents remain compatible;
+  // the block now emits only the gated official OpenSim IK frame field.
   makeNode('B8', 'opensim_ik_waiting', 320, 40),
   makeNode('B9', 'joint_angle_display', 600, 40),
 

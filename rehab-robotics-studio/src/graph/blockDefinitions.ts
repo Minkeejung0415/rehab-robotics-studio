@@ -172,7 +172,7 @@ export const BLOCK_DEFS: Record<string, BlockDefinition> = {
   },
   opensim_ik_waiting: {
     type: 'opensim_ik_waiting',
-    name: 'OpenSim IK (Waiting)',
+    name: 'OpenSim IK',
     category: 'Biomechanics',
     runtime: 'rosbridge',
     safeForMotorControl: false,
@@ -180,7 +180,7 @@ export const BLOCK_DEFS: Record<string, BlockDefinition> = {
     outputs: [out('joint_state', 'angles')],
     params: [enumP('joint', 'Joint', ['Knee', 'Hip', 'Ankle'], 'Knee')],
     description:
-      'Placeholder until calibrated OpenSim IK publishes /opensim/joint_states. Emits no product angle.',
+      'Official calibrated OpenSim IK from /opensim/joint_states. Emits only a valid, fresh product angle.',
   },
   opensim_ik_live: {
     type: 'opensim_ik_live',

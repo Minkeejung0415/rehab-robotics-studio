@@ -84,7 +84,14 @@ function evalBlock(
       return { angles: clamp(35 + 25 * driver, 0, 140) };
     }
     case 'opensim_ik_waiting':
-      // Product path waits for calibrated /opensim/joint_states (Phases 18–19).
+      // Historical type id retained for saved graph compatibility. The default
+      // product block accepts only the independently gated official IK field.
+      if (
+        typeof frame.openSimKneeAngleDeg === 'number'
+        && Number.isFinite(frame.openSimKneeAngleDeg)
+      ) {
+        return { angles: frame.openSimKneeAngleDeg };
+      }
       return {};
     case 'opensim_ik_live': {
       if (typeof frame.jointAngleDeg === 'number' && Number.isFinite(frame.jointAngleDeg)) {
