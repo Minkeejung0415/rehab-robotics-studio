@@ -14,6 +14,47 @@ const OUT_OF_ORDER_REASON = 'JointState source stamp is out of order';
 const WAITING_REASON = 'Waiting for calibrated IK';
 const STALE_REASON = 'JointState stale - no fresh angle for 2.0 s';
 
+export interface FormattedLiveKneeAngle {
+  isLive: boolean;
+  valueText: string;
+  statusText: string | null;
+}
+
+/** One fail-closed display contract for every product-angle surface. */
+export function formatLiveKneeAngle(
+  valueDeg: number | null | undefined,
+): FormattedLiveKneeAngle {
+  if (typeof valueDeg === 'number' && Number.isFinite(valueDeg)) {
+    return {
+      isLive: true,
+      valueText: `${valueDeg.toFixed(1)} deg`,
+      statusText: null,
+    };
+  }
+  return {
+    isLive: false,
+    valueText: '—',
+    statusText: WAITING_REASON,
+  };
+}
+
+/**
+ * Keep a chart trace only while both its current official value and every
+ * buffered point are finite. A closed gate therefore clears immediately.
+ */
+export function selectLiveKneeAngleSeries(
+  valueDeg: number | null | undefined,
+  series: number[],
+): number[] {
+  return (
+    typeof valueDeg === 'number'
+    && Number.isFinite(valueDeg)
+    && series.every(Number.isFinite)
+  )
+    ? series
+    : [];
+}
+
 export interface LiveKneeAngleInput {
   openSimStatus: OpenSimStatusSnapshot | null | undefined;
   ikStatus: OpenSimIkStatusSnapshot | null | undefined;

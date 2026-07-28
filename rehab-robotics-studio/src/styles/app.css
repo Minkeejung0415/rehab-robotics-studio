@@ -40,6 +40,24 @@ select {
   padding: 6px 10px;
 }
 
+.toolbar {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.toolbar > * {
+  flex-shrink: 0;
+}
+
+.toolbar .toolbar-spacer {
+  flex-shrink: 1;
+}
+
+.toolbar .btn[title="Open or show the native OpenSim 3D visualizer"] {
+  min-width: 112px;
+}
+
 .toolbar-brand {
   display: flex;
   align-items: center;
@@ -518,6 +536,50 @@ select {
   padding-bottom: 6px;
 }
 
+.node-imu-controls {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 5px;
+  margin: 0 8px 8px;
+  color: #8b969c;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 10px;
+}
+
+.node-imu-controls label {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.node-imu-controls input,
+.node-imu-controls select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #3b484e;
+  border-radius: 0;
+  background: #111416;
+  color: #dfe6ea;
+  font: inherit;
+  padding: 3px 4px;
+}
+
+.node-imu-controls select {
+  grid-column: 2 / span 2;
+}
+
+.node-imu-controls b {
+  color: #aab4ba;
+  font-weight: 400;
+}
+
+.node-imu-pending {
+  grid-column: 1 / -1;
+  color: #e0a64a;
+  font-style: normal;
+}
+
 .node-readout {
   margin: 5px 8px 8px;
   border: 1px solid #30383d;
@@ -527,6 +589,37 @@ select {
   text-align: right;
   font-family: ui-monospace, 'Cascadia Code', monospace;
   font-size: 22px;
+}
+
+.knee-angle-readout {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+}
+
+.knee-angle-value {
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1.2;
+}
+
+.knee-angle-readout.is-live .knee-angle-value {
+  color: #7e6fe0;
+}
+
+.knee-angle-readout.is-unavailable .knee-angle-value {
+  color: #8b969c;
+}
+
+.knee-angle-status {
+  min-width: 0;
+  color: #8b969c;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .node-metrics {
@@ -661,6 +754,44 @@ select {
   padding: 10px;
   background: #16191b;
 }
+
+.health-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.health-node {
+  display: grid;
+  gap: 4px;
+  border-left: 2px solid #3b484e;
+  padding-left: 8px;
+  color: #8b969c;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 10px;
+}
+
+.health-node strong { color: #dfe6ea; }
+.health-state.ok { color: #46c47a; }
+.health-state.warn { color: #e0a64a; }
+.health-stale { color: #ec5a5a; font-weight: 600; }
+
+.recording-health {
+  border-top: 1px solid #23292d;
+  padding-top: 9px;
+}
+
+.recording-health .dash-head { margin-bottom: 6px; }
+.recording-recording { color: #ec5a5a; }
+.recording-finalizing { color: #e0a64a; }
+.recording-finalized { color: #46c47a; }
+.recording-error, .health-error { color: #ec5a5a !important; }
+.health-note { margin: 8px 0 0; color: #8b969c; font-size: 11px; }
 
 .dash-head {
   display: flex;

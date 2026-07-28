@@ -13,8 +13,10 @@ import {
   LiveKneeAngleTracker,
   compareRosStamps,
   deriveLiveKneeAngle,
+  formatLiveKneeAngle,
   isValidRosStamp,
   normalizeLiveKneeReason,
+  selectLiveKneeAngleSeries,
 } from './liveKneeAngle.js';
 
 const CALIBRATION_ID = 'cal-19';
@@ -76,6 +78,37 @@ function assertUnavailable(
 }
 
 describe('live OpenSim knee angle contract', () => {
+  it('formats one-decimal live values while keeping valid zero distinct from unavailable', () => {
+    assert.deepEqual(formatLiveKneeAngle(12.34), {
+      isLive: true,
+      valueText: '12.3 deg',
+      statusText: null,
+    });
+    assert.deepEqual(formatLiveKneeAngle(0), {
+      isLive: true,
+      valueText: '0.0 deg',
+      statusText: null,
+    });
+
+    for (const unavailable of [null, undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assert.deepEqual(formatLiveKneeAngle(unavailable), {
+        isLive: false,
+        valueText: '—',
+        statusText: 'Waiting for calibrated IK',
+      });
+    }
+  });
+
+  it('clears closed or invalid chart history and returns only a new finite live trace', () => {
+    const oldTrace = [10, 20];
+    assert.deepEqual(selectLiveKneeAngleSeries(null, oldTrace), []);
+    assert.deepEqual(selectLiveKneeAngleSeries(Number.NaN, oldTrace), []);
+    assert.deepEqual(selectLiveKneeAngleSeries(30, [10, Number.NaN]), []);
+
+    const recoveredTrace = [30];
+    assert.equal(selectLiveKneeAngleSeries(30, recoveredTrace), recoveredTrace);
+  });
+
   it('defines the locked 2,000 ms freshness window', () => {
     assert.equal(IK_ANGLE_STALE_MS, 2_000);
   });

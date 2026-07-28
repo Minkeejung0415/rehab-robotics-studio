@@ -11,6 +11,7 @@ import { useGraphStore } from '../../state/graphStore';
 import { useRuntimeStore } from '../../state/runtimeStore';
 import { useSystemStore } from '../../state/systemStore';
 import { setHardwareImuControl } from '../../data/appDataSource';
+import { formatLiveKneeAngle } from '../../data/liveKneeAngle';
 import type { ImuControlParameter } from '../../data/RosbridgeDataSource';
 
 interface Props {
@@ -33,7 +34,18 @@ function NodeBody({ kind }: { kind?: string }) {
     return <MiniChart data={signals.emgSeries} color={signalColor.emg_signal} height={50} />;
   }
   if (kind === 'angle') {
-    return <div className="node-readout">{signals.kneeAngle.toFixed(1)} deg</div>;
+    const kneeDisplay = formatLiveKneeAngle(signals.kneeAngle);
+    return (
+      <div
+        className={`node-readout knee-angle-readout ${kneeDisplay.isLive ? 'is-live' : 'is-unavailable'}`}
+        data-state={kneeDisplay.isLive ? 'live' : 'unavailable'}
+      >
+        <span className="knee-angle-value">{kneeDisplay.valueText}</span>
+        {kneeDisplay.statusText && (
+          <span className="knee-angle-status">{kneeDisplay.statusText}</span>
+        )}
+      </div>
+    );
   }
   if (kind === 'motor') {
     return (
@@ -118,7 +130,7 @@ export function BlockNode({ node, zoom, selected, onSelect, onMove, onWireStart,
   const outputCount = def?.outputs.length ?? 0;
   const portRows = Math.max(inputCount, outputCount, 1);
   const hasImuControls = node.type === 'esp32_imu';
-  const bodyRows = def?.bodyKind ? 78 : hasImuControls ? 180 : 30;
+  const bodyRows = def?.bodyKind === 'angle' ? 94 : def?.bodyKind ? 78 : hasImuControls ? 180 : 30;
   const height = NODE_HEADER_HEIGHT + 22 + portRows * PORT_ROW_HEIGHT + bodyRows;
   const accent = def ? categoryColor[def.category] : '#8b969c';
 
