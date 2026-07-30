@@ -53,7 +53,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 20-05-PLAN.md — Evidence-backed board activation and operator runbook
+- [x] 20-05-PLAN.md — Evidence-backed board activation and operator runbook
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -136,7 +136,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 20. Full Identity and Confirmed Identify | 4/6 | In Progress | - |
+| 20. Full Identity and Confirmed Identify | 5/6 | In Progress | - |
 | 21. N-Route Relay and Canonical ROS Fleet | 0/TBD | Not started | - |
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 0/TBD | Not started | - |
 | 23. N-Sensor Calibration and Official OpenSim IK | 0/TBD | Not started | - |

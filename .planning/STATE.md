@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Multi-Sensor Bone Mapping
 status: executing
-stopped_at: Completed 20-03-PLAN.md; 20-04 already complete
-last_updated: "2026-07-30T21:11:02.449Z"
+stopped_at: Completed 20-05-PLAN.md
+last_updated: "2026-07-30T21:23:46.916Z"
 last_activity: 2026-07-30
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 6
-  completed_plans: 4
-  percent: 67
+  completed_plans: 5
+  percent: 83
 ---
 
 # Project State
@@ -26,17 +26,17 @@ See: `.planning/PROJECT.md` (updated 2026-07-30)
 ## Current Position
 
 Phase: 20 (Full Identity and Confirmed Identify) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-07-30
 
-Progress: [███████░░░] 67%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
 **Current milestone:**
 
-- Plans completed: 4
+  - Plans completed: 5
 - Phases completed: 0/6
 
 | Plan | Duration | Tasks | Files |
@@ -44,6 +44,7 @@ Progress: [███████░░░] 67%
 | Phase 20 P01 | 21 min | 2 tasks | 3 files |
 | Phase 20 P02 | 15 min | 2 tasks | 3 files |
 | Phase 20 P03 | 35 min | 2 tasks | 4 files |
+| Phase 20 P05 | 8 min | 2 tasks | 4 files |
 
 **Prior milestone reference:**
 
@@ -68,6 +69,9 @@ Decisions are logged in `PROJECT.md`. Current milestone decisions:
 - [Phase 20]: Only a complete verified record=self row binds the bridge; peer rows remain bounded inventory and cannot satisfy expected_device_id. — Prevents peer inventory from masquerading as the serial device identity.
 - [Phase 20]: Existing Master/Slave publishers remain the only Phase 20 data publishers; device_topic_token is a pure Phase 21 foundation helper. — Preserves fixed role-topic compatibility until canonical fleet routing is introduced.
 - [Phase 20]: sent_unconfirmed remains observable and non-success; only a correlated confirmed reply updates last-confirmed state. — Prevents transport acceptance from being reported as physical Identify confirmation.
+- [Phase 20]: Cross-layer identity regression shares one named adversarial matrix across firmware, relay, and bridge.
+- [Phase 20]: Phase 20 permits only the pure mac_<12hex> token helper; per-MAC publisher lifecycle remains Phase 21.
+- [Phase 20]: Physical Identify evidence remains pending HUMAN-UAT, while Phase 25 owns capacity and promotion.
 
 ### Pending Todos
 
@@ -92,6 +96,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-07-30T21:11:02.440Z
-Stopped at: Completed 20-03-PLAN.md; 20-04 already complete
+Last session: 2026-07-30T21:23:46.905Z
+Stopped at: Completed 20-05-PLAN.md
 Resume file: None
