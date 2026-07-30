@@ -11,6 +11,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parents[2]
 RELAY_PATH = REPO_ROOT / 'scripts' / 'stepesp_tcp_udp_relay.py'
+LAUNCHER_PATH = REPO_ROOT / 'scripts' / 'start_stepesp_wireless.ps1'
 SPEC = importlib.util.spec_from_file_location('stepesp_tcp_udp_relay', RELAY_PATH)
 assert SPEC is not None and SPEC.loader is not None
 relay_module = importlib.util.module_from_spec(SPEC)
@@ -250,6 +251,80 @@ class IdentityContractTests(unittest.TestCase):
         self.assertIsNone(legacy.device_id)
         self.assertFalse(legacy.verified)
         self.assertEqual(legacy.verification_state, 'unsupported')
+
+
+class LauncherIdentityContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.launcher = LAUNCHER_PATH.read_text(encoding='utf-8')
+
+    def test_expected_master_and_slave_ids_are_strict_canonical_parameters(self):
+        self.assertIn('[string]$ExpectedMasterDeviceId', self.launcher)
+        self.assertIn('[string]$ExpectedSlaveDeviceId', self.launcher)
+        self.assertRegex(
+            self.launcher,
+            r"\^esp32:\[0-9a-fA-F\]\{12\}\$",
+        )
+        self.assertIn('ConvertTo-StepEspCanonicalId', self.launcher)
+
+    def test_every_candidate_is_probed_with_complete_id_v1_inventory(self):
+        for contract in (
+            'Get-StepEspIdentity',
+            "IDENTITY?`n",
+            'IDENTITY_OK',
+            'record=self',
+            'IDENTITY_PEER',
+            'record=peer',
+            'IDENTITY_END',
+            'protocol=id-v1',
+            'peer_count',
+            'verified=1',
+            'foreach ($candidateHost in $candidateSlaveHosts)',
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, self.launcher)
+
+    def test_ping_order_cannot_select_the_slave(self):
+        self.assertNotIn('$responsiveStations[0]', self.launcher)
+        self.assertIn(
+            '$verifiedSlaveCandidates = @($slaveIdentityProbes',
+            self.launcher,
+        )
+        self.assertIn(
+            '$_.DeviceId -eq $expectedSlaveCanonical',
+            self.launcher,
+        )
+        self.assertIn(
+            'Discovered verified self identities:',
+            self.launcher,
+        )
+
+    def test_role_alias_endpoint_and_verified_identity_are_separate_launch_values(self):
+        for contract in (
+            '--esp-host $MasterHost',
+            '--expected-device-id $verifiedMasterDeviceId',
+            '--slave-host $resolvedSlaveHost',
+            '--slave-expected-device-id $verifiedSlaveDeviceId',
+            'node_id:=master',
+            'node_id:=slave',
+            'expected_device_id:=$verifiedMasterDeviceId',
+            'expected_device_id:=$verifiedSlaveDeviceId',
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, self.launcher)
+
+    def test_existing_two_route_and_operator_stack_contracts_remain(self):
+        for preserved in (
+            '[int]$UdpPort = 55001',
+            '[int]$RelayPort = 5002',
+            '[int]$SlaveRelayPort = 5003',
+            'rosbridge_websocket',
+            'processing_block_observer',
+            'opensim_bridge',
+            'npm.cmd run build',
+        ):
+            with self.subTest(preserved=preserved):
+                self.assertIn(preserved, self.launcher)
 
 
 class StepEspUdpRelayTests(unittest.IsolatedAsyncioTestCase):
