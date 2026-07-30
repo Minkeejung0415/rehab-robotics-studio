@@ -77,37 +77,37 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ID-01 | TBD | Pending |
-| ID-02 | TBD | Pending |
-| ID-03 | TBD | Pending |
-| FLEET-01 | TBD | Pending |
-| FLEET-02 | TBD | Pending |
-| FLEET-03 | TBD | Pending |
-| MODEL-01 | TBD | Pending |
-| MODEL-02 | TBD | Pending |
-| MODEL-03 | TBD | Pending |
-| MAP-01 | TBD | Pending |
-| MAP-02 | TBD | Pending |
-| MAP-03 | TBD | Pending |
-| MAP-04 | TBD | Pending |
-| MAP-05 | TBD | Pending |
-| MAP-06 | TBD | Pending |
-| IK-01 | TBD | Pending |
-| IK-02 | TBD | Pending |
-| IK-03 | TBD | Pending |
-| IK-04 | TBD | Pending |
-| UI-01 | TBD | Pending |
-| UI-02 | TBD | Pending |
-| UI-03 | TBD | Pending |
-| UI-04 | TBD | Pending |
-| COMP-01 | TBD | Pending |
-| COMP-02 | TBD | Pending |
-| COMP-03 | TBD | Pending |
+| ID-01 | Phase 20 | Pending |
+| ID-02 | Phase 20 | Pending |
+| ID-03 | Phase 20 | Pending |
+| FLEET-01 | Phase 21 | Pending |
+| FLEET-02 | Phase 21 | Pending |
+| FLEET-03 | Phase 21 | Pending |
+| MODEL-01 | Phase 22 | Pending |
+| MODEL-02 | Phase 22 | Pending |
+| MODEL-03 | Phase 22 | Pending |
+| MAP-01 | Phase 22 | Pending |
+| MAP-02 | Phase 22 | Pending |
+| MAP-03 | Phase 22 | Pending |
+| MAP-04 | Phase 22 | Pending |
+| MAP-05 | Phase 22 | Pending |
+| MAP-06 | Phase 22 | Pending |
+| IK-01 | Phase 23 | Pending |
+| IK-02 | Phase 23 | Pending |
+| IK-03 | Phase 23 | Pending |
+| IK-04 | Phase 23 | Pending |
+| UI-01 | Phase 24 | Pending |
+| UI-02 | Phase 24 | Pending |
+| UI-03 | Phase 24 | Pending |
+| UI-04 | Phase 24 | Pending |
+| COMP-01 | Phase 25 | Pending |
+| COMP-02 | Phase 25 | Pending |
+| COMP-03 | Phase 25 | Pending |
 
 **Coverage:**
 - v1.6 requirements: 26 total
-- Mapped to phases: 0
-- Unmapped: 26
+- Mapped to phases: 26
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-30*

@@ -2,101 +2,112 @@
 
 ## Overview
 
-Milestone v1.5 replaces the incorrect custom relative-quaternion angle with official OpenSim orientation IK, adds operator calibration/mounting-offset capture from the Studio toolbar, and adds a toolbar control for the OpenSim 3D visualizer. Phase 15 (quaternion live link) remains the prerequisite acquisition/visualizer substrate.
+Milestone v1.6 generalizes the existing fixed Master/Slave acquisition and OpenSim path into an identity-safe multi-sensor workflow. Work proceeds from verified hardware identity through isolated fleet routing, authoritative model and mapping revisions, dynamic N-sensor calibration and IK, the operator mapping workspace, and finally hardware-backed compatibility evidence before dynamic mode can become the default.
 
 ## Milestones
 
 - **v1.1 Acquisition Operations** - Phases 5-8 completed and archived.
 - **v1.2 Block Deployment** - Parked without phases.
-- **v1.3 Acquisition Integrity** - Unfinished prior scope preserved in repository history and existing Phase 9 artifacts.
-- **v1.4 OpenSim Quaternion Live Link** - Phase 15 implemented (human visualizer/hardware smoke still noted).
-- **v1.5 OpenSim IK + Calibration + Visualizer Control** - Phases 16-19.
+- **v1.3 Acquisition Integrity** - Unfinished prior scope remains preserved in existing artifacts.
+- **v1.4 OpenSim Quaternion Live Link** - Phase 15 implemented.
+- **v1.5 OpenSim IK + Calibration + Visualizer Control** - Phases 16-19 completed.
+- **v1.6 Multi-Sensor Bone Mapping** - Phases 20-25 planned.
 
 ## Phases
 
-- [x] **Phase 15: OpenSim Quaternion Live Link** - Live ESP quaternions map into OpenSim frames/status (prerequisite).
-- [x] **Phase 16: Retire Custom Angle + IK Contracts** - Remove fake IK angle path; define OpenSim IK input/output and pairing contracts.
-- [x] **Phase 17: Reference-Pose Calibration** - Toolbar Calibrate / Clear cal; mounting offsets; hard gate until CALIBRATED.
-- [x] **Phase 18: Real-Time OpenSim IK Outputs** - Official OpenSim orientation IK publishes joint states + status. (completed 2026-07-28)
-- [x] **Phase 19: Studio Controls + Live Angle Display** - Toolbar visualizer button; GUI displays calibrated OpenSim IK angles only. (completed 2026-07-28)
+- [ ] **Phase 20: Full Identity and Confirmed Identify** - Every Master and Slave has a verified stable identity and a safely acknowledged physical Identify action.
+- [ ] **Phase 21: N-Route Relay and Canonical ROS Fleet** - All devices remain independently discoverable, routed, observable, and compatible with explicit legacy aliases.
+- [ ] **Phase 22: Model Catalog, Mapping Store, and Transactional Contracts** - Model-derived assignments are validated, revisioned, persisted, and applied atomically.
+- [ ] **Phase 23: N-Sensor Calibration and Official OpenSim IK** - Applied mappings drive provenance-bound calibration and valid synchronized N-sensor OpenSim solves.
+- [ ] **Phase 24: Rosbridge and Studio Mapping Workspace** - Operators manage the authoritative fleet mapping through stable, actionable device rows.
+- [ ] **Phase 25: Multi-Device Compatibility and Promotion Gate** - Deterministic and physical acceptance evidence preserves existing workflows and determines default-mode readiness.
 
 ## Phase Details
 
-### Phase 16: Retire Custom Angle + IK Contracts
+### Phase 20: Full Identity and Confirmed Identify
 
-**Goal**: Stop treating custom relative-quat math as IK, and lock the ROS contracts the solver and GUI will use.
-**Depends on**: Phase 15
-**Requirements**: IK-00
-**Plans:** 3/3 plans complete
+**Goal**: Operators can reliably distinguish and physically identify every Master and Slave without disrupting live work.
+**Depends on**: Phase 19
+**Requirements**: ID-01, ID-02, ID-03
+**Success Criteria** (what must be TRUE):
+  1. Operator can see a verified, normalized full 48-bit identity for the Master and every discovered Slave, with role, IP address, and transport MAC shown as separate metadata.
+  2. A physical device retains the same canonical identity and data-topic identity across DHCP changes, reconnects, and discovery-order changes.
+  3. Operator can target exactly one device with a bounded, non-blocking LED Identify action and see whether it was confirmed, timed out, offline, unsupported, or rejected without interrupting acquisition or recording.
+**Plans**: TBD
 
-Plans:
-- [x] 16-01-PLAN.md — Demote backend custom `/opensim/joint_angle` product path (default OFF)
-- [x] 16-02-PLAN.md — Retire GUI default `opensim_ik_live`/HealthPanel custom-angle presentation
-- [x] 16-03-PLAN.md — Lock `/opensim/joint_states` + calibration-gate contracts (docs + constants)
+### Phase 21: N-Route Relay and Canonical ROS Fleet
 
-**Success Criteria**:
-1. `/opensim/joint_angle` custom publisher and GUI `opensim_ik_live` dependency on it are removed or clearly demoted as non-IK debug only (default graph no longer uses them as product IK).
-2. Documented contracts exist for paired IMU inputs, calibration gate, `/opensim/joint_states` (or agreed name), and IK/calibration status topics/services.
-3. Deterministic tests fail closed when attempting to present uncalibrated custom angle as the product knee readout.
+**Goal**: Operators can observe and use every known IMU through failure-isolated, identity-keyed ROS routes.
+**Depends on**: Phase 20
+**Requirements**: FLEET-01, FLEET-02, FLEET-03
+**Success Criteria** (what must be TRUE):
+  1. Operator can see the Master and every current or previously known Slave in one MAC-keyed fleet registry with distinct discovery, command, route, orientation freshness, synchronization, and rate states.
+  2. Each device publishes canonical per-MAC IMU and health data on the same topics after DHCP, reconnect, or ordering changes, while fixed Master/Slave aliases remain explicitly bound to identities and carry matching data.
+  3. A failed, stale, or reconnecting route does not stop acquisition, health, Identify, or recording for other devices, and its bounded queue, drop, and reconnect diagnostics remain visible.
+**Plans**: TBD
 
-### Phase 17: Reference-Pose Calibration
+### Phase 22: Model Catalog, Mapping Store, and Transactional Contracts
 
-**Goal**: Operator can capture mounting offsets from a fixed standing / knees-extended pose via top-level Studio controls; IK remains gated until CALIBRATED.
-**Depends on**: Phase 16
+**Goal**: Operators can create, save, restore, and atomically apply a valid mapping against the exact loaded OpenSim model.
+**Depends on**: Phase 21
+**Requirements**: MODEL-01, MODEL-02, MODEL-03, MAP-01, MAP-02, MAP-03, MAP-04, MAP-05, MAP-06
+**Success Criteria** (what must be TRUE):
+  1. The loaded `.osim` model is identified by the SHA-256 hash of its exact bytes, and assignment choices contain only exact non-Ground model segments and compatible sensor Frames reported by that model.
+  2. Missing, ambiguous, or unsupported Frames fail closed with an actionable reason and never trigger a fuzzy selection or source-model modification.
+  3. Operator can mark every known device Assigned, Not used, or Unassigned, while duplicate, unknown, incomplete, and solver-insufficient candidates are rejected authoritatively.
+  4. Desired mappings survive restart and corruption recovery under a versioned, revisioned, atomic backend store; the same MAC reattaches under an unchanged model/revision while a different MAC remains Unassigned.
+  5. Apply validates and stages the complete candidate against the expected revision, atomically swaps only on success, preserves the previous applied revision on failure, and remains blocked during calibration capture, recording, or finalization without altering that active operation.
+**Plans**: TBD
+
+### Phase 23: N-Sensor Calibration and Official OpenSim IK
+
+**Goal**: Operators receive official OpenSim results only from a complete, current, provenance-matched mapped sensor set.
+**Depends on**: Phase 22
 **Requirements**: IK-01, IK-02, IK-03, IK-04
-**Plans:** 3/3 plans complete
-**Status:** Complete
+**Success Criteria** (what must be TRUE):
+  1. Applying or replacing a mapping creates one deterministic ordered N-sensor input set and tears down obsolete MAC-keyed subscriptions, callbacks, and queues without resource growth across repeated remaps.
+  2. Calibration artifacts identify the exact model hash, applied mapping revision, device-to-Frame assignments, and solver profile, and become invalid after any semantic change.
+  3. Joint states publish only when every required input is valid, fresh, post-reconnect, and within the synchronization-skew bound; degraded inputs suppress new IK output while acquisition and recording continue.
+  4. Official OpenSim orientation IK consumes mapped inputs in deterministic order and exposes mapping revision, calibration identity, input validity, solver status, and visualizer provenance.
+**Plans**: TBD
 
-Plans:
-- [x] 17-01-PLAN.md — Pure-Python CalibrationController + stable-window mounting offsets (TDD)
-- [x] 17-02-PLAN.md — opensim_bridge capture/clear services, status publish, joint_states gate
-- [x] 17-03-PLAN.md — Toolbar Calibrate/Clear cal + HealthPanel status via rosbridge
+### Phase 24: Rosbridge and Studio Mapping Workspace
 
-**Success Criteria**:
-1. Toolbar **Calibrate** starts a bounded stable-window capture in the fixed known pose and transitions status through CAPTURING → CALIBRATED or FAILED with reason.
-2. Toolbar/control **Clear cal** returns to UNCALIBRATED and invalidates active offsets.
-3. No joint-angle publication occurs while UNCALIBRATED (Phase 17 leaves IK solution absent — gate seam ready for Phase 18).
-4. Front Panel shows calibration state and last error/reason.
+**Goal**: Operators can identify, assign, validate, save, and apply the multi-sensor mapping from a dedicated Studio workspace without browser state masquerading as runtime truth.
+**Depends on**: Phase 23
+**Requirements**: UI-01, UI-02, UI-03, UI-04
+**Success Criteria** (what must be TRUE):
+  1. Operator can open a dedicated mapping panel with stable rows for the Master, all known Slaves, and saved devices that are currently offline.
+  2. Each row shows full MAC, role and capabilities, layered readiness, rate and errors, a model-derived segment selector, an explicit Not used option, and a targeted Identify control.
+  3. Operator can distinguish Draft, Saved, Applied, and Runtime Ready states and receives immediate conflict feedback plus authoritative validation, interlock, and stale-revision errors.
+  4. Reload, reconnect, arbitrary status ordering, and temporary dropout preserve row identity and restore backend state without treating local browser state as applied truth.
+**Plans**: TBD
+**UI hint**: yes
 
-### Phase 18: Real-Time OpenSim IK Outputs
+### Phase 25: Multi-Device Compatibility and Promotion Gate
 
-**Goal**: After calibration, OpenSim orientation IK solves and publishes joint coordinates the GUI can trust as OpenSim results.
-**Depends on**: Phase 17
-**Requirements**: IK-05, IK-06, IK-07
-**Plans**: 3 plans
-
-Plans:
-- [x] 18-01-PLAN.md — OrientationIkSolver seam + Fake/Unavailable + mounting offsets (TDD)
-- [x] 18-02-PLAN.md — OpenSim 4.5.2 Python orientation IK adapter + capability probe
-- [x] 18-03-PLAN.md — opensim_bridge JointState + ik_status/diagnostics wiring
-
-**Success Criteria**:
-1. Calibrated master/slave orientations produce OpenSim-solved joint coordinates (not custom relative-quat degrees).
-2. Coordinates publish on the agreed joint-state topic with source-aligned timestamps.
-3. Status/diagnostics expose solution validity, residuals/age, and calibration identity.
-4. Hardware-free deterministic fixtures prove a known pose → expected coordinate direction.
-
-### Phase 19: Studio Controls + Live Angle Display
-
-**Goal**: Operator runs the experiment from Studio chrome: open visualizer, calibrate, and see live OpenSim IK angles.
-**Depends on**: Phase 18
-**Requirements**: VIS-01, VIS-02, (consumes IK-06 display path)
-**Success Criteria**:
-1. Toolbar button starts/shows the OpenSim 3D visualizer when runtime allows; failure reason remains visible otherwise.
-2. Default angle display subscribes to OpenSim IK joint states and updates only when CALIBRATED + valid solution.
-3. End-to-end operator checklist for the wireless stack is documented and runnable.
+**Goal**: Operators can rely on both dynamic and legacy workflows within a measured hardware envelope before dynamic mode is promoted.
+**Depends on**: Phase 24
+**Requirements**: COMP-01, COMP-02, COMP-03
+**Success Criteria** (what must be TRUE):
+  1. Existing two-sensor startup, pair health, frequency/range controls, recording, calibration, joint-state, graph, and visualizer workflows remain functional through explicit aliases and rollback mode.
+  2. Deterministic acceptance tests reproduce and pass full-MAC collision, arbitrary ordering, DHCP/reconnect, Identify failure, partial-Apply rollback, corrupt persistence, stale/skewed input, interlock, and repeated-cleanup cases.
+  3. Hardware acceptance states the supported fleet size and rates from Master-plus-multiple-Slave evidence covering Identify safety, acquisition and recording continuity, reconnect, radio/relay load, and OpenSim solve latency.
+  4. Dynamic mode becomes the default only when the documented acceptance gate passes; otherwise the tested legacy mode remains available with the unmet evidence visible.
+**Plans**: TBD
 
 ## Progress
 
-**Execution Order:** 16 → 17 → 18 → 19
+**Execution Order:** Phase 20 -> Phase 21 -> Phase 22 -> Phase 23 -> Phase 24 -> Phase 25
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 15. OpenSim Quaternion Live Link | 3/3 | human_needed (prerequisite) | 2026-07-27 |
-| 16. Retire Custom Angle + IK Contracts | 3/3 | Complete   | 2026-07-28 |
-| 17. Reference-Pose Calibration | 3/3 | Complete   | 2026-07-28 |
-| 18. Real-Time OpenSim IK Outputs | 3/3 | Complete   | 2026-07-28 |
-| 19. Studio Controls + Live Angle Display | 7/7 | Complete   | 2026-07-28 |
+| 20. Full Identity and Confirmed Identify | 0/TBD | Not started | - |
+| 21. N-Route Relay and Canonical ROS Fleet | 0/TBD | Not started | - |
+| 22. Model Catalog, Mapping Store, and Transactional Contracts | 0/TBD | Not started | - |
+| 23. N-Sensor Calibration and Official OpenSim IK | 0/TBD | Not started | - |
+| 24. Rosbridge and Studio Mapping Workspace | 0/TBD | Not started | - |
+| 25. Multi-Device Compatibility and Promotion Gate | 0/TBD | Not started | - |
 
 ---
-*Roadmap created: 2026-07-28 for milestone v1.5*
+*Roadmap created: 2026-07-30 for milestone v1.6*
