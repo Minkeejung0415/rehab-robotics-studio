@@ -8,9 +8,9 @@
 
 ### Device Identity and Identify
 
-- [ ] **ID-01**: Operator can see a verified, normalized full 48-bit hardware identity for the Master and every discovered Slave.
+- [x] **ID-01**: Operator can see a verified, normalized full 48-bit hardware identity for the Master and every discovered Slave.
 - [ ] **ID-02**: A device keeps the same canonical identity and data topic across DHCP changes, reconnects, and discovery-order changes; role, IP, and transport MAC remain separate metadata.
-- [ ] **ID-03**: Operator can target one device with a bounded, non-blocking LED Identify action whose result is application-acknowledged and distinguishes confirmed, timeout, offline, unsupported, and rejected outcomes.
+- [x] **ID-03**: Operator can target one device with a bounded, non-blocking LED Identify action whose result is application-acknowledged and distinguishes confirmed, timeout, offline, unsupported, and rejected outcomes.
 
 ### Fleet Discovery and Routing
 
@@ -77,9 +77,9 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ID-01 | Phase 20 | Pending |
+| ID-01 | Phase 20 | Complete |
 | ID-02 | Phase 21 | Pending |
-| ID-03 | Phase 20 | Pending |
+| ID-03 | Phase 20 | Complete |
 | FLEET-01 | Phase 21 | Pending |
 | FLEET-02 | Phase 21 | Pending |
 | FLEET-03 | Phase 21 | Pending |

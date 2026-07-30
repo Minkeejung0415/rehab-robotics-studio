@@ -40,7 +40,7 @@ Milestone v1.6 generalizes the existing fixed Master/Slave acquisition and OpenS
 Plans:
 **Wave 1**
 
-- [ ] 20-01-PLAN.md — Firmware full identity and confirmed non-blocking Identify
+- [x] 20-01-PLAN.md — Firmware full identity and confirmed non-blocking Identify
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -136,7 +136,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 20. Full Identity and Confirmed Identify | 0/6 | Not started | - |
+| 20. Full Identity and Confirmed Identify | 1/6 | In Progress | - |
 | 21. N-Route Relay and Canonical ROS Fleet | 0/TBD | Not started | - |
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 0/TBD | Not started | - |
 | 23. N-Sensor Calibration and Official OpenSim IK | 0/TBD | Not started | - |

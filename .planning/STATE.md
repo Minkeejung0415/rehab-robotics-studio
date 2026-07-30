@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Multi-Sensor Bone Mapping
 status: executing
-stopped_at: Roadmap created; Phase 20 is ready for planning
-last_updated: "2026-07-30T19:35:04.060Z"
-last_activity: 2026-07-30 -- Phase 20 planning complete
+stopped_at: Completed 20-01-PLAN.md
+last_updated: "2026-07-30T20:02:50.215Z"
+last_activity: 2026-07-30
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 6
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 17
 ---
 
 # Project State
@@ -21,23 +21,27 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-07-30)
 
 **Core value:** Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline into usable filtered, biomechanical, and recorded outputs.
-**Current focus:** Phase 20 - Full Identity and Confirmed Identify
+**Current focus:** Phase 20 — Full Identity and Confirmed Identify
 
 ## Current Position
 
-Phase: 20 of 25 (Full Identity and Confirmed Identify)
-Plan: Not planned
+Phase: 20 (Full Identity and Confirmed Identify) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-07-30 -- Phase 20 planning complete
+Last activity: 2026-07-30
 
-Progress: [----------] 0%
+Progress: [██░░░░░░░░] 17%
 
 ## Performance Metrics
 
 **Current milestone:**
 
-- Plans completed: 0
+- Plans completed: 1
 - Phases completed: 0/6
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 20 P01 | 21 min | 2 tasks | 3 files |
 
 **Prior milestone reference:**
 
@@ -55,6 +59,8 @@ Decisions are logged in `PROJECT.md`. Current milestone decisions:
 - Mapping Apply is whole-candidate, optimistic-revision, atomic, and interlocked with capture/recording/finalization.
 - Official OpenSim IK consumes only a complete, fresh, synchronized mapped input set.
 - Legacy two-sensor aliases and rollback mode remain until hardware acceptance supports promotion.
+- [Phase 20]: Identity uses the full six-byte eFuse/base MAC while interface MACs, route, role, slot, and deprecated slave_id remain metadata. — Prevents low-32 collisions and mutable route metadata from becoming identity.
+- [Phase 20]: Identify confirmation is emitted only after target loop code starts the bounded LED action; ESP-NOW send completion is never confirmation. — Preserves application-level correlation and avoids false success.
 
 ### Pending Todos
 
@@ -79,6 +85,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-07-30
-Stopped at: Roadmap created; Phase 20 is ready for planning
+Last session: 2026-07-30T20:02:50.206Z
+Stopped at: Completed 20-01-PLAN.md
 Resume file: None
