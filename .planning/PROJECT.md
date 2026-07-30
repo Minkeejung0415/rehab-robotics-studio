@@ -15,14 +15,17 @@ Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline 
 <!-- Shipped and confirmed valuable. -->
 
 - Existing ROS 2 package scaffold and TCP ESP32 bridge are present, but the end-to-end hardware pipeline is not yet validated.
+- Paired Master/Slave ESP32 health and native IMU topics are visible through ROS 2 and Studio.
+- OpenSim calibration, orientation IK status, joint-state output, and native visualizer controls exist for the current two-sensor path.
 
 ### Active
 
-- [ ] Start an `opensim_bridge` that subscribes to the existing master and slave ESP quaternion topics.
-- [ ] Convert incoming ROS quaternions into the ordering and rotation representation expected by OpenSim.
-- [ ] Map the two ESP sensors to configurable OpenSim model frames and update their live orientations.
-- [ ] Provide a simple launch path and observable connection/error status for the live link.
-- [ ] Verify the subscription and quaternion forwarding path locally with deterministic test messages.
+- [ ] Discover every Master/Slave IMU currently visible through the ESP-NOW acquisition path and expose a stable hardware identity for each device.
+- [ ] Add a Studio sensor-mapping panel that assigns each connected IMU to a selectable segment from the loaded `.osim` model.
+- [ ] Identify a selected physical ESP by MAC/status and a temporary LED blink command.
+- [ ] Persist MAC-to-segment mappings per OpenSim model and restore them when devices reconnect.
+- [ ] Prevent two sensors from being assigned to the same model segment.
+- [ ] Route dynamically mapped IMU topics into calibration and OpenSim orientation IK with per-device health and clear error reporting.
 
 ### Out of Scope
 
@@ -31,23 +34,25 @@ Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline 
 - Motor-control and EtherCAT integration - unrelated to IMU acquisition operations.
 - Block Deployment work previously scoped as v1.2 - parked intact for a later milestone while acquisition integrity is corrected.
 - Audit findings 1 and 8-10 - physical E-STOP integration, graph persistence, Docker packaging, stale aggregator/documentation, and broader performance work are deferred.
-- Inverse kinematics, joint-angle solving, calibration workflows, deployment packaging, and biomechanical validation - deferred until the quaternion live link works.
-- Embedded Studio 3D visualization - deferred; this milestone may use OpenSim's own visualizer only as a live-link demonstration.
-- Remaining v1.3 Acquisition Integrity phases - preserved as unfinished prior scope while v1.4 is active.
+- Clinical or biomechanical validity claims without an external-reference protocol.
+- Embedded Studio 3D rendering of the solved model - deferred; native OpenSim visualizer is used via an operator button.
+- Remaining unfinished v1.3 Acquisition Integrity phases - preserved as unfinished prior scope.
 
-## Current Milestone: v1.4 OpenSim Quaternion Live Link
+## Current Milestone: v1.6 Multi-Sensor Bone Mapping
 
-**Goal:** Open an OpenSim model and feed it the live quaternion values already published by the paired ESP devices.
+**Goal:** Let an operator discover all ESP-NOW IMUs, identify each physical device, assign it to a segment in the loaded OpenSim model, and run calibration/IK from the saved dynamic mapping.
 
 **Target features:**
-- Subscription to the existing native master and slave `sensor_msgs/Imu` topics.
-- Explicit ROS-to-OpenSim quaternion conversion and configurable sensor/frame mapping.
-- A minimal OpenSim-side live orientation update path using the native visualizer when available.
-- Launch parameters, status reporting, and deterministic local verification.
+- A dedicated multi-sensor mapping panel for the Master and every connected Slave.
+- Stable MAC-based device rows with live status and an **Identify** LED blink action.
+- Segment choices populated from the currently loaded `.osim` model.
+- One-sensor-per-segment validation with explicit incomplete/conflict states.
+- Per-model persisted mappings that automatically reattach by MAC after reconnect.
+- Dynamic ROS topic/health routing and OpenSim calibration/IK input construction for the applied mapping.
 
 ## Context
 
-The GUI and ROS 2 backend already expose paired ESP32 controls, health, processing, recording, native `sensor_msgs/Imu` topics, and rosbridge integration. A placeholder `opensim_bridge` currently forwards one filtered JSON stream over UDP, but OpenSim does not natively subscribe to that packet. v1.4 is deliberately a narrow proof of connection: subscribe to the two ROS IMU quaternion streams, convert and map them, and feed them into an OpenSim model/live visualizer. IK, calibration, and production deployment are later milestones. The unfinished v1.3 roadmap and Phase 9 artifacts remain preserved in repository history and on disk.
+The GUI and ROS 2 backend currently model acquisition as one fixed Master plus one fixed Slave. Firmware can already track several ESP-NOW peers, but the wireless relay, ROS bridge, status schema, OpenSim subscription path, and Studio data model collapse that topology back to two devices. v1.6 generalizes the full path around stable device identities and model-derived segment assignments without changing SD recording into an unreliable best-effort transport. Existing Phase 9 and Phase 15-19 artifacts remain preserved on disk.
 
 ## Constraints
 
@@ -70,8 +75,15 @@ The GUI and ROS 2 backend already expose paired ESP32 controls, health, processi
 | Keep the source payload language-neutral and single-entry | Supports future processor languages without introducing archive handling in v1.2 | Active |
 | Park Block Deployment and prioritize acquisition integrity as v1.3 | Incorrect measurements and misleading live state undermine every downstream processing or deployment feature | Active |
 | Reduce v1.4 to an OpenSim quaternion live-link prototype | The immediate need is only to prove that OpenSim can consume the quaternion values already published by the ESP devices | Active |
-| Defer IK and embedded visualization beyond v1.4 | Solver, calibration, packaging, and Studio rendering are unnecessary until the basic subscription path works | Active |
-| Preserve unfinished v1.3 artifacts and continue phase numbering | Avoid losing prior planning work or colliding with existing phase identifiers | Active |
+| Defer IK and embedded visualization beyond v1.4 | Solver, calibration, packaging, and Studio rendering are unnecessary until the basic subscription path works | Superseded by v1.5 |
+| v1.5 uses official OpenSim orientation IK, not custom relative-quat math | User rejected presenting hand-rolled angle as OpenSim IK | Active |
+| Toolbar Calibrate + Clear cal; fixed standing/knees-extended pose; hard CALIBRATED gate | User accepted discuss-phase recommendations (1A/2A/3A/4A) | Active |
+| Toolbar button starts/shows native OpenSim 3D visualizer | Operator control separate from IK solve | Active |
+| Discover and map all Master/Slave IMUs, not Slaves only | The Master is also a wearable orientation source and must be assignable to a model segment | Active |
+| Use loaded `.osim` model segments as the mapping vocabulary | Prevents stale hard-coded bone lists and keeps assignments valid for the active model | Active |
+| Persist mappings by model identity and ESP MAC | Reconnecting hardware should restore the operator's prior assignment without depending on DHCP addresses | Active |
+| Identify hardware with status plus temporary LED blink | MAC addresses alone are difficult to match to physical sensors during setup | Active |
+| Enforce one sensor per segment | Duplicate orientation sources for one segment are ambiguous for calibration and IK | Active |
 
 ## Evolution
 
@@ -91,4 +103,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-27 - reduced v1.4 to OpenSim Quaternion Live Link*
+*Last updated: 2026-07-30 - started v1.6 Multi-Sensor Bone Mapping*

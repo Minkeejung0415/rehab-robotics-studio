@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.5
-milestone_name: OpenSim IK + Calibration + Visualizer Control
-current_plan: 1
-status: executing
-last_updated: "2026-07-28T19:35:59.674Z"
-last_activity: 2026-07-28 -- Phase 19 execution started
+milestone: v1.6
+milestone_name: Multi-Sensor Bone Mapping
+status: planning
+last_updated: "2026-07-30T17:54:08.812Z"
+last_activity: 2026-07-30
 progress:
-  total_phases: 4
-  completed_phases: 3
-  total_plans: 16
-  completed_plans: 9
-  percent: 56
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,13 +24,10 @@ See: `.planning/PROJECT.md` (updated 2026-07-28)
 
 ## Current Position
 
-Phase: 19 (Studio Controls + Live Angle Display) — EXECUTING
-Plan: 1 of 7
-Status: Executing Phase 19
-Last activity: 2026-07-28 -- Phase 19 execution started
-
-Current Plan: 1
-Total Plans in Phase: 7
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-07-30 — Milestone v1.6 started
 
 ## Performance Metrics
 
