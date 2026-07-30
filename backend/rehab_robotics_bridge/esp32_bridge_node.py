@@ -42,6 +42,7 @@ import asyncio
 import contextlib
 import json
 import math
+import re
 import socket
 import struct
 import threading
@@ -55,6 +56,7 @@ from rcl_interfaces.msg import SetParametersResult
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Float32MultiArray, Header, String
 from std_srvs.srv import SetBool
+from rehab_robotics_interfaces.srv import IdentifyDevice
 
 from rehab_robotics_bridge.measurement_contract import (
     measurement_config,
@@ -108,11 +110,35 @@ def find_next_oe_header(data: bytes | bytearray, start: int = 0) -> int | None:
 # ── Handshake strings the firmware expects ───────────────────────────────────
 HANDSHAKE_CONNECT = b'REDPITAYA\n'
 HANDSHAKE_START   = b'START\n'
+IDENTITY_QUERY = b'IDENTITY?\n'
+IDENTITY_PROTOCOL = 'id-v1'
+IDENTIFY_PROTOCOL = 'identify-v1'
+MAX_CONTROL_LINE_BYTES = 768
+MAX_CONTROL_QUEUE_DEPTH = 256
+MAX_IDENTITY_PEERS = 64
+MAX_COMMAND_ID_BYTES = 32
+IDENTIFY_DURATION_MIN_MS = 1000
+IDENTIFY_DURATION_MAX_MS = 5000
+IDENTIFY_OUTCOMES = (
+    'confirmed',
+    'sent_unconfirmed',
+    'timeout',
+    'offline',
+    'unsupported',
+    'rejected',
+    'invalid_target',
+)
 CONTROL_RESPONSE_PREFIXES = (
     b'REC ', b'SLAVE_STATUS ', b'SD_STATUS ', b'SD_FINAL ',
     b'STOPPED', b'STARTED', b'SENSORS:', b'OK FREQ:', b'ERROR FREQ:',
     b'OK FILTER ', b'ERROR FILTER:', b'OK CFG ', b'ERROR CFG:',
+    b'IDENTITY_OK ', b'IDENTITY_PEER ', b'IDENTITY_END ',
+    b'IDENTIFY_ACK ', b'IDENTIFY_ERR ',
 )
+_COMPACT_MAC_RE = re.compile(r'^[0-9A-Fa-f]{12}$')
+_DISPLAY_MAC_RE = re.compile(r'^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$')
+_CONTROL_TOKEN_RE = re.compile(r'^[A-Za-z0-9_.:,/@+-]+$')
+_COMMAND_ID_RE = re.compile(r'^[A-Za-z0-9_.:@+-]+$')
 
 ACCEL_RANGE_PRESETS = {2: 0, 4: 1, 8: 2, 16: 3}
 GYRO_RANGE_PRESETS = {250: 0, 500: 1, 1000: 2, 2000: 3}
@@ -125,6 +151,333 @@ def parse_control_fields(line: str) -> dict[str, str]:
         for field in line.split()
         if '=' in field
         for key, value in [field.split('=', 1)]
+    }
+
+
+def normalize_device_id(value: str) -> str:
+    """Return the canonical full eFuse/base-MAC identity."""
+    if not isinstance(value, str) or not value:
+        raise ValueError('device identity must be a non-empty string')
+    if value.startswith('esp32:'):
+        compact = value[6:]
+    elif _DISPLAY_MAC_RE.fullmatch(value):
+        compact = value.replace(':', '')
+    else:
+        compact = value
+    if not _COMPACT_MAC_RE.fullmatch(compact):
+        raise ValueError('device identity must contain exactly 12 hexadecimal digits')
+    return f'esp32:{compact.lower()}'
+
+
+def display_mac(value: str) -> str:
+    """Format a canonical/full MAC for operator display."""
+    compact = normalize_device_id(value)[6:]
+    return ':'.join(compact[index:index + 2] for index in range(0, 12, 2)).upper()
+
+
+def device_topic_token(value: str) -> str:
+    """Return the collision-safe topic token reserved for Phase 21 lifecycle use."""
+    return f'mac_{normalize_device_id(value)[6:]}'
+
+
+def _bounded_control_fields(
+    line: str | bytes,
+    expected_prefixes: tuple[str, ...],
+) -> tuple[str, dict[str, str]]:
+    if isinstance(line, bytes):
+        try:
+            text = line.decode('ascii')
+        except UnicodeDecodeError as exc:
+            raise ValueError('control line must be ASCII') from exc
+    elif isinstance(line, str):
+        text = line
+    else:
+        raise ValueError('control line must be text or bytes')
+    text = text.rstrip('\r\n')
+    if not text or len(text.encode('ascii', errors='replace')) > MAX_CONTROL_LINE_BYTES:
+        raise ValueError('control line is empty or exceeds the supported bound')
+    tokens = text.split(' ')
+    prefix = tokens[0]
+    if prefix not in expected_prefixes:
+        raise ValueError(f'unexpected control prefix: {prefix}')
+    fields: dict[str, str] = {}
+    for token in tokens[1:]:
+        if not token or token.count('=') != 1:
+            raise ValueError('control fields must be single space-delimited key=value tokens')
+        key, value = token.split('=', 1)
+        if (
+            not key
+            or key in fields
+            or len(key) > 48
+            or len(value) > 128
+            or not _CONTROL_TOKEN_RE.fullmatch(key)
+            or not _CONTROL_TOKEN_RE.fullmatch(value)
+        ):
+            raise ValueError('control field is duplicate, malformed, or oversized')
+        fields[key] = value
+    return prefix, fields
+
+
+def _required(fields: dict[str, str], *names: str) -> None:
+    missing = [name for name in names if name not in fields]
+    if missing:
+        raise ValueError(f'missing required fields: {", ".join(missing)}')
+
+
+def _decimal_field(
+    fields: dict[str, str],
+    name: str,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    value = fields.get(name, '')
+    if not value.isascii() or not value.isdecimal():
+        raise ValueError(f'{name} must be a decimal integer')
+    parsed = int(value)
+    if not minimum <= parsed <= maximum:
+        raise ValueError(f'{name} is outside the supported range')
+    return parsed
+
+
+def _verified_identity_metadata(
+    fields: dict[str, str],
+    *,
+    record: str,
+) -> dict[str, object]:
+    _required(
+        fields,
+        'protocol', 'record', 'device_id', 'display_mac', 'base_mac',
+        'sta_mac', 'ap_mac', 'espnow_mac', 'role', 'schema_version',
+        'verified', 'identify_supported',
+    )
+    if fields['protocol'] != IDENTITY_PROTOCOL or fields['record'] != record:
+        raise ValueError(f'identity record must use protocol={IDENTITY_PROTOCOL} record={record}')
+    schema_version = _decimal_field(fields, 'schema_version', minimum=1, maximum=255)
+    if fields['verified'] != '1':
+        raise ValueError('bound identity records must be verified')
+    if fields['identify_supported'] not in {'0', '1'}:
+        raise ValueError('identify_supported must be 0 or 1')
+    device_id = normalize_device_id(fields['device_id'])
+    expected_display = display_mac(device_id)
+    if fields['display_mac'] != expected_display or fields['base_mac'] != expected_display:
+        raise ValueError('device_id, display_mac, and base_mac must describe the same full MAC')
+    for name in ('sta_mac', 'ap_mac', 'espnow_mac'):
+        if display_mac(fields[name]) != fields[name]:
+            raise ValueError(f'{name} must be an uppercase full display MAC')
+    if fields['role'] not in {'master', 'slave'}:
+        raise ValueError('identity role must be master or slave')
+    return {
+        'protocol': IDENTITY_PROTOCOL,
+        'record': record,
+        'device_id': device_id,
+        'display_mac': expected_display,
+        'base_mac': fields['base_mac'],
+        'sta_mac': fields['sta_mac'],
+        'ap_mac': fields['ap_mac'],
+        'espnow_mac': fields['espnow_mac'],
+        'role': fields['role'],
+        'schema_version': schema_version,
+        'verified': True,
+        'verification': 'verified',
+        'identify_supported': fields['identify_supported'] == '1',
+    }
+
+
+def parse_identity_self(line: str | bytes) -> dict[str, object]:
+    """Parse exactly one verified id-v1 session-self row."""
+    prefix, fields = _bounded_control_fields(line, ('IDENTITY_OK',))
+    del prefix
+    _required(fields, 'peer_count', 'route_ip', 'board_revision')
+    identity = _verified_identity_metadata(fields, record='self')
+    peer_count = _decimal_field(
+        fields, 'peer_count', minimum=0, maximum=MAX_IDENTITY_PEERS)
+    identity.update({
+        'peer_count': peer_count,
+        'route_ip': fields['route_ip'],
+        'board_revision': fields['board_revision'],
+    })
+    return identity
+
+
+def parse_identity_peer(line: str | bytes) -> dict[str, object]:
+    """Parse one peer inventory row without allowing it to become session self."""
+    prefix, fields = _bounded_control_fields(line, ('IDENTITY_PEER',))
+    del prefix
+    _required(
+        fields,
+        'protocol', 'record', 'device_id', 'display_mac', 'base_mac',
+        'sta_mac', 'ap_mac', 'espnow_mac', 'transport_mac', 'role',
+        'schema_version', 'verified', 'identify_supported',
+        'slave_id_deprecated',
+    )
+    if fields['protocol'] != IDENTITY_PROTOCOL or fields['record'] != 'peer':
+        raise ValueError('peer row must use protocol=id-v1 record=peer')
+    if fields['role'] != 'slave':
+        raise ValueError('peer inventory rows must retain slave role metadata')
+    if display_mac(fields['transport_mac']) != fields['transport_mac']:
+        raise ValueError('transport_mac must be an uppercase full display MAC')
+    if fields['verified'] == '0':
+        if any(fields[name] != 'unknown' for name in (
+            'device_id', 'display_mac', 'base_mac', 'sta_mac', 'ap_mac', 'espnow_mac',
+        )):
+            raise ValueError('unverified peers must not claim canonical identity metadata')
+        if fields['schema_version'] != '0' or fields['identify_supported'] != '0':
+            raise ValueError('unverified peer version/capability metadata is inconsistent')
+        return {
+            'protocol': IDENTITY_PROTOCOL,
+            'record': 'peer',
+            'device_id': None,
+            'display_mac': None,
+            'base_mac': None,
+            'sta_mac': None,
+            'ap_mac': None,
+            'espnow_mac': None,
+            'transport_mac': fields['transport_mac'],
+            'role': 'slave',
+            'schema_version': 0,
+            'verified': False,
+            'verification': 'unverified',
+            'identify_supported': False,
+            'slave_id_deprecated': fields['slave_id_deprecated'],
+        }
+    identity = _verified_identity_metadata(fields, record='peer')
+    identity.update({
+        'transport_mac': fields['transport_mac'],
+        'slave_id_deprecated': fields['slave_id_deprecated'],
+    })
+    return identity
+
+
+def finish_identity_inventory(
+    self_identity: dict[str, object],
+    peers: list[dict[str, object]],
+    end_line: str | bytes,
+) -> dict[str, object]:
+    """Validate the counted terminator and collision-safe peer uniqueness."""
+    if self_identity.get('record') != 'self' or not self_identity.get('verified'):
+        raise ValueError('inventory requires exactly one verified self record')
+    advertised_count = self_identity.get('peer_count')
+    if advertised_count != len(peers):
+        raise ValueError('peer inventory row count does not match self peer_count')
+    seen: set[str] = set()
+    for peer in peers:
+        if peer.get('record') != 'peer':
+            raise ValueError('inventory contains a non-peer row')
+        key = str(peer.get('device_id') or peer.get('transport_mac') or '')
+        if not key or key in seen:
+            raise ValueError('duplicate or unkeyed peer identity')
+        if peer.get('device_id') == self_identity.get('device_id'):
+            raise ValueError('self identity cannot be repeated as a peer')
+        seen.add(key)
+    prefix, fields = _bounded_control_fields(end_line, ('IDENTITY_END',))
+    del prefix
+    if set(fields) != {'protocol', 'peer_count'} or fields['protocol'] != IDENTITY_PROTOCOL:
+        raise ValueError('identity terminator must contain only id-v1 peer_count')
+    terminal_count = _decimal_field(
+        fields, 'peer_count', minimum=0, maximum=MAX_IDENTITY_PEERS)
+    if terminal_count != advertised_count:
+        raise ValueError('identity terminator count does not match self record')
+    return {
+        'schema': 'oe_esp32.identity_inventory.v1',
+        'self': self_identity,
+        'peers': list(peers),
+        'complete': True,
+    }
+
+
+def parse_identity_inventory(lines) -> dict[str, object]:
+    """Consume self, its exact counted peer rows, and one matching terminator."""
+    records = list(lines)
+    if not records or len(records) > MAX_IDENTITY_PEERS + 2:
+        raise ValueError('identity inventory is empty or exceeds the supported bound')
+    self_identity = parse_identity_self(records[0])
+    peer_count = int(self_identity['peer_count'])
+    if len(records) != peer_count + 2:
+        raise ValueError('identity inventory is incomplete or has extra records')
+    peers = [parse_identity_peer(line) for line in records[1:peer_count + 1]]
+    return finish_identity_inventory(self_identity, peers, records[-1])
+
+
+def validate_identify_request(
+    command_id: str,
+    target_device_id: str,
+    duration_ms: int,
+) -> tuple[str, str, int]:
+    """Validate all caller-controlled Identify fields before hardware I/O."""
+    if (
+        not isinstance(command_id, str)
+        or not command_id
+        or len(command_id.encode('ascii', errors='replace')) > MAX_COMMAND_ID_BYTES
+        or not _COMMAND_ID_RE.fullmatch(command_id)
+    ):
+        raise ValueError('command_id must be a bounded ASCII token')
+    target = normalize_device_id(target_device_id)
+    if target_device_id != target:
+        raise ValueError('target_device_id must be an exact canonical full identity')
+    if (
+        not isinstance(duration_ms, int)
+        or isinstance(duration_ms, bool)
+        or not IDENTIFY_DURATION_MIN_MS <= duration_ms <= IDENTIFY_DURATION_MAX_MS
+    ):
+        raise ValueError('duration_ms must be an integer between 1000 and 5000')
+    return command_id, target, duration_ms
+
+
+def parse_identify_reply(
+    line: str | bytes,
+    *,
+    expected_command_id: str,
+    expected_target: str,
+) -> dict[str, object]:
+    """Parse only a terminal reply correlated to both command and full target."""
+    prefix, fields = _bounded_control_fields(line, ('IDENTIFY_ACK', 'IDENTIFY_ERR'))
+    _required(
+        fields,
+        'protocol', 'command_id', 'target', 'outcome',
+        'requested_duration_ms', 'applied_duration_ms', 'detail',
+    )
+    if fields['protocol'] != IDENTIFY_PROTOCOL:
+        raise ValueError('Identify reply uses the wrong protocol')
+    validate_identify_request(
+        fields['command_id'],
+        normalize_device_id(fields['target']),
+        _decimal_field(
+            fields,
+            'requested_duration_ms',
+            minimum=IDENTIFY_DURATION_MIN_MS,
+            maximum=IDENTIFY_DURATION_MAX_MS,
+        ),
+    )
+    target = normalize_device_id(fields['target'])
+    if fields['target'] != target:
+        raise ValueError('Identify reply target must be canonical')
+    if fields['command_id'] != expected_command_id or target != normalize_device_id(expected_target):
+        raise ValueError('Identify reply is not correlated to this request')
+    outcome = fields['outcome']
+    if outcome not in IDENTIFY_OUTCOMES:
+        raise ValueError('Identify reply has an unknown outcome')
+    if (
+        prefix == 'IDENTIFY_ACK'
+        and outcome not in {'confirmed', 'sent_unconfirmed'}
+    ) or (
+        prefix == 'IDENTIFY_ERR'
+        and outcome in {'confirmed', 'sent_unconfirmed'}
+    ):
+        raise ValueError('Identify reply prefix does not match its outcome')
+    applied_duration_ms = _decimal_field(
+        fields,
+        'applied_duration_ms',
+        minimum=0,
+        maximum=IDENTIFY_DURATION_MAX_MS,
+    )
+    return {
+        'command_id': fields['command_id'],
+        'target_device_id': target,
+        'outcome': outcome,
+        'requested_duration_ms': int(fields['requested_duration_ms']),
+        'applied_duration_ms': applied_duration_ms,
+        'detail': fields['detail'],
     }
 
 
@@ -201,7 +554,8 @@ class Esp32BridgeNode(Node):
         self._effective_sample_rate_hz: int = self.get_parameter('effective_sample_rate_hz').value
         self._recording_control_mode: str = self.get_parameter('recording_control_mode').value.lower()
         self._active_writer: asyncio.StreamWriter | None = None
-        self._control_responses: asyncio.Queue[str] = asyncio.Queue()
+        self._control_responses: asyncio.Queue[str] = asyncio.Queue(
+            maxsize=MAX_CONTROL_QUEUE_DEPTH)
         self._record_command_lock: asyncio.Lock | None = None
         self._recording_session_id = ''
         self._recording_state = 'idle'
@@ -574,6 +928,14 @@ class Esp32BridgeNode(Node):
                 if line.startswith(expected) or line.startswith(('REC ERR', 'ERROR ')):
                     return line
 
+    async def _admit_control_response(self, line: str) -> None:
+        """Keep mixed-stream control traffic bounded without blocking frame parsing."""
+        if len(line.encode('ascii', errors='replace')) > MAX_CONTROL_LINE_BYTES:
+            return
+        if self._control_responses.full():
+            self._control_responses.get_nowait()
+        self._control_responses.put_nowait(line)
+
     async def _send_control_command_separate(self, command: str, expected: str) -> str:
         """Use a dedicated TCP connection for USB control without interrupting stream clients."""
         reader, writer = await asyncio.open_connection(self._host, self._port)
@@ -609,6 +971,17 @@ class Esp32BridgeNode(Node):
           ESP32 → PC:   "STARTED BIN:esp32s3_arduino transport=tcp\\n"
           ESP32 → PC:   "SENSORS:0,ICM20948\\n"
           → binary StreamRecord frames begin (50 bytes each: 22 header + 28 payload)
+          PC  → ESP32:  "FILTER ON\\n"  ← fire-and-forget post-STARTED; response
+                                           handled by _read_frames (OK FILTER ON)
+
+        FILTER is intentionally sent post-STARTED rather than before START.
+        Sending FILTER in text mode before START causes the master firmware to
+        call espNowRelayCmd(CMD_FILTER_ON) before replying OK FILTER ON.  That
+        ESP-NOW transmission delays the TCP reply enough to race the 0.8 s pre-
+        START deadline and the 2 s TCP idle-client timeout, breaking the
+        handshake.  Post-STARTED the firmware is already streaming; the FILTER
+        command is processed in the running main loop and the OK response is
+        consumed by _read_frames as a normal control message.
         """
         # 1. Identify ourselves
         writer.write(HANDSHAKE_CONNECT)
@@ -684,6 +1057,19 @@ class Esp32BridgeNode(Node):
                 )
                 break
 
+        # 7. Apply AHRS filter state post-STARTED (fire-and-forget).
+        #    The firmware handles FILTER ON/OFF in streaming mode; the ESP-NOW
+        #    relay to the slave happens on the master side.  We do not await the
+        #    OK FILTER response — _read_frames picks it up from the binary stream
+        #    via CONTROL_RESPONSE_PREFIXES when it arrives.
+        filter_state = b'FILTER ON\n' if self._filter_enabled else b'FILTER OFF\n'
+        writer.write(filter_state)
+        await writer.drain()
+        self.get_logger().info(
+            f'[{self._node_id}] filter={"ON" if self._filter_enabled else "OFF"} '
+            f'sent post-STARTED (response handled by stream reader)'
+        )
+
         return 'udp' if b'transport=udp' in started else 'tcp'
 
     async def _confirm_range_during_handshake(
@@ -691,7 +1077,7 @@ class Esp32BridgeNode(Node):
         writer: asyncio.StreamWriter,
         reader: asyncio.StreamReader,
         name: str,
-        value: int,
+        value: int | bool,
     ) -> bool:
         """Send a CFG command on the handshake connection and await its reply.
 
@@ -785,17 +1171,23 @@ class Esp32BridgeNode(Node):
                     if not chunk:
                         raise EOFError('stream closed while reading recording response')
                     buf.extend(chunk)
+                    if len(buf) > MAX_CONTROL_LINE_BYTES:
+                        raise RuntimeError('mixed-stream control line exceeds supported bound')
                 line, _, remainder = buf.partition(b'\n')
                 buf[:] = remainder
+                if len(line) > MAX_CONTROL_LINE_BYTES:
+                    raise RuntimeError('mixed-stream control line exceeds supported bound')
                 text = line.decode(errors='replace').strip()
                 self.get_logger().info(f'[{self._node_id}] control: {text}')
                 self._observe_control_response(text)
                 if text.startswith((
-                    'REC ', 'SLAVE_STATUS ', 'SD_STATUS ', 'SD_FINAL ',
-                    'OK FREQ:', 'ERROR FREQ:', 'OK FILTER ', 'ERROR FILTER:',
-                    'OK CFG ', 'ERROR CFG:',
-                )):
-                    await self._control_responses.put(text)
+                     'REC ', 'SLAVE_STATUS ', 'SD_STATUS ', 'SD_FINAL ',
+                     'OK FREQ:', 'ERROR FREQ:', 'OK FILTER ', 'ERROR FILTER:',
+                     'OK CFG ', 'ERROR CFG:',
+                     'IDENTITY_OK ', 'IDENTITY_PEER ', 'IDENTITY_END ',
+                     'IDENTIFY_ACK ', 'IDENTIFY_ERR ',
+                 )):
+                    await Esp32BridgeNode._admit_control_response(self, text)
                 continue
 
             # Accumulate header

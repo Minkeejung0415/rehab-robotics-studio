@@ -1,0 +1,9 @@
+string command_id
+string target_device_id
+uint32 duration_ms
+---
+string command_id
+string target_device_id
+string outcome
+uint32 applied_duration_ms
+string detail
