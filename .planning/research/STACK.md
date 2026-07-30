@@ -1,330 +1,345 @@
 # Stack Research
 
-**Domain:** Live paired-IMU quaternion-to-OpenSim inverse kinematics in ROS 2
-**Researched:** 2026-07-27
-**Confidence:** HIGH for OpenSim/ROS APIs and x86-64 packaging; MEDIUM for the Jetson deployment until its exact module and JetPack release are confirmed
+**Domain:** Dynamic multi-ESP-NOW discovery and per-model OpenSim sensor mapping in an existing ROS 2/React application
+**Researched:** 2026-07-30
+**Confidence:** HIGH for repository versions and extension points; MEDIUM for the final slave sample transport until the firmware-to-host multi-peer frame contract is chosen
 
 ## Recommendation
 
-Add a small C++ ROS 2 package, `rehab_robotics_opensim`, beside the existing Python `rehab_robotics_bridge`. Build it with `ament_cmake`, link it to a pinned, headless OpenSim 4.6 installation, and run the live solver through `OpenSim::BufferedOrientationsReference` plus `OpenSim::InverseKinematicsSolver`.
+Extend the current stack in place. This milestone does **not** need a database, a new frontend state library, `roslibjs`, a ROS dynamic-types package, an XML parser, a new OpenSim version, or a new ESP-NOW library.
 
-Do **not** import OpenSim into the existing `ament_python` node. The current ROS environment is Humble on Ubuntu 22.04 with Python 3.10, while the official OpenSim 4.6 Conda channel currently publishes Python 3.11/3.12/3.13 packages only. More importantly, its Linux package is `linux-64` (x86-64), not `linux-aarch64`, so it cannot be installed on Jetson. A native C++ OpenSim build avoids the Python ABI collision and uses the same node source on WSL2 x86-64 and Jetson ARM64.
+The smallest coherent change is:
 
-OpenSense remains the compatibility model for sensor naming, calibration, weights, and orientation error. Its `IMUPlacer` and `IMUInverseKinematicsTool` are file-oriented batch tools. They should be used to validate fixtures and exported sessions, not invoked once per live sample. OpenSim's genuine streaming API is the `BufferedOrientationsReference::putValues()` queue consumed by a persistent `InverseKinematicsSolver`.
+1. Make the existing master bridge the authoritative device registry. Use the full 48-bit ESP-NOW interface MAC as the stable device key for the Master and every Slave.
+2. Keep versioned inventory/model/status snapshots on the project's existing `std_msgs/msg/String` JSON control plane.
+3. Add only two local ROS services to the existing `rehab_robotics_interfaces` package: one acknowledged Identify command and one atomic mapping-apply command.
+4. Enumerate model segments inside the existing OpenSim 4.5.2 Python process, not in the browser. Return canonical OpenSim component paths plus a model content hash.
+5. Persist only confirmed `model_id -> MAC -> segment_path` assignments in the Studio with Zustand 4.5.7's included `persist` middleware and browser `localStorage`.
+6. Refactor the existing two-element OpenSim dictionaries, subscriptions, calibration inputs, and quaternion table construction into MAC-keyed collections. `rclpy.Node.create_subscription()`/`destroy_subscription()` are sufficient because every dynamic input is still the known `sensor_msgs/msg/Imu` type.
+7. Extend the existing firmware command enum with a targeted, non-blocking Identify blink. Use the peer MAC already registered by the master and `esp_now_send(peer_mac, ...)`; do not add an LED or ESP-NOW dependency.
+
+This preserves the validated Windows -> WSL2 Ubuntu 22.04 -> ROS 2 Humble -> OpenSim 4.5.2 runtime and keeps the browser out of filesystem/model parsing.
 
 ## Recommended Stack
 
 ### Core Technologies
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| ROS 2 Humble Hawksbill | Existing distro; Ubuntu 22.04 packages | Node lifecycle, synchronization, standard messages, launch and diagnostics | Preserves the validated project environment and is available for Ubuntu Jammy on ARM64. Do not change ROS distro in this milestone. |
-| C++ | C++20 | Live solver node | OpenSim 4.6 itself requires C++20. A compiled node avoids Python/SWIG overhead and the unavailable Jetson Conda package. |
-| OpenSim Core | **4.6**, exact tag/commit pinned | Model loading, sensor-frame calibration representation and orientation IK | This is the current OpenSim release as of research. Its source includes the live-data `BufferedOrientationsReference` API and `InverseKinematicsSolver::assemble()/track()`. |
-| Simbody | Revision vendored by OpenSim 4.6 dependency superbuild | Multibody assembly and orientation tracking | Use the revision pinned by the OpenSim release rather than selecting an independent Simbody version. This prevents OpenSim/Simbody ABI drift. |
-| CMake + Ninja | CMake >=3.15; Ubuntu 22.04 CMake 3.22 is suitable | Build OpenSim and the ROS package | OpenSim 4.6 declares CMake 3.15 minimum. Ninja gives lower-overhead native builds on Jetson. |
+| Technology | Repository version | Purpose in v1.6 | Why recommended |
+|------------|--------------------|-----------------|-----------------|
+| React | 18.3.1 | Multi-sensor mapping panel and validation UI | Already installed and validated. Dynamic device rows are ordinary keyed React components; no UI framework is needed. |
+| Zustand | 4.5.7 resolved (`^4.5.5` manifest) | Live inventory/mapping state and per-model browser persistence | `zustand/middleware` already includes `persist`, `partialize`, schema `version`, and `migrate`. This adds no package and fits the existing store architecture. |
+| TypeScript | 5.9.3 resolved (`^5.6.3` manifest) | MAC, inventory, model metadata, mapping, and command-result contracts | Existing build already type-checks transport boundaries. Use discriminated states for discovered/offline/conflict/incomplete/applied instead of adding a runtime schema library. |
+| ROS 2 Humble + `rclpy` | Humble on Ubuntu 22.04; Python 3.10.12; Humble `rclpy` docs report 3.2.1 | Inventory publication, acknowledged services, dynamic IMU subscriptions, health, and launch | This is the deployed environment. The message types remain statically known, so ordinary runtime-created subscriptions work on Humble. |
+| rosbridge server | Installed Humble package 2.0.7 | Browser subscriptions and service calls | The existing raw WebSocket implementation already performs `subscribe`, `unsubscribe`, `call_service`, and `service_response`. Keep that code and add IDs for dynamic subscriptions. |
+| OpenSim Python | 4.5.2 (`4.5.2-2025-05-03-6a4c6ec41`) | Load the active `.osim`, enumerate bodies/frames, validate mappings, calibrate, and solve orientation IK | Already installed and validated in `/home/justi/.micromamba/envs/rehab-opensim`. `Model.getBodySet()` and Component paths are the authoritative model vocabulary. Do not parse model XML separately. |
+| Arduino ESP32 core | 3.3.10 from `logs/arduino_build_master_current/build.options.json` | Stable MAC discovery, targeted peer command, non-blocking LED timer | The current sketches already register ESP-NOW peers by full source MAC and send unicast packets. The new command is a small protocol extension, not a library change. |
+| Firmware contract | Existing firmware 1.8.0; bump the peer/status command schema deliberately | Full-MAC identity, Master identity, peer presence, Identify request/ack | Both sketches already share `CMD_MAGIC`, command enums, and versioned `SlaveStatusPacket`. Update sender/receiver structs together and retain explicit version rejection. |
 
-### ROS 2 Libraries and Interfaces
+### Supporting Libraries and Interfaces
 
-| Library / interface | Version | Purpose | When to Use |
+| Library / interface | Version | Purpose | When to use |
 |---------------------|---------|---------|-------------|
-| `rclcpp` | Humble, rosdep-managed | C++ ROS node | The new OpenSim node only; retain `rclpy` for the existing acquisition bridge. |
-| `message_filters` | Humble (current Humble docs: 4.12.x) | Pair master/slave `sensor_msgs/Imu` samples by `header.stamp` | Prefer exact-time synchronization when the paired ESP32 messages carry the same source timestamp. Permit approximate-time only as an explicit, tightly bounded fallback. |
-| `sensor_msgs/Imu` | Humble `sensor_msgs` 4.9.x | Quaternion input | Continue consuming the existing native IMU topics; no JSON or UDP intermediate is needed. |
-| `sensor_msgs/JointState` | Humble `sensor_msgs` 4.9.x | Solved coordinate output | Publish revolute coordinates in radians and prismatic coordinates in metres, as required by the message definition. Leave velocity/effort empty unless they are actually estimated. |
-| `diagnostic_updater` + `diagnostic_msgs` | Humble 4.0.x / 4.9.x | Periodic bridge and solver health | Report input age/rate, sync rejects, invalid quaternions, calibration state, sensors in use, solve latency, tracking failures, and orientation residuals on `/diagnostics`. |
-| `std_srvs/Trigger` | Humble | Capture a reference-pose calibration | A `calibrate` service can arm the node to use the next valid synchronized pair. Use a separate reset/reload service only if required. |
-| `rehab_robotics_interfaces` | Existing local package, increment its schema deliberately | Structured solver quality/status for the GUI | Add a compact IK status message only if `/diagnostics` is inconvenient through rosbridge. Keep `JointState` as the canonical kinematic output. |
-| `ament_cmake_gtest` | Humble | Deterministic native tests | Test quaternion order, sign equivalence, calibration transforms, known poses, stale data, synchronizer behavior, and solver failure recovery without hardware. |
+| `zustand/middleware` | Included in Zustand 4.5.7 | Persist confirmed mappings to `localStorage` | Persist a versioned `mappingsByModelId` slice only. Never persist live age, online state, service requests, calibration state, or topic handles. |
+| Python `hashlib`, `json`, `pathlib` | Python 3.10 standard library | Model SHA-256 identity, versioned snapshot JSON, canonical path handling | Compute SHA-256 over the `.osim` bytes in WSL after a successful model load. No package installation is required. |
+| `sensor_msgs/msg/Imu` | ROS 2 Humble | Per-MAC orientation input to OpenSim | Continue the existing native topic contract. Use MAC-derived ROS-safe topic tokens; preserve the canonical colon-delimited MAC in metadata. |
+| `std_msgs/msg/String` | ROS 2 Humble | Device inventory, model metadata, aggregate health/status | Matches the current JSON-through-rosbridge pattern and permits versioned snapshots without forcing frontend-generated ROS bindings. Publish complete snapshots, not an event-only stream. |
+| `rehab_robotics_interfaces/srv/IdentifyDevice` | New local interface; package version should advance from 0.1.0 | Reliable `mac + duration_ms -> success + message` request/response | Use for the operator Identify action. A service result must mean the master accepted a known, currently reachable full MAC and received the firmware-level acknowledgement policy chosen for the command. |
+| `rehab_robotics_interfaces/srv/ApplySensorMapping` | New local interface; package version should advance from 0.1.0 | Atomically apply one complete model mapping | Request should carry `model_id` and parallel arrays or local `DeviceMapping[]`; response should reject stale model IDs, duplicate segments, unknown MACs/topics, and missing model frames as one transaction. |
+| Existing OpenSim classes | OpenSim 4.5.2 | `Model`, `BodySet`, `PhysicalFrame`, `TimeSeriesTableQuaternion`, `OrientationsReference`, `InverseKinematicsSolver` | Generalize current hard-coded Master/Slave adapters. No OpenSim API family needs to be added. |
+| Existing Arduino/ESP-IDF APIs | Arduino core 3.3.10 | `WiFi.softAPmacAddress()`, receive `src_addr`, `esp_now_send(peer_addr, ...)`, `millis()`, `digitalWrite()` | Use the MAC for the interface that actually participates in ESP-NOW: AP MAC for the Master AP interface and received source MAC for Slaves. |
 
-No additional quaternion library is needed. Convert and validate at the boundary, then use `SimTK::Quaternion`, `SimTK::Rotation`, and `SimTK::Transform` consistently inside the solver. Avoid mixing Eigen, SciPy, `tf.transformations`, and SimTK conventions in the same calculation.
+### Local ROS Interface Shape
 
-### Development and Deployment Tools
+Prefer local typed services for commands and versioned JSON snapshots for state.
 
-| Tool | Purpose | Notes |
-|------|---------|-------|
-| WSL2 Ubuntu 22.04 | Primary Windows-hosted integration environment | Build the same Linux C++ source used on Jetson. Native Windows OpenSim may be useful for isolated model inspection, but is not the deployment reference. |
-| `rosdep` + `colcon` | Resolve ROS dependencies and build the workspace | OpenSim is an external pinned native prefix, not a PyPI dependency and not rebuilt by every `colcon build`. |
-| OpenSim 4.6 dependency superbuild | Produce compatible Simbody/spdlog dependencies | Disable visualization, CasADi/Moco solver dependencies, C3D parsing, Java, Python, examples, and tests in the deployable artifact. |
-| `ldd`, `readelf`, and a launch-time smoke test | Verify the installed ARM64 artifact | Fail deployment if `libosim*.so` or `libSimTK*.so` resolves outside the packaged prefix. |
-| `ros2 bag` / deterministic topic publisher | Replay paired orientation fixtures | Use existing ROS tooling; no new recording framework is required. |
-
-## Package Boundary
-
-Keep acquisition and solving separate:
+Illustrative service definitions:
 
 ```text
-backend/                         # existing ament_python package
-  rehab_robotics_bridge/
-    esp32_bridge_node.py         # unchanged ownership: acquisition
-    filter_node.py               # unchanged ownership: filtering
-    opensim_node.py              # retire placeholder entry point after migration
+# rehab_robotics_interfaces/srv/IdentifyDevice.srv
+string mac
+uint32 duration_ms
+---
+bool success
+string message
 
-rehab_robotics_opensim/          # new ament_cmake package
-  CMakeLists.txt
-  package.xml
-  include/rehab_robotics_opensim/
-    quaternion_validation.hpp
-    calibration.hpp
-    streaming_ik.hpp
-  src/
-    opensim_bridge_node.cpp
-    calibration.cpp
-    streaming_ik.cpp
-  test/
-    test_quaternion_conventions.cpp
-    test_calibration.cpp
-    test_known_pose_ik.cpp
-  models/
-    <versioned model and mapping fixtures>
+# rehab_robotics_interfaces/msg/DeviceMapping.msg
+string mac
+string imu_topic
+string segment_path
+
+# rehab_robotics_interfaces/srv/ApplySensorMapping.srv
+string model_id
+DeviceMapping[] mappings
+---
+bool success
+string message
 ```
 
-The existing launch file can start both Python acquisition nodes and the C++ OpenSim executable. Package type is a build-system boundary: do not try to turn the existing `ament_python` package into a mixed Python/C++ package for this milestone.
+If avoiding a new local message is important, `ApplySensorMapping.srv` may instead use three equal-length `string[]` fields. Do not send an opaque mapping JSON string through the service: the local interface package already exists precisely to give ROS commands a typed boundary.
 
-## OpenSim API Pattern
-
-### 1. Load and prepare a model once
-
-Use `OpenSim::Model` to load the configured `.osim` file. Validate configured coordinate names and IMU-frame labels before calling `initSystem()`. The orientation-reference labels must match `PhysicalFrame` names in the model; OpenSim's solver forms the intersection by name.
-
-For an OpenSense-compatible model, sensor frames should be named such as `femur_r_imu` and represented by `OpenSim::PhysicalOffsetFrame` objects. An `OpenSim::IMU` component connected to each offset frame preserves OpenSense model semantics, although the orientation solver itself matches the `PhysicalFrame` names.
-
-### 2. Calibrate in memory from a known pose
-
-OpenSense `IMUPlacer` computes the sensor offset using the known model pose and the measured calibration orientation. Its source implements the essential rotation as:
+Recommended state topics:
 
 ```text
-R_body_sensor = inverse(R_ground_body_at_reference) * R_ground_sensor_measured
+/esp/devices              std_msgs/msg/String  rehab.esp_inventory.1
+/opensim/model_metadata   std_msgs/msg/String  rehab.opensim_model.1
+/opensim/mapping_status   std_msgs/msg/String  rehab.opensim_mapping.1
 ```
 
-Apply the configured sensor-world-to-OpenSim-ground rotation before this step. Update or create the sensor `PhysicalOffsetFrame` transforms, call `finalizeConnections()`, then call `initSystem()` and construct a fresh solver. Model topology/offset mutation is a calibration transition, not a per-sample operation.
+Each inventory row should include at minimum:
 
-Do not run `IMUPlacer` against a temporary one-row `.sto` file during live operation. A one-row OpenSense fixture is still valuable as an offline oracle: the in-memory calibration should produce the same offset frame as `IMUPlacer`.
-
-### 3. Create the streaming reference and persistent solver
-
-Seed a `TimeSeriesTable_<SimTK::Rotation>` with the sensor labels so the reference has a stable observation order, then create:
-
-```cpp
-auto refs = std::make_shared<OpenSim::BufferedOrientationsReference>(
-    labeled_seed_table, &orientation_weights);
-SimTK::Array_<OpenSim::CoordinateReference> coordinate_refs;
-OpenSim::InverseKinematicsSolver solver(
-    model, nullptr, refs, coordinate_refs);
-solver.setAccuracy(1e-4);
-solver.setAdvanceTimeFromReference(true);
+```text
+mac, role, online, last_seen_ms, imu_topic, connection_state,
+firmware_version, identify_state, last_error
 ```
 
-The `1e-4` accuracy matches the value used by OpenSim's `IMUInverseKinematicsTool`; expose it as an advanced parameter, but begin with that default. Before the first `assemble(state)`, queue the first sample with `refs->putValues(time, rotations)`. For each subsequent synchronized sample, queue one row and call `track(state)`. Reuse the same model, state, reference and solver; `track()` is explicitly optimized for small updates after an initial `assemble()`.
+Use a canonical MAC string such as `AA:BB:CC:DD:EE:FF` everywhere outside ROS names. For a ROS topic token, use a reversible lowercase form such as `aa_bb_cc_dd_ee_ff`:
 
-If `track()` throws or residuals exceed policy, mark the output degraded and do not publish a silently stale pose. A bounded recovery may attempt `assemble()` on the current valid sample. Repeated failure should transition the node out of solving until recalibration/model reload.
-
-### 4. Convert conventions explicitly
-
-ROS `geometry_msgs/Quaternion` fields are `(x, y, z, w)`. SimTK's four-scalar quaternion constructor is scalar-first, so construct:
-
-```cpp
-SimTK::Quaternion q(ros_q.w, ros_q.x, ros_q.y, ros_q.z);
-SimTK::Rotation R_GS(q);
+```text
+/esp32/by_mac/aa_bb_cc_dd_ee_ff/imu
+/esp/status/by_mac/aa_bb_cc_dd_ee_ff
 ```
 
-Before construction, reject non-finite values and norms below a small threshold; normalize only quaternions within a configured tolerance of unit length. Treat `q` and `-q` as the same rotation in tests. Document whether each ESP32 quaternion is active or passive and what its source/target frames are; field order alone is not a complete convention.
+Do not use the current 32-bit `slave_id` as identity. It is only the low 32 bits of `ESP.getEfuseMac()` and is needlessly collision-prone when the full peer MAC is already available.
 
-### 5. Publish results and quality
+## Exact Integration Points
 
-Read each configured OpenSim coordinate with `Coordinate::getValue(state)`. OpenSim state values and `JointState.position` are both radians for rotational coordinates, so do not convert the canonical ROS output to degrees. The GUI may convert for display.
+### Firmware
 
-Use:
+| File | Required change | Stack impact |
+|------|-----------------|--------------|
+| `firmware/step_node/step_node.ino` | Expose the Master's ESP-NOW-interface MAC; retain every active peer's full MAC; add host `IDENTIFY` handling; send the identify command only to the selected peer; report an explicit accepted/unknown/stale result. | No dependency. Extend `CONTROL_RESPONSE_PREFIXES` in the bridge for the new reply. |
+| `firmware/step_node_slave/step_node_slave.ino` | Add the matching command enum/packet handling and a non-blocking LED-off deadline; expose identify state/token in status if used for application acknowledgement. | No `FastLED`, NeoPixel, timer, or RTOS library. Use existing Arduino/FreeRTOS primitives. |
+| Both sketches | Bump the command/status version when packet layout changes and keep exact packet-size checks. | Prevents mixed firmware from being interpreted as current. |
 
-- `/opensim/joint_states` — `sensor_msgs/JointState`, timestamped with the synchronized input measurement time.
-- `/diagnostics` — standard diagnostic status with input, calibration, model, and solver health.
-- `/opensim/status` — optional typed local message for rosbridge with solve time, input skew/age, number of sensors used, per-sensor or RMS orientation error, calibration generation, and state.
+Espressif documents that `esp_now_send(peer_addr, ...)` targets one registered MAC, but its send callback only confirms MAC-layer delivery, not application receipt. For a trustworthy Studio result, include a request token in the command and echo it in the Slave's next status/ack; otherwise label the response “command sent,” not “device identified.”
 
-`InverseKinematicsSolver::computeCurrentOrientationErrors()` and `getOrientationSensorNameForIndex()` provide the solver residuals and stable sensor names. Confirm residual units with a deterministic known-angle test before presenting degrees in the UI; the C++ API documentation describes orientation error but does not state units next to that method.
+### ROS acquisition and discovery
 
-## Synchronization and Execution Model
+| File | Required change | Stack impact |
+|------|-----------------|--------------|
+| `backend/rehab_robotics_bridge/esp32_bridge_node.py` | Replace pair-only cached health with a MAC-keyed registry; parse full peer status; publish inventory snapshots; expose Identify service; publish native `Imu`/health topics by MAC. | Reuse `asyncio`, `json`, `sensor_msgs`, and the existing control-command queue. |
+| `backend/rehab_robotics_bridge/status_node.py` | Replace fixed `master`/`slave` aggregation with a bounded MAC-keyed snapshot and per-device TTL. | No library. Do not leave disconnected devices permanently online from the last cached message. |
+| `backend/launch/rehab_robotics.launch.py` and `scripts/start_stepesp_wireless.ps1` | Remove fixed two-device assumptions from process/topic arguments. | No launch plugin. Keep ROS discovery and device discovery distinct. |
+| `scripts/stepesp_tcp_udp_relay.py` | If direct TCP/UDP slave streams remain the high-rate data path, generalize its fixed two endpoints to an `N`-endpoint table and maintain MAC-to-endpoint metadata. | Python standard library is sufficient. Do not add ZeroMQ, MQTT, or a service-discovery package. |
 
-Use sensor-data QoS on both IMU subscriptions, and ensure both `message_filters` subscribers request compatible QoS. ROS documentation warns that incompatible QoS prevents synchronization entirely.
+The current firmware already holds several peer snapshots, including latest quaternion data, while the host stack exposes one fixed Slave. The exact high-rate host transport is the one remaining design gate:
 
-Recommended policy:
+- **Preferred if firmware can forward peer-native frames without destabilizing acquisition:** one Master connection carries peer MAC with each Slave sample, and the ROS bridge fans out per-MAC `Imu` topics.
+- **Fallback if each Slave must keep its direct TCP/UDP stream:** the Windows relay manages `N` endpoints and binds the stream to the full MAC learned through the control plane.
 
-1. Exact timestamp pair when both ESP32 messages inherit a shared acquisition timestamp or pair sequence.
-2. Approximate-time fallback only when exact stamping is impossible, with a small configurable slop derived from the acquisition rate.
-3. Reject pairs whose source timestamps go backwards, exceed maximum skew, or are already stale at solve time.
-4. Never pair "latest master" with "latest slave" without a timestamp bound.
+Do not infer identity from DHCP address. IP is a transport endpoint and may change; MAC is the mapping key.
 
-Keep all OpenSim mutation and solver calls on one serialized execution path. Subscription callbacks may feed a bounded queue, but `Model`, `State`, `BufferedOrientationsReference`, and `InverseKinematicsSolver` should not be accessed concurrently. Bound the queue to favor fresh motion over accumulated latency.
+### OpenSim model metadata and dynamic routing
 
-## Runtime Packaging
+| File | Required change | Stack impact |
+|------|-----------------|--------------|
+| `backend/rehab_robotics_bridge/opensim_node.py` | Load model metadata once; compute `model_id`; enumerate segments; replace `_ROLES`, two sensor states, two callbacks, and two subscription attributes with MAC-keyed dictionaries; apply mappings atomically; destroy/recreate subscriptions when the applied mapping changes. | Existing `rclpy` APIs are enough. Reuse the current `_IMU_QOS`. |
+| `backend/rehab_robotics_bridge/opensim/opensim_orientation_ik.py` | Replace the two-column `RowVectorQuaternion(2)` and Master/Slave parameters with ordered collections derived from the applied mapping. | Existing OpenSim classes. Preserve a deterministic sensor order for table labels and residual reporting. |
+| `backend/rehab_robotics_bridge/opensim/calibration.py` | Key samples/offsets by MAC plus segment path and invalidate artifacts when `model_id` or applied mapping generation changes. | No library. Calibration from one mapping must never be reused under another. |
+| `backend/rehab_robotics_bridge/opensim_adapter.py` | Resolve canonical segment/body paths to the model frame used for visualization/IK and reject missing/ambiguous components. | Existing `Model.getComponent()` and frame down-casts. |
+| `backend/launch/opensim_live_link.launch.py` | Retain `model_path`, remove fixed Master/Slave topic/frame arguments once mapping service owns runtime routing. | Keep launch configuration for startup defaults only. |
 
-### Build one OpenSim prefix per architecture
+Model metadata should be produced only after `OpenSim.Model(model_path)` succeeds:
 
-Pin the exact OpenSim 4.6 source commit in a lock/provisioning file. Build Release mode separately for:
-
-- `linux-x86_64` — WSL2/CI/local deterministic testing.
-- `linux-aarch64` — the Jetson target.
-
-Do not copy the x86-64 Conda libraries to Jetson. Package the OpenSim install prefix together with its copied Simbody dependencies, preserve RPATH, and expose `OpenSim_DIR`/`CMAKE_PREFIX_PATH` while building the ROS node.
-
-Illustrative headless build:
-
-```bash
-# Checkout the exact 4.6 tag/commit first.
-cmake -S opensim-core/dependencies -B build/opensim-deps -GNinja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX=/opt/opensim-4.6/dependencies \
-  -DSUPERBUILD_ezc3d=OFF \
-  -DSUPERBUILD_catch2=OFF \
-  -DOPENSIM_WITH_CASADI=OFF \
-  "-DSIMBODY_EXTRA_CMAKE_ARGS=-DSIMBODY_BUILD_VISUALIZER:BOOL=OFF"
-cmake --build build/opensim-deps --parallel
-
-cmake -S opensim-core -B build/opensim -GNinja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX=/opt/opensim-4.6 \
-  -DOPENSIM_DEPENDENCIES_DIR=/opt/opensim-4.6/dependencies \
-  -DBUILD_API_ONLY=ON \
-  -DBUILD_TESTING=OFF \
-  -DBUILD_PYTHON_WRAPPING=OFF \
-  -DBUILD_JAVA_WRAPPING=OFF \
-  -DOPENSIM_WITH_CASADI=OFF \
-  -DOPENSIM_C3D_PARSER=None \
-  -DOPENSIM_COPY_DEPENDENCIES=ON \
-  -DOPENSIM_INSTALL_UNIX_FHS=ON \
-  -DOPENSIM_DISABLE_LOG_FILE=ON
-cmake --build build/opensim --parallel
-cmake --install build/opensim
+```text
+model_id       = "sha256:" + SHA256(osim_file_bytes)
+model_name     = model.getName()
+segments       = each BodySet item's canonical absolute component path
+display_name   = body.getName()
 ```
 
-The official all-features Linux script installs visualization, Java, SWIG, Python, C3D and optional Moco dependencies. Those are unnecessary for this node; use the release's CMake options to produce a smaller headless runtime. Validate the exact command on both target architectures and record checksums of the resulting artifact.
+Store the canonical body/segment path as the mapping value. At apply time, resolve the actual orientation target frame:
 
-Install ROS-side dependencies through rosdep/apt:
+1. Prefer an existing OpenSense-compatible sensor frame/IMU associated with that body.
+2. Otherwise use the body `PhysicalFrame` with the existing reference-pose mounting-offset correction.
+3. Reject mappings whose frame cannot be resolved; do not silently fall back to a similarly named component.
 
-```bash
-sudo apt install \
-  ros-humble-rclcpp \
-  ros-humble-message-filters \
-  ros-humble-sensor-msgs \
-  ros-humble-std-srvs \
-  ros-humble-diagnostic-updater \
-  ros-humble-ament-cmake-gtest
+OpenSense expects sensor observations to correspond to Frames in the model and commonly names them `<bodyname>_imu`. Therefore the UI vocabulary can be model bodies, but the backend must explicitly resolve and report the frame actually tracked.
 
-export OpenSim_DIR=/opt/opensim-4.6/lib/cmake/OpenSim
-colcon build --packages-select rehab_robotics_opensim
+### Studio
+
+| File | Required change | Stack impact |
+|------|-----------------|--------------|
+| `rehab-robotics-studio/src/data/RosbridgeDataSource.ts` | Add inventory/model/mapping subscriptions, Identify and Apply service calls, subscription IDs, and matching unsubscribe messages. | Keep direct WebSocket protocol; do not install `roslibjs`. |
+| `rehab-robotics-studio/src/data/appDataSource.ts` | Expose discovery/mapping controls separately from sample `DataSource`; do not collapse unavailable ROS into persisted mock mappings. | No library. |
+| `rehab-robotics-studio/src/state/` | Add a dedicated sensor-mapping store using `persist`; keep current `systemStore` focused on runtime status. | Use `zustand/middleware`, already installed. |
+| `rehab-robotics-studio/src/types/` | Add full transport-boundary types and canonical MAC normalization/validation helpers. | TypeScript only; no validation package is warranted for these small closed schemas. |
+
+Persisted store pattern:
+
+```typescript
+persist(
+  (set) => ({
+    mappingsByModelId: {},
+    // actions...
+  }),
+  {
+    name: 'rehab-sensor-mappings',
+    version: 1,
+    partialize: (state) => ({
+      mappingsByModelId: state.mappingsByModelId,
+    }),
+    migrate: (persisted, version) => {
+      // Explicit future schema migration.
+      return persisted
+    },
+  },
+)
 ```
 
-Link the executable with the OpenSim CMake package:
+On hydration or reconnect:
+
+1. Wait for current model metadata.
+2. Select only the entry whose `model_id` exactly matches.
+3. Normalize and match full MACs.
+4. Remove assignments whose segment paths are absent from the current metadata.
+5. Detect duplicates/incompleteness locally.
+6. Call `ApplySensorMapping`.
+7. Mark mappings applied only after backend success.
+
+The backend remains authoritative for the active mapping. `localStorage` is a remembered operator preference, not proof that OpenSim is currently routed.
+
+## Installation
+
+No new third-party installation is recommended.
+
+The only build-system addition is generating the new local services:
 
 ```cmake
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-find_package(OpenSim 4.6 REQUIRED)
-find_package(rclcpp REQUIRED)
-find_package(message_filters REQUIRED)
-find_package(sensor_msgs REQUIRED)
-find_package(diagnostic_updater REQUIRED)
-
-ament_target_dependencies(opensim_bridge
-  rclcpp message_filters sensor_msgs diagnostic_updater)
-target_link_libraries(opensim_bridge ${OpenSim_LIBRARIES})
+# rehab_robotics_interfaces/CMakeLists.txt
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/ProcessingBlockUpdate.msg"
+  "msg/DeviceMapping.msg"
+  "srv/IdentifyDevice.srv"
+  "srv/ApplySensorMapping.srv"
+  DEPENDENCIES std_msgs
+)
 ```
 
-### Windows development
+Rebuild and source the interfaces before the Python backend and before starting rosbridge:
 
-Use the existing WSL2 Ubuntu 22.04/Humble environment as the authoritative development runtime. It matches Linux path, compiler, loader, ROS, and OpenSim behavior closely enough for deterministic local validation.
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --packages-select rehab_robotics_interfaces rehab_robotics_bridge
+source install/setup.bash
+```
 
-OpenSim's native Windows or Conda package can run offline exploratory scripts, but do not make native Windows output the only test oracle. Native Windows ROS, MSVC-built OpenSim, and Linux/GCC-built OpenSim are different binary ecosystems.
+No `npm install` should be necessary. Import persistence from the installed package:
 
-### Jetson compatibility gate
-
-JetPack 6.2.1 uses an Ubuntu 22.04-based Jetson Linux release and is the clean match for ROS 2 Humble. JetPack 6 supports Jetson Orin modules. Before implementation, record:
-
-- exact Jetson module (Orin versus Xavier family),
-- JetPack/L4T version,
-- architecture (`aarch64`),
-- available RAM/swap and storage,
-- whether ROS Humble is native Jammy apt or container/custom source installed.
-
-If the target is an Orin on JetPack 6.x, build OpenSim 4.6 natively or in an equivalent ARM64 build environment and deploy the relocatable prefix. If it is a Xavier restricted to JetPack 5/Ubuntu 20.04, native Humble Jammy packages are not a supported match; that is a platform decision requiring a container/source-build plan or OS/hardware change. Do not bury this incompatibility inside the IK phase.
-
-OpenSim/Simbody IK is CPU work. CUDA, TensorRT, cuDNN, Isaac ROS, and GPU containers do not accelerate this solver and should not be added.
+```typescript
+import { persist } from 'zustand/middleware'
+```
 
 ## Alternatives Considered
 
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| C++ `rclcpp` node with source-built OpenSim 4.6 | Python `rclpy` + OpenSim Conda | Only for a disposable x86-64 desktop prototype. OpenSim 4.6 lacks official Python 3.10 and Linux ARM64 Conda artifacts. |
-| OpenSim 4.6 | OpenSim 4.5.2 | Use 4.5.2 only if an already-validated model/plugin fails on 4.6 and the incompatibility is documented. Version 4.5.2 does have official Python 3.10 x86-64 packages, but still no Jetson Linux ARM64 package. |
-| Persistent `InverseKinematicsSolver` + `BufferedOrientationsReference` | `IMUInverseKinematicsTool` | Use the tool for recorded `.sto` batch validation and comparison, not for a callback-driven stream. |
-| In-memory known-pose calibration | `IMUPlacer` with a temporary `.sto` | Use `IMUPlacer` offline to generate/verify calibrated `.osim` fixtures or as an oracle in a test. |
-| Exact timestamp synchronization | Approximate-time synchronization | Use approximate time only when upstream cannot stamp the pair identically; enforce explicit skew and age limits. |
-| Prebuilt per-architecture OpenSim prefix | Build OpenSim inside every colcon build | A full source build in colcon is acceptable only for dedicated CI/vendor packaging, not normal iteration on WSL or Jetson. |
+| Recommended | Alternative | When to use the alternative |
+|-------------|-------------|-----------------------------|
+| Zustand `persist` + browser `localStorage` | Backend JSON file | Use a backend file only if mappings must be shared across browsers/operators or survive browser storage clearing. If added later, use Python stdlib JSON plus atomic replace; SQLite is still unnecessary. |
+| Full-MAC inventory topic + typed command services | ROS parameters for the entire mapping | Parameters can hold string arrays and are useful for launch defaults, but they do not model device liveness and make an acknowledged multi-object mapping transaction awkward. |
+| Local custom services | JSON command topic with request IDs | A command topic is acceptable only if generating local services becomes operationally impossible. It must then include correlation IDs, timeout, idempotency, and an acknowledgement topic. |
+| Existing raw rosbridge client | `roslibjs` | Add `roslibjs` only if the frontend expands into broad ROS graph introspection/actions and maintaining the small protocol client is demonstrably more expensive. It brings no needed capability for this milestone. |
+| OpenSim API enumeration | Parse `.osim` XML in browser or Python XML | XML parsing is acceptable only for an offline recovery/inspection tool when OpenSim cannot load. It must not define the selectable runtime model vocabulary. |
+| Canonical body/component path | Display name or array index | Display names are for UI only. Array indices and model ordering are not persistence identities. |
+| Dynamic subscriptions inside one OpenSim node | Restart one node per mapping | Process restart may be retained as a recovery path, not the normal Apply action. Runtime subscription replacement is simpler and preserves status/service continuity. |
 
 ## What NOT to Add
 
-| Avoid | Why | Use Instead |
+| Avoid | Why | Use instead |
 |-------|-----|-------------|
-| OpenSim GUI or embedded 3D renderer | Visualization is explicitly deferred and pulls unrelated graphics dependencies | Headless OpenSim API and standard ROS outputs |
-| `IMUInverseKinematicsTool::run()` per frame | It loads an orientation file, initializes the solver, iterates a table, and writes batch results | Persistent streaming reference and solver |
-| Python OpenSim 4.6 in the Humble interpreter | Official package versions do not target Python 3.10, and no Linux ARM64 artifact exists | C++20 OpenSim node |
-| Conda as the Jetson runtime | The official channel lists `linux-64`, not `linux-aarch64` | Pinned ARM64 source build |
-| OpenSimLive as the primary dependency | It is useful prior art, but its published implementation targeted OpenSim 4.1 and adds another integration layer | Use the upstream OpenSim 4.6 streaming APIs directly |
-| Moco/CasADi/Ipopt | Trajectory optimization is not frame-by-frame orientation IK and substantially increases build size | `InverseKinematicsSolver` |
-| CUDA/TensorRT/Isaac ROS | The chosen solver is CPU-based; these do not remove its bottleneck | Profile the C++ solver and reduce model DOFs if needed |
-| Generic full-body model with only two equally weighted IMUs | Two orientations do not observe every full-body coordinate, producing plausible but non-identifiable motion | A reduced, constrained model with only intended coordinates unlocked |
-| Extra Eigen/SciPy quaternion layer | Increases convention and ownership ambiguity | Boundary conversion followed by SimTK rotations |
-| Unbounded callback/solver queue | Produces growing latency while appearing healthy | Bounded newest-sample queue plus dropped-frame diagnostics |
-| Docker packaging in this milestone | Project scope explicitly defers broader Docker packaging | Native WSL2 and Jetson prefixes with recorded build metadata |
+| SQLite, IndexedDB wrapper, Supabase, or another database | The data is a small local map keyed by model hash and MAC. A database adds migrations, ownership, and deployment work with no milestone value. | Zustand `persist`/`localStorage`; optionally stdlib atomic JSON later. |
+| `roslibjs` | The project already implements the required rosbridge operations and session-safety behavior. Replacing it creates regression risk without adding a needed feature. | Extend `RosbridgeDataSource.ts`. |
+| ROS 2 dynamic types/introspection subscription packages | Every dynamic topic is still `sensor_msgs/msg/Imu`; only topic names/count vary. Humble can create ordinary subscriptions at runtime. | `create_subscription`/`destroy_subscription`. |
+| `message_filters` solely for mapping | The current solver already owns freshness/calibration behavior; variable sensor sets need an explicit keyed freshness window, not a fixed compile-time synchronizer graph. | A bounded MAC-keyed latest-sample barrier with source timestamp/skew checks. |
+| A second `.osim` parser | It can disagree with what OpenSim actually loads and cannot resolve runtime component/frame semantics safely. | OpenSim `Model`, `BodySet`, and Component APIs. |
+| Upgrade to OpenSim 4.6/C++ for v1.6 | v1.5 deliberately selected and validated the 4.5.2 Python path. Multi-device collection generalization does not require a solver-platform migration. | Generalize the existing 4.5.2 adapter. |
+| MQTT, mDNS/Bonjour, ZeroMQ, WebRTC, or a ROS discovery server | ESP-NOW discovery already occurs at the Master, and ROS DDS discovery already exists. These introduce a second discovery truth. | Publish the Master's MAC-keyed inventory through ROS. |
+| IP address as device identity | DHCP order changes, especially in the current Windows/WSL relay topology. | Full ESP-NOW interface MAC. |
+| 32-bit `slave_id` as device identity | It truncates the hardware identity even though the full source MAC is available. | Canonical 48-bit MAC string/bytes. |
+| `FastLED`, NeoPixel, or a timer library for Identify | Identify is one onboard LED and a deadline. Extra firmware libraries enlarge the compatibility surface. | `LED_BUILTIN`/board pin plus `millis()` or an existing FreeRTOS timer. |
+| Persisting the active mapping only in ROS parameters | ROS parameter lifetime is tied to the node unless the application implements persistence. | Studio persistence keyed by backend-provided model hash, followed by acknowledged reapply. |
+| One topic subscription per device in the browser | It sends high-rate sensor data through JSON and makes UI cost scale with sensor count. | Browser subscribes to inventory/health/status; OpenSim subscribes to native IMU topics inside ROS. |
+
+## Stack Patterns by Variant
+
+**If the Master can forward every peer sample with its MAC over the existing host connection:**
+
+- Use one hardware ingress plus a MAC-keyed fan-out in `esp32_bridge_node.py`.
+- Keep Windows/WSL relay topology constant as sensor count grows.
+- This is the preferred operational shape, subject to a phase-specific transport contract and throughput test.
+
+**If each Slave must retain an independent TCP/UDP sample stream:**
+
+- Generalize `stepesp_tcp_udp_relay.py` and the PowerShell launcher to an endpoint table.
+- Correlate each endpoint to the full MAC from a firmware handshake/inventory record before publishing.
+- Never persist or map by discovered IP.
+
+**If mappings must be shared among multiple Studio browsers:**
+
+- Move the same versioned mapping document to the backend.
+- Use Python stdlib JSON with write-temp, `fsync`, and atomic `os.replace()` under a configurable WSL path.
+- Keep the browser cache as a convenience only; still do not add SQLite until concurrent writers or query requirements exist.
+
+**If a loaded model has explicit `<body>_imu` frames:**
+
+- Present body segment labels but report the resolved IMU frame path in model metadata.
+- Track that frame after validating it belongs to the selected body.
+
+**If a model has bodies but no explicit IMU frames:**
+
+- Use the body `PhysicalFrame` as the IK observation target after the existing mounting-offset calibration transforms device orientation into body orientation.
+- Fail closed if the current 4.5.2 binding cannot construct the required reference labels for that path; do not create an unpersisted, silently modified model in the browser.
 
 ## Version Compatibility
 
-| Package / platform | Compatible With | Notes |
-|--------------------|-----------------|-------|
-| OpenSim 4.6 | CMake >=3.15, C++20 | Current release; `BufferedOrientationsReference` and orientation IK APIs remain available. |
-| OpenSim 4.6 Conda | Python 3.11, 3.12, 3.13 on `linux-64`; Windows x64 and macOS variants also published | No official Python 3.10 build and no `linux-aarch64` build in the official file list. |
-| OpenSim 4.5.2 Conda | Python 3.10/3.11/3.12 on x86-64 desktop platforms | Possible offline Python fallback, not a Jetson deployment solution. |
-| ROS 2 Humble debs | Ubuntu 22.04 Jammy; Python 3.10; ARM64 packages | Matches current WSL environment and JetPack 6.x Ubuntu base. |
-| JetPack 6.2.1 | Ubuntu 22.04-based Jetson Linux; Orin family | Recommended Jetson baseline for native Humble. Confirm the actual target before scheduling ARM64 packaging. |
-| JetPack 5.x / Xavier | Ubuntu 20.04-based platform | Does not natively align with Humble's Jammy binary target; requires an explicit platform strategy. |
-| `sensor_msgs/JointState` | radians/metres positions | OpenSim rotational coordinate values can be published directly in radians. |
+| Package/platform | Compatible with | Notes |
+|------------------|-----------------|-------|
+| React 18.3.1 | Zustand 4.5.7; TypeScript 5.9.3 resolved | Current lockfile. No React upgrade is required. |
+| Zustand 4.5.7 | `persist` middleware and default `localStorage` JSON storage | Use `version`, `migrate`, and `partialize` from the included middleware. |
+| Vite 5.4.21 resolved | Current Node environment and existing build | Workspace `#` path remains a reason to use the existing build/preview launch pattern. |
+| ROS 2 Humble | Ubuntu 22.04, Python 3.10.12 | Keep generated interfaces and backend built/sourced in the same Humble overlay. |
+| rosbridge server 2.0.7 | Rosbridge v2 JSON operations | Custom local service types must be installed and sourced before rosbridge starts. Give every dynamic browser subscription a unique ID and unsubscribe it explicitly. |
+| OpenSim 4.5.2 Python | Existing `rehab-opensim` micromamba environment and WSL runner | Do not import it into native Windows Python. Model paths are WSL paths and must be consumed by the backend. |
+| Arduino ESP32 core 3.3.10 | Current XIAO ESP32S3 build | Update both sketches together. Do not copy callback signatures from older Arduino core examples. |
+| Firmware command/status v2 | Current packet-size/version checks | Adding Identify fields/commands requires a deliberate compatible extension or version bump; mixed firmware must surface as incompatible. |
+| MAC topic slug | ROS name grammar | Colons are metadata only; replace them with underscores for topic path tokens and preserve reversible canonicalization. |
 
-## Validation Required Before Roadmap Execution
+## Validation Gates for Roadmap
 
-1. Build a minimal OpenSim 4.6 C++ program in WSL2 that loads the intended model, confirms both configured sensor frames are in use, calls `assemble()`, then calls `track()` across a deterministic quaternion sequence.
-2. Confirm the exact Jetson module/JetPack and complete the same smoke test on ARM64 before treating deployment as solved.
-3. Compare one recorded fixture against `IMUPlacer` + `IMUInverseKinematicsTool` offline results within documented tolerances.
-4. Benchmark solve time at the intended IMU rate using the reduced production model. If it misses deadline, simplify/lock coordinates before considering new compute libraries.
-5. Verify orientation-error units and frame direction with a known single-axis pose, rather than relying on labels or visual plausibility.
+1. Verify the Master publishes its actual ESP-NOW interface MAC and that each Slave inventory MAC exactly matches the receive callback's six-byte source address.
+2. Connect at least two Slaves whose DHCP addresses change and prove mappings restore by MAC, not IP or row order.
+3. Load two `.osim` files with the same filename but different bytes and prove they receive different `model_id` values.
+4. Enumerate a model with explicit `_imu` frames and one without them; record the selected segment path and resolved tracking frame.
+5. Apply a mapping while running and prove old subscriptions are destroyed, new subscriptions are active once, calibration is invalidated, and no obsolete callback updates state.
+6. Reject duplicate segment assignment, unknown MAC, stale `model_id`, missing frame, and incomplete required mapping as one atomic failure.
+7. Restart rosbridge/backend and prove the Studio waits for model metadata before reapplying persisted mappings.
+8. Issue Identify to Master, each Slave, an offline MAC, and an unknown MAC; prove the LED timer never blocks sampling and results distinguish acknowledged, sent-only, stale, and failed.
+9. Run the multi-sensor path entirely under the existing Windows/WSL/Humble/OpenSim 4.5.2 launcher before considering any dependency upgrade.
 
 ## Sources
 
-### OpenSim primary sources
+### Repository evidence
 
-- OpenSim 4.6 release and C++20 change: https://github.com/opensim-org/opensim-core/releases/tag/4.6
-- OpenSim 4.6 core source and official build support: https://github.com/opensim-org/opensim-core/tree/4.6
-- Live orientation reference API (`putValues`, queue semantics): https://github.com/opensim-org/opensim-core/blob/4.6/OpenSim/Simulation/BufferedOrientationsReference.h
-- Live reference implementation: https://github.com/opensim-org/opensim-core/blob/4.6/OpenSim/Simulation/BufferedOrientationsReference.cpp
-- IK constructors, `assemble`, `track`, sensor errors, and streaming time control: https://github.com/opensim-org/opensim-core/blob/4.6/OpenSim/Simulation/InverseKinematicsSolver.h
-- Batch OpenSense IK implementation and its `1e-4` accuracy: https://github.com/opensim-org/opensim-core/blob/4.6/OpenSim/Tools/IMUInverseKinematicsTool.cpp
-- `IMUPlacer` calibration-frame implementation: https://github.com/opensim-org/opensim-core/blob/4.6/OpenSim/Simulation/OpenSense/IMUPlacer.cpp
-- OpenSim dependency superbuild and headless Simbody option: https://github.com/opensim-org/opensim-core/blob/4.6/dependencies/CMakeLists.txt
-- Official OpenSim Conda file/platform matrix: https://anaconda.org/opensim-org/opensim/files
-- OpenSense batch tool documentation: https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53084203/OpenSense+-+Kinematics+with+IMU+Data
-- SimTK quaternion scalar-first representation: https://simbody.github.io/3.6.0/Quaternion_8h_source.html
+- `rehab-robotics-studio/package.json` and `package-lock.json` - React, Zustand, TypeScript, Vite, and YAML versions.
+- `backend/package.xml`, `backend/setup.py`, and `rehab_robotics_interfaces/CMakeLists.txt` - current Humble Python package and local ROS interface generator boundary.
+- `backend/rehab_robotics_bridge/esp32_bridge_node.py` - fixed Master/Slave health, existing control queue, `sensor_msgs/Imu`, and JSON status topics.
+- `backend/rehab_robotics_bridge/opensim_node.py` - two fixed subscriptions and two sensor states.
+- `backend/rehab_robotics_bridge/opensim/opensim_orientation_ik.py` - OpenSim 4.5.2 decision and two-column quaternion table.
+- `rehab-robotics-studio/src/data/RosbridgeDataSource.ts` - direct rosbridge operations and fixed pair subscriptions.
+- `firmware/step_node/step_node.ino` and `firmware/step_node_slave/step_node_slave.ino` - full peer MAC slots, unicast peer registration, versioned packets, lower-32-bit `slave_id`, and command enum.
+- `logs/arduino_build_master_current/build.options.json` - Arduino ESP32 core 3.3.10.
+- Live WSL inspection on 2026-07-30 - Python 3.10.12, `ros-humble-rosbridge-server` 2.0.7, and OpenSim `4.5.2-2025-05-03-6a4c6ec41`.
 
-### ROS and NVIDIA primary sources
+### Primary documentation
 
-- ROS 2 Humble QoS and sensor-data profile: https://docs.ros.org/en/humble/Concepts/Intermediate/About-Quality-of-Service-Settings.html
-- Humble `message_filters` C++ API: https://docs.ros.org/en/ros2_packages/humble/api/message_filters/generated/index.html
-- `sensor_msgs/JointState` units: https://docs.ros.org/en/ros2_packages/humble/api/sensor_msgs/msg/JointState.html
-- Humble `diagnostic_updater`: https://docs.ros.org/en/ros2_packages/humble/api/diagnostic_updater/index.html
-- NVIDIA JetPack 6.2.1 release notes and Orin support: https://docs.nvidia.com/jetson/jetpack/6.2.1/release-notes/index.html
-- NVIDIA Jetson Linux 36.x Ubuntu 22.04 release basis: https://docs.nvidia.com/jetson/archives/r36.4/ReleaseNotes/Jetson_Linux_Release_Notes_r36.4.pdf
-
-### Corroborating implementation research
-
-- OpenSimLive paper (useful evidence for persistent real-time C++ IK, but based on OpenSim 4.1): https://pmc.ncbi.nlm.nih.gov/articles/PMC10082569/
+- Zustand persist middleware (Context7 `/pmndrs/zustand`, official repository docs): https://github.com/pmndrs/zustand/blob/main/docs/reference/integrations/persisting-store-data.md
+- ROS 2 Humble `rclpy` API: https://docs.ros.org/en/ros2_packages/humble/api/rclpy/index.html
+- ROS 2 Humble parameter lifetime and runtime parameter behavior: https://docs.ros.org/en/humble/Concepts/Basic/About-Parameters.html
+- Rosbridge v2 protocol, including subscription IDs, unsubscribe, and service calls: https://github.com/RobotWebTools/rosbridge_suite/blob/ros2/ROSBRIDGE_PROTOCOL.md
+- OpenSim 4.5 Model API (`Model(filename)`, `getBodySet()`, component model): https://opensim-org.github.io/opensim-moco-site/docs/1.3.0/html_user/classOpenSim_1_1Model.html
+- OpenSense model/frame naming and sensor-to-body mapping: https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53084203/OpenSense+-+Kinematics+with+IMU+Data
+- Espressif ESP-NOW API (`esp_now_send(peer_addr, ...)`, peer MAC/interface, acknowledgement limitation): https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/network/esp_now.html
+- Arduino-ESP32 ESP-NOW peer API: https://docs.espressif.com/projects/arduino-esp32/en/latest/api/espnow.html
 
 ---
-*Stack research for: Rehab Robotics Studio v1.4 Real-time OpenSim IK*
-*Researched: 2026-07-27*
+*Stack research for: Rehab Robotics Studio v1.6 Multi-Sensor Bone Mapping*
+*Researched: 2026-07-30*

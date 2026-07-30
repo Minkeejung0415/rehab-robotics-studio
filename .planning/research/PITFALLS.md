@@ -1,445 +1,387 @@
 # Pitfalls Research
 
-**Domain:** Real-time quaternion-driven OpenSim/OpenSense-compatible IK in ROS 2
-**Researched:** 2026-07-27
-**Confidence:** HIGH for OpenSense/ROS contracts; MEDIUM for numerical thresholds until measured on the target model and hardware
-
-## Recommended Prevention Phases
-
-The roadmap should continue numbering after the existing phases and preserve this dependency order:
-
-1. **Phase 15 — OpenSim Runtime and Model Contract:** pin and prove the OpenSim environment; validate the model, component paths, coordinate projection, mappings, and units.
-2. **Phase 16 — Orientation Ingress and Pair Integrity:** define quaternion semantics once; validate, normalize, canonicalize, synchronize, age, and diagnose both inputs.
-3. **Phase 17 — Reference-Pose Calibration:** implement a bounded, stable capture; derive sensor-to-model transforms; version and validate the resulting artifact.
-4. **Phase 18 — Real-time IK and Safe ROS Outputs:** give one worker ownership of OpenSim state, bound backlog and latency, publish quality and health, and fail closed on stale/failed solutions.
-5. **Phase 19 — Deterministic and Biomechanical Validation:** compare live and offline results, exercise known rotations and recorded motion, quantify repeatability/drift/accuracy, and constrain product claims.
-
-Phase 16 should depend on the existing Phase 10 orientation/timestamp integrity contract. Phase 19 is not optional polish: it is what distinguishes a functioning numerical pipeline from a valid measurement pipeline.
+**Domain:** Multi-sensor ESP-NOW discovery, stable hardware identity, per-model OpenSim mapping, and dynamic ROS 2 routing
+**Researched:** 2026-07-30
+**Confidence:** HIGH for failure modes and repository integration risks; MEDIUM for hardware-specific LED behavior, maximum peer load, and runtime creation of OpenSim IMU frames until exercised on the pinned hardware/runtime
 
 ## Critical Pitfalls
 
-### Pitfall 1: Correct numbers interpreted with the wrong quaternion convention
+### Pitfall 1: Truncated or Mutable Device Identity
 
 **What goes wrong:**
-A stream remains finite and smooth but produces mirrored motion, inverted flexion, swapped axes, or a constant 90°/180° error. Common mismatches are ROS field order `(x,y,z,w)` versus scalar-first library constructors, active versus passive rotation, sensor-to-world versus world-to-sensor direction, and ROS/OpenSim axis or handedness assumptions. Calibration can absorb a constant mistake and make the reference pose look correct while dynamic rotations remain wrong.
+A saved segment assignment, ROS route, or Identify command points at the wrong physical IMU. Two devices can collapse into one row when the current 32-bit `slave_id` collides, while DHCP address, ESP-NOW slot, discovery order, and Master/Slave role can all change without the hardware changing.
 
 **Why it happens:**
-“Quaternion” does not fully specify component order or frame semantics. `geometry_msgs/Quaternion` fixes field order but does not declare what frames the rotation maps. OpenSense separately requires a sensor-coordinate-to-OpenSim transformation and associates orientations with named model IMU Frames.
+The current pair-oriented path already exposes convenient role names, IPs, and a truncated ID. Reusing those values is easier than carrying a verified six-byte identity through firmware, relay, ROS, rosbridge, persistence, and UI schemas.
 
 **How to avoid:**
-- Write one boundary contract using explicit notation, for example `R_GS` = rotation that expresses sensor-frame vectors in OpenSim ground.
-- Convert ROS fields to the OpenSim/SimTK constructor in one adapter only. Do not pass four-element arrays between layers.
-- Define every multiplication direction and handedness in code comments, configuration schema, model metadata, and calibration artifact.
-- Test identity and positive/negative 90° rotations about each sensor axis. Verify the resulting rotation matrix, calibrated model IMU Frame, and expected model coordinate sign—not only round-trip quaternion equality.
-- Keep global sensor-to-OpenSim axes separate from per-sensor mounting offsets and heading correction.
+Use one normalized full 48-bit hardware identity at every persistence and routing boundary, with an explicit distinction between stable base MAC and the interface MAC used for ESP-NOW transport. Reject malformed, all-zero, broadcast, duplicate, or changing identities. Keep IP, role, connection state, and segment assignment as mutable metadata. Derive ROS-safe topic tokens reversibly from the canonical MAC, never from a role or model segment.
 
 **Warning signs:**
-Reference pose fits but motion about X changes a Y/Z coordinate; left and right motion are mirrored unexpectedly; an inverse/conjugate “fix” appears in several files; results depend on whether calibration occurred before or after an axis conversion.
+- IDs contain only eight hexadecimal digits.
+- Maps or React rows are keyed by `master`, `slave`, array index, slot, or IP.
+- A route is accepted before an identity handshake completes.
+- A device changes identity when DHCP order changes.
+- Two full MACs share a persistence key or topic.
 
 **Phase to address:**
-Phase 16, with a model-frame integration test repeated in Phase 17.
+Phase 1: Identity and Targeted Identify establishes the full-MAC protocol and normalization contract. Phase 2 must enforce that contract in relay routes and canonical ROS topics.
 
 ---
 
-### Pitfall 2: Treating raw quaternion samples as ordinary four-vectors
+### Pitfall 2: Reconnect Rebinds by Discovery Order
 
 **What goes wrong:**
-Zero-norm, NaN, Inf, or grossly non-unit inputs poison calibration or the solver. Averaging or interpolating antipodes `q` and `-q` can collapse toward zero or take the long path even though they represent the same physical rotation. Sign flips can also create false angular-velocity spikes in diagnostics.
+After a power cycle or DHCP reorder, a returning sensor appears as a new row, inherits another device's route, or takes over the legacy `/esp32/slave/*` alias. Saved placement is lost or silently attached to the wrong limb.
 
 **Why it happens:**
-Unit quaternions live on a sphere and have a double cover: `q` and `-q` represent the same rotation. Component-wise filtering and arithmetic ignore both properties.
+The current startup path assumes one Slave, and "first discovered" works in a two-device demo. Dynamic discovery then gets implemented as an append-only array whose indices and IPs become accidental identity.
 
 **How to avoid:**
-- Reject non-finite and near-zero-norm inputs; reject gross norm errors and only normalize within a documented tolerance.
-- Before averaging, interpolation, or differencing, choose a hemisphere relative to the previous/reference quaternion (`if dot(q, q_ref) < 0, use -q`).
-- Use a rotation-aware mean for calibration and an angular distance such as `2*acos(clamp(abs(dot(q1,q2)),0,1))`.
-- Count normalization, antipode corrections, and invalid rejections per sensor.
-- Preserve the original measurement timestamp after normalization; normalization is not a new measurement.
+Reconcile every live update into a MAC-keyed registry. Preserve known offline rows and route records, update the same record when that MAC returns, and flush pre-disconnect samples before declaring the route ready. A different MAC at the old IP is a new unassigned device. Sort presentation deterministically without making sort order semantic. Persist one explicit `legacy_slave_id`; never recalculate it from discovery order.
 
 **Warning signs:**
-Quaternion component plots jump sign while the device is still; calibration mean norm approaches zero; sporadic 360° jumps appear; invalid samples cause all later outputs to become NaN.
+- Rows jump as heartbeats arrive.
+- Offline rows disappear automatically.
+- Route keys are local ports or source IPs without a confirmed MAC.
+- Reconnect increments mapping revision despite no configuration change.
+- The legacy Slave alias changes after a restart.
 
 **Phase to address:**
-Phase 16; deterministic regression coverage belongs in Phase 19 and should also satisfy existing Phase 10 antipode/normalization requirements.
+Phase 2: N-Route Relay and Canonical ROS Fleet Topics. Verify the full behavior again in Phase 5 UI tests and Phase 6 hardware reconnect tests.
 
 ---
 
-### Pitfall 3: Calibrating an unknown or moving reference pose
+### Pitfall 3: Non-Transactional Mapping and Stale Model Revisions
 
 **What goes wrong:**
-Sensor-to-segment offsets, heading, or model default coordinate errors become baked into every joint angle. A single noisy first frame makes results session-dependent. Reusing a calibration after a sensor moves, the model changes, or roles are swapped yields plausible but invalid kinematics.
+Some OpenSim subscriptions switch to a new mapping while others remain on the old one, a browser tab overwrites a newer configuration, or a mapping created for one `.osim` revision is silently applied to different model contents. The system can display "applied" while the solver still uses a mixed or prior route set.
 
 **Why it happens:**
-OpenSense's basic calibration registers orientation data to the model's declared/default pose. It estimates orientation relationships, not sensor position, model scale, or anatomical landmarks. Operators may not reproduce the assumed pose precisely, and soft-tissue-mounted sensors can shift.
+Incremental row mutations are easy to send, filenames look like stable model identifiers, and live solver objects are tempting to mutate during validation. Browser persistence can also be mistaken for backend authority.
 
 **How to avoid:**
-- Capture a bounded window of synchronized pairs, not “the next sample.”
-- Require stillness/low dispersion, sufficient samples, fresh streams, expected sensor identities, and an explicit reference-pose coordinate set.
-- Compute and retain separate global-axis/heading and per-sensor mounting transforms.
-- Store model hash, mapping/config hash, sensor roles and frame IDs, capture time, software version, sample count, dispersion, reference pose, and transforms in an immutable calibration artifact.
-- Invalidate calibration on model/mapping/frame-ID changes or explicit sensor-remount events.
-- Verify calibration on held-out reference-pose samples and one non-reference known pose; do not accept solely because the calibration samples fit.
+Compute `model_id` from the exact `.osim` bytes. Send the complete candidate with an `expected_revision`; validate model ID, device IDs, segment paths, frame resolution, route readiness, uniqueness, and solver requirements before mutation. Stage subscriptions, model frames, solver, and visualizer off to the side, then swap one applied revision atomically. On any failure retain the prior applied mapping and calibration only if both still match. Persist with write-temp, flush, and atomic replace; preserve corrupt data for recovery. Studio must wait for authoritative backend status before showing a revision as applied.
 
 **Warning signs:**
-Every recalibration changes neutral angles materially; neutral fits but a 90° fixture does not; calibration succeeds while the subject moves; swapping master/slave topics still yields “valid” output; an old calibration loads against a different model.
+- Mapping is keyed by model filename or path alone.
+- Apply consists of multiple per-row service calls.
+- `applied=true` is set from a service response before status confirms the revision.
+- Failed Apply leaves a partially changed subscription set.
+- Two browser tabs can save without revision conflict.
+- Model bytes change but the old mapping auto-applies.
 
 **Phase to address:**
-Phase 17.
+Phase 3: Model Catalog and Persistent Mapping Contracts. Phase 5 must preserve draft-versus-authoritative revision semantics in Studio.
 
 ---
 
-### Pitfall 4: Pairing by callback arrival instead of measurement time
+### Pitfall 4: Duplicate, Implicitly Unmapped, or Unresolvable Sensors
 
 **What goes wrong:**
-Master and slave orientations from different physical instants are solved as one pose. The error grows during fast motion and may look like joint overshoot, phase lag, or solver instability. Large approximate-sync windows conceal clock errors; overly small windows silently starve the solver. Incompatible ROS QoS can prevent pairing entirely.
+Two IMUs feed one segment, an untouched selector is treated as a deliberate exclusion, or a body display name resolves to the wrong/missing OpenSim Frame. Calibration and IK may remain numerically plausible while using an ambiguous orientation set.
 
 **Why it happens:**
-Wi-Fi, TCP/UDP, ROS executors, and rosbridge introduce variable delay. OpenSense assumes synchronization has already occurred. ROS `message_filters` uses header stamps and explicitly warns that arrival-time/headerless synchronization is unpredictable; its subscribers also need compatible QoS.
+Client-only validation, first/last-wins dictionaries, hard-coded anatomy lists, and fuzzy component-name matching make a demo appear complete. The UI's body vocabulary is also easily confused with the exact Frame labels OpenSense consumes.
 
 **How to avoid:**
-- Use device acquisition time propagated into `header.stamp`; never silently replace it with callback or solve time.
-- Validate each sensor's timestamp monotonicity, clock epoch, sequence gaps, duplicates, and backward jumps before pairing.
-- Use exact or bounded approximate matching with configurable maximum skew and queue age derived from measured hardware distributions.
-- Expire unmatched samples and publish pair/drop/skew/age counters and percentiles.
-- Use compatible sensor-data QoS on both publisher/subscriber paths and test it with the actual launch graph.
-- Stamp outputs with the paired observation time (and report both source stamps), not publication time.
+Represent every device decision explicitly as assigned, Not used, or Unassigned. Unassigned is incomplete. Enforce one included sensor per canonical segment path both continuously in Studio and authoritatively in the backend. Build choices from the loaded model's `BodySet`, persist absolute component paths, and resolve an exact compatible IMU frame before Apply. Reject ambiguity and unsupported bodies; do not silently fall back to a similarly named joint or frame. Validate a declared solver minimum instead of inferring biomechanical sufficiency from sensor count alone.
 
 **Warning signs:**
-Angles worsen with movement speed; pair skew clusters at the configured maximum; output pauses despite visible input topics; timestamps jump after device reboot; changing network load changes the joint trajectory.
+- Duplicate selectors are merely disabled in the browser but accepted by the service.
+- Mapping dictionaries silently overwrite an earlier device.
+- Empty selection means both "not decided" and "spare."
+- Segment values are display names or hard-coded anatomy.
+- Apply succeeds with an unresolved or ambiguously attached IMU frame.
 
 **Phase to address:**
-Phase 16, dependent on existing Phase 10 timestamp integrity.
+Phase 3: Model Catalog and Persistent Mapping Contracts. Phase 5 adds immediate operator feedback but does not replace backend validation.
 
 ---
 
-### Pitfall 5: Assuming calibration removes orientation drift and mounting artefact
+### Pitfall 5: Solving with Stale or Unsynchronized Samples
 
 **What goes wrong:**
-Heading or relative orientation slowly changes, magnetic disturbances create abrupt yaw errors, and strap/skin motion changes the effective sensor-to-segment transform. IK can redistribute those errors into anatomically plausible coordinates, so a smooth trajectory is not proof of stability.
+OpenSim receives the newest value from each sensor even though those values represent different moments, include data from before a reconnect, or contain a sensor that has stopped updating. Joint output can look smooth and plausible while representing no real simultaneous pose.
 
 **Why it happens:**
-OpenSense consumes already-fused orientations; it is not itself the sensor-fusion or drift-correction layer. Published accuracy depends on the fusion algorithm, magnetic environment, activity, placement, model, and calibration protocol. Some validated workflows show low drift under their tested conditions, but those results do not transfer automatically to this ESP32 system.
+"Latest N" is simple, ROS arrival alone looks like liveness, and holding the last result keeps the UI visually active. Variable sensor count makes a fixed synchronizer awkward, encouraging removal of synchronization checks.
 
 **How to avoid:**
-- Expose upstream fusion status, reset/reboot events, orientation covariance/quality when available, and elapsed time since calibration.
-- Run static pre/post checks and repeated-pose checkpoints; measure angular and joint-coordinate drift over the intended session duration.
-- Detect discontinuities and sustained per-sensor orientation residual increases; mark quality degraded rather than silently recalibrating.
-- Define an operator remount/recalibrate workflow and record calibration revisions.
-- Characterize magnetic/no-magnetic operation on the actual hardware and lab environment before choosing thresholds.
+Maintain one bounded latest-sample record per applied MAC with source timestamp, monotonic arrival time, and connection generation. Solve only from a complete immutable set in deterministic frame order when every mapped sensor is live, quaternion-valid, fresh, within maximum source-time skew, and advanced since the prior solve. On reconnect, increment generation and flush old samples. Stamp output conservatively from contributing source time. If any required input fails, close the JointState gate while keeping acquisition, recording, health, and Identify operational.
 
 **Warning signs:**
-Neutral pose does not return to baseline; errors grow with elapsed time; yaw changes near equipment; one sensor residual shifts after strap adjustment; restarting the ESP32 changes orientation without a calibration state change.
+- Readiness means only "a sample exists."
+- Source timestamps or skew are not measured.
+- A reconnect can immediately reuse cached orientation.
+- JointState continues with a fresh publish timestamp after one sensor stops.
+- Queues grow while the solver falls behind.
 
 **Phase to address:**
-Instrumentation in Phases 16–18; acceptance limits and claims in Phase 19.
+Phase 4: N-Sensor Calibration, Official IK, and Visualizer. Phase 2 must supply per-device connection generations and trustworthy freshness metadata.
 
 ---
 
-### Pitfall 6: Solving more coordinates than two orientations can observe
+### Pitfall 6: Calibration Survives a Semantic Mapping Change
 
 **What goes wrong:**
-The solver returns a unique-looking answer that is driven by model constraints, coordinate priors, initial state, or numerical regularization rather than measurements. Uninstrumented segments and coupled multi-axis coordinates can move without enough independent information. Low residual can coexist with wrong joint angles.
+Mounting offsets captured for one model, device set, body assignment, frame convention, or solver profile are reused after remapping. The pipeline is "calibrated" but transforms orientations under a different semantic contract.
 
 **Why it happens:**
-Orientation IK minimizes disagreement between measured and model IMU Frames subject to model constraints; it does not make unobserved degrees of freedom measurable. Two sensor orientations provide limited independent information, and calibration/model assumptions consume some of that information.
+Calibration is treated as a global boolean or two fixed quaternions. A reconnect and a remap are both represented as generic state changes, so invalidation becomes either too weak or unnecessarily aggressive.
 
 **How to avoid:**
-- Declare the intended body chain, coordinate subset, locks, constraints, priors, and sensor weights explicitly.
-- At startup, resolve every required sensor frame and coordinate; fail on missing/duplicate mappings.
-- Perform a numerical observability/sensitivity study around representative poses: perturb each published coordinate and inspect whether the sensor orientation residual changes independently.
-- Publish only coordinates that are justified by the sensor/model arrangement. Mark model-constrained or inferred values in metadata.
-- Test multiple initial guesses and slow trajectories for solution dependence; large variation signals ambiguity.
+Bind every calibration artifact to `model_id`, applied mapping revision, exact device-to-frame set, convention version, known pose, source interval, and per-device quality metrics. Applying any different model/mapping/frame/profile invalidates calibration and closes IK until explicit recapture. A brief dropout of the same MAC under the unchanged revision may retain the artifact, but output remains gated until fresh synchronized input returns. Capture complete sensor sets transactionally; one moving, stale, or dispersed sensor fails the candidate.
 
 **Warning signs:**
-Different initial states yield different angles with similar residual; coordinates move on segments with no sensor influence; adding a weak prior changes results substantially; the solver reports good fit at impossible known poses.
+- Calibration state is just `true/false`.
+- Artifacts contain `master` and `slave` fields rather than a revision-bound map.
+- Apply does not immediately change state to Uncalibrated.
+- Model reload preserves calibration without comparing hashes.
+- Failed multi-sensor capture partially updates offsets.
 
 **Phase to address:**
-Model contract in Phase 15; observability and publication decision in Phase 19.
+Phase 4: N-Sensor Calibration, Official IK, and Visualizer, using Phase 3's authoritative revisions.
 
 ---
 
-### Pitfall 7: Discovering OpenSim ABI/runtime incompatibility only on launch
+### Pitfall 7: Identify Reports Link-Layer Send as Physical Confirmation
 
 **What goes wrong:**
-The ROS node imports on a developer workstation but fails on the target because the Python ABI, architecture, native shared-library path, OpenSim version, model/plugins, or ROS environment differs. Worse, it starts with a different OpenSim version and produces non-reproducible behavior.
+Studio tells the operator that the selected unit blinked even though the application never received or executed the command. Worse, a broadcast or incorrectly targeted command blinks another strapped device.
 
 **Why it happens:**
-OpenSim's Python interface wraps native C++ libraries. Official installation guidance varies by OpenSim version and platform; manual installations can require `PATH`, `LD_LIBRARY_PATH`, or a source build. ROS Python and OpenSim package constraints may not align automatically.
+The ESP-NOW send callback is readily available and looks like an acknowledgement. Blocking LED code is also an easy implementation for a short demo.
 
 **How to avoid:**
-- Select and pin one OpenSim distribution/version, Python version, OS/architecture, and installation method after a target compatibility spike; do not use unpinned `pip install opensim`.
-- Add a startup self-test that reports `GetVersionAndDate()`, loads the configured model, resolves frames/coordinates, initializes the system, constructs the orientation IK solver, and solves a synthetic identity/reference pose.
-- Keep the pure ROS node testable with a fake solver adapter so local CI does not pretend to test native OpenSim.
-- Add a separate native-runtime smoke test in the deployment environment and document shared-library requirements.
-- Reject calibration artifacts created by incompatible model/config versions.
+Target one verified full MAC, include a unique command ID, and require the Slave to echo that ID and result through application status before the Master and ROS service report confirmation. Distinguish confirmed, sent-unconfirmed, timeout, offline, unsupported, and rejected. Serialize or independently correlate requests. Bound duration, implement LED state with a non-blocking deadline, restore prior state, and advertise Identify only when the board's LED pin and active level are verified safe. Do not guess a pin or broadcast.
 
 **Warning signs:**
-`ImportError`/missing DLL or `.so`; crashes during model initialization; the package works only in an interactive Conda shell; launch and unit tests use different Python interpreters; model plugins are silently absent.
+- Service success is returned directly from `esp_now_send`.
+- No command ID crosses firmware and service boundaries.
+- Identify uses `delay()` in a callback or acquisition loop.
+- Multiple rows can start indistinguishable Identify requests.
+- Firmware always advertises Identify despite unknown LED wiring.
 
 **Phase to address:**
-Phase 15, before live-stream implementation.
+Phase 1: Identity and Targeted Identify. Phase 6 must verify physical LED behavior and unchanged acquisition/recording timing.
 
 ---
 
-### Pitfall 8: Running OpenSim in subscription callbacks or concurrently
+### Pitfall 8: Backward-Compatible Aliases Become a Second Source of Truth
 
 **What goes wrong:**
-Solver work blocks ROS callbacks, sync queues grow, diagnostics stop, latency becomes unbounded, and outputs represent old motion. A multithreaded executor can concurrently mutate one OpenSim `Model`, `State`, reference buffer, or solver, creating races or native crashes. Processing every queued sample after overload preserves throughput statistics while destroying real-time behavior.
+Legacy Master/Slave topics point to arbitrary devices, alias data diverges from canonical per-MAC topics, or role names leak back into mapping and persistence. Existing pair workflows may pass while fleet mode routes a different sensor.
 
 **Why it happens:**
-OpenSim calculations operate on mutable `State`; `InverseKinematicsSolver.track()` is efficient only when the model/goals remain unchanged and the state is already near a valid assembled solution. Native calls can have variable latency and are tempting to place directly in a callback.
+Compatibility is implemented by maintaining two independent pipelines or by selecting the first current Slave on every launch. Once both paths mutate state, their behavior drifts.
 
 **How to avoid:**
-- Give one dedicated worker thread sole ownership of the model, state, live orientation reference, and solver.
-- Subscription callbacks only validate/pair and place the newest pair into a bounded latest-value slot (or very small queue).
-- Call `assemble()` for initialization/reset and `track()` sequentially for accepted nearby states; rebuild/reset after model/calibration changes or tracking failure.
-- Measure queue wait, solve time, end-to-end age, deadline misses, resets, exceptions, and output rate.
-- Drop superseded samples under overload and declare degraded/stale state; never accumulate an unbounded backlog.
-- Benchmark worst-case representative motion on target hardware and set a deadline below the freshness budget, not merely below average sample period.
+Publish canonical per-MAC data once and derive legacy aliases from that same accepted stream. Bind `/esp32/slave/*`, `/esp/raw/slave`, and pair health to an explicit persisted `legacy_slave_id`. Keep legacy launch mode as a rollback path during migration, add schemas and fields additively, and retain old firmware packet parsing with strict version/size checks. Do not remove fixed contracts until discovery, reconnect, mapping restore, calibration/IK, recording, and Studio regression all pass in fleet mode.
 
 **Warning signs:**
-Input frequency is healthy but output age grows; stopping motion causes the output to “catch up”; diagnostics freeze during solves; failures are load-dependent; native crashes appear only with a multithreaded executor.
+- Canonical and alias publishers parse hardware independently.
+- Alias selection uses list position.
+- `body_segment` remains authoritative in the acquisition bridge.
+- Old firmware is parsed as the new packet layout.
+- Legacy tests are removed before fleet hardware acceptance.
 
 **Phase to address:**
-Phase 18.
+Phase 2: N-Route Relay and Canonical ROS Fleet Topics, with removal gates exercised in Phase 6.
 
 ---
 
-### Pitfall 9: Treating display labels as a stable model-coordinate contract
+### Pitfall 9: Mapping Changes Cross Recording or Finalization Boundaries
 
 **What goes wrong:**
-The wrong coordinate is published under a plausible ROS joint name, radians are mistaken for degrees, translational coordinates are treated as angular, or a model update silently reorders outputs. Downstream GUI or future visualization animates the wrong joint.
+One SD session contains samples whose same device IDs represent different body mappings, or an Apply operation interferes with a recording stop/finalization handshake. The GUI may imply that recording succeeded even when finalization failed.
 
 **Why it happens:**
-OpenSim coordinates have model component paths, names, motion types, locks, constraints, and defaults; ROS `JointState` supplies only parallel name/value arrays. Short names can collide and array order is not a durable identity.
+Mapping is treated as ordinary live UI state, and Run, recording, calibration, and solver state are collapsed into one global busy flag. A convenient "apply now" action may silently stop recording.
 
 **How to avoid:**
-- Configure an explicit one-to-one mapping from stable ROS joint name to absolute OpenSim coordinate component path.
-- Validate existence, uniqueness, motion type, lock/constraint state, and allowed publication set at startup.
-- Publish angular positions in radians and translational positions in metres as required by `JointState`; leave velocity/effort empty unless truly computed.
-- Publish model/config hash and coordinate metadata on a latched/transient-local model-info topic.
-- Keep names and positions equal length and deterministic, but require consumers to join by name, not index.
+Keep acquisition and SD recording semantics independent from mapping. Allow draft editing and saving during acquisition, but block Apply during calibration capture and during active recording/finalization. Never auto-stop recording to satisfy Apply. Report the required operator action explicitly. After a quiescent Apply, pause IK atomically, invalidate calibration, and require explicit recapture. Record the applied model hash, mapping revision, device-to-frame entries, and calibration ID in session provenance when that feature is added.
 
 **Warning signs:**
-Values differ by about 57.3; duplicate short coordinate names exist; changing the `.osim` changes array order; locked coordinates are advertised as measurements; GUI code uses `position[0]`.
+- Apply service can run while `recording` or `finalizing`.
+- Mapping code calls recording stop internally.
+- A session has no mapping/model revision metadata.
+- Recording finalization failure is hidden by a successful mapping status.
+- Old JointState is restamped after Apply.
 
 **Phase to address:**
-Phase 15 contract, enforced at publication in Phase 18.
+Phase 3: Mapping services define the interlock contract; Phase 5 exposes it clearly in Studio; Phase 6 verifies multi-device recording start/stop/finalization.
 
 ---
 
-### Pitfall 10: Publishing stale or failed solutions as current joint state
+### Pitfall 10: Dynamic Subscriptions and Queues Grow Without Bounds
 
 **What goes wrong:**
-When one IMU stops, synchronization fails, calibration is cleared, or IK throws, the last good angles continue with fresh timestamps. Operators and controllers interpret cached history as current motion. Reconnection can combine a new sensor session with an old calibration or solver state.
+Repeated Apply/reconnect cycles create duplicate callbacks, obsolete subscriptions keep updating state, browser reconnects leak rosbridge subscriptions, or per-device queues accumulate latency until output trails motion.
 
 **Why it happens:**
-Republishing last-known values makes a dashboard look stable. `JointState` has no validity field, and rosbridge consumers may not independently enforce age.
+Dynamic collections make creation straightforward but cleanup easy to omit. Queueing every sensor event seems lossless, and browser subscriptions may be keyed only by topic rather than unique request IDs.
 
 **How to avoid:**
-- Define an explicit state machine: `STARTING → UNCALIBRATED → CALIBRATING → READY/TRACKING → DEGRADED/STALE/ERROR`.
-- Gate `JointState` on fresh synchronized input, valid calibration, successful solve, finite/in-range coordinates, and age/deadline limits.
-- On failure, stop publishing new joint states; continue heartbeat diagnostics and typed IK status with `solution_valid=false` and a reason.
-- Never refresh the timestamp of cached angles. Reset synchronization queues and require calibration compatibility after sensor reboot, role/frame change, time jump, or model reload.
-- Make downstream consumers test status and source-time freshness, not topic connectivity.
+Bound the supported fleet to the tested current capacity while keeping code collection-based. Own exactly one route/session/publisher set per MAC and one OpenSim subscription per applied sensor. Stage new handles, atomically swap, then explicitly destroy old handles and invalidate their generation. Use bounded per-route UDP queues with drop counters and a latest-complete-orientation-set strategy rather than an unbounded work queue. Give every browser subscription a unique ID and unsubscribe it on reconnect/disposal. Cap arrays, strings, and issue counts at rosbridge JSON boundaries.
 
 **Warning signs:**
-Joint-state timestamps advance while input stamps do not; output persists after one topic is killed; reconnection resumes immediately without identity/calibration checks; the UI says “live” because WebSocket traffic exists.
+- Callback count rises after every Apply.
+- A removed MAC still changes solver readiness.
+- Memory or solve lag grows during a long session.
+- Browser reconnect duplicates status updates.
+- No per-route drop metrics or maximum queue sizes exist.
 
 **Phase to address:**
-Phase 18, coordinated with existing Phase 12 freshness semantics.
+Phase 2 for route/session/alias bounds, Phase 4 for orientation aggregation, and Phase 5 for rosbridge lifecycle cleanup.
 
 ---
 
-### Pitfall 11: Shipping angles without enough evidence to diagnose them
+### Pitfall 11: Deterministic Tests Cover Only the Happy Two-Sensor Path
 
 **What goes wrong:**
-There is no way to distinguish input corruption, poor synchronization, bad calibration, unobservable motion, model mismatch, or solver failure. A single “healthy” boolean hides progressive degradation, and recorded joint states cannot be reproduced.
+The feature appears complete with one Master and one Slave but fails under device reorder, low-32-bit collisions, stale inputs, Apply rollback, corrupt persistence, mixed firmware, or three-plus sensor ordering. Hardware scarcity hides contract regressions until a lab session.
 
 **Why it happens:**
-`JointState` cannot carry input provenance, pair skew, solver residuals, calibration identity, or runtime timing. Logging only exceptions misses plausible-but-wrong results.
+End-to-end hardware tests are slow and the Jetson may be disconnected, while mocks often preserve the same fixed ordering and assumptions as production code.
 
 **How to avoid:**
-- Publish a typed IK status containing source stamps, pair skew, input age, solve/queue latency, sequence/drop counters, per-sensor and aggregate orientation error, calibration/model/config IDs, state, validity, and failure reason.
-- Publish standard `DiagnosticArray` heartbeat entries for ingress, sync, calibration, solver, output freshness, and runtime version.
-- Record raw/filtered IMU messages, calibration events/artifact ID, model metadata, joint states, IK status, and diagnostics together in rosbag2.
-- Use OpenSim's current orientation-error APIs where available, but treat residual as fit quality—not ground-truth accuracy.
-- Define rate-limited logs plus monotonically increasing counters so intermittent faults remain visible.
+Build deterministic fixtures at each contract boundary: identity normalization and collisions; arbitrary registry order; route rebind by MAC; targeted Identify ACK/timeout; existing and missing model IMU frames; exact model hash changes; complete/incomplete/duplicate mappings; optimistic revision conflict; staged Apply failure and rollback; corrupt mapping store; stale/skew/reconnect generation gates; deterministic N-column labels; calibration invalidation; alias stability; subscription cleanup; and recording/finalization interlocks. Retain two-sensor numerical regression tests, then add 0/1/3+/capacity cases. Use fake registry, adapter, solver, clocks, and temporary persistence paths. Reserve hardware acceptance for electrical LED safety, actual MAC/interface relationships, peer load, radio timing, and stream throughput.
 
 **Warning signs:**
-Only joint angles are recorded; “solver OK” is true while no new pair arrives; residuals are available only in debug builds; a bad trial cannot be replayed with the same model/calibration.
+- Tests always return devices in Master-then-Slave order.
+- Assertions inspect only row count, not identity association.
+- No fake clock controls freshness/skew.
+- Apply failure is tested only before staging starts.
+- No test checks subscriber count after repeated remaps.
+- Dynamic mode becomes default before the failure matrix passes.
 
 **Phase to address:**
-Phase 18; replay verification in Phase 19.
-
----
-
-### Pitfall 12: Overclaiming biomechanical or clinical validity
-
-**What goes wrong:**
-The bridge is described as “accurate,” “clinical-grade,” or suitable for rehabilitation decisions because known synthetic poses pass or trajectories look smooth. Errors from subject/model scaling, sensor placement, soft-tissue artefact, fusion, calibration, task, axis, and limited observability are ignored. Model constraints can make output plausible without making it true.
-
-**Why it happens:**
-Software correctness, OpenSense compatibility, repeatability, concurrent validity against a reference, and clinical validity are different claims. Published OpenSense errors vary by coordinate and task; favorable results from other sensors/protocols do not validate paired ESP32 hardware.
-
-**How to avoid:**
-- Initially claim only “OpenSense-compatible orientation IK” and report the exact model, sensors, fusion, calibration, tasks, rates, and tested conditions.
-- Separate verification tiers:
-  1. algebra/convention fixtures;
-  2. synthetic model-generated orientations with known coordinates;
-  3. offline OpenSense parity from the same recorded orientations;
-  4. repeated don/doff and within-session repeatability;
-  5. drift/latency on the intended duration;
-  6. concurrent validity against an external reference and a predeclared error budget.
-- Report per-coordinate bias, RMSE/MAE, limits of agreement, repeatability, dropout, latency distribution, and failure rate—not one aggregate score.
-- Do not infer kinetics, muscle forces, diagnosis, treatment efficacy, or safety-control suitability from orientation IK alone.
-- Require domain/research review and an application-specific validation protocol before clinical/research outcome claims.
-
-**Warning signs:**
-Acceptance is visual; validation uses the calibration samples; only sagittal flexion is tested but all 3D coordinates are advertised; published literature accuracy is copied into product documentation; residual is labeled “accuracy.”
-
-**Phase to address:**
-Phase 19, with conservative terminology enforced from Phase 18 onward.
+Every phase adds deterministic contract tests for its boundary. Phase 6: Hardware Compatibility and Failure Matrix is the promotion gate.
 
 ## Technical Debt Patterns
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Scatter quaternion conversions through ROS, calibration, and solver code | Faster first demo | Convention drift and untestable transforms | Never |
-| Use the first frame as calibration | Minimal UI/state | Noise and motion become permanent offsets | Synthetic tests only |
-| Infer model frames from topic order or substring names | Less configuration | Silent sensor/body swaps | Never |
-| Publish every model coordinate | Rich-looking output | Unobservable/model-imposed values appear measured | Never |
-| Process every queued pair | No apparent data loss | Unbounded real-time lag | Offline replay only |
-| Put quality in log strings only | Avoid custom interfaces | rosbridge cannot reason about validity; no replayable provenance | Prototype spike only |
-| Use unpinned OpenSim/native dependencies | Easy setup | Irreproducible ABI/runtime failures | Disposable exploration only |
-| Mutate the checked-in `.osim` during live calibration | Mirrors offline IMU Placer output | Hidden state and unreproducible sessions | Never; export a derived artifact explicitly |
+| Reuse 32-bit `slave_id`, IP, role, or array index as identity | Avoids schema changes | Wrong-device mapping and commands after collision/reconnect | Never |
+| Keep fixed Master/Slave dictionaries and add `slave2` fields | Small diff for one extra sensor | Repeated rewrites, nondeterministic solver/table logic | Never for v1.6 |
+| Persist only in Studio `localStorage` | Fast browser demo | Backend cannot recover authoritatively; tabs/workstations diverge | Only as a non-authoritative draft cache after backend revisions exist |
+| Apply row-by-row | Simple service shape | Partial live mapping and unrollbackable failures | Never |
+| Key model mappings by filename | Human-readable | Silent reuse across changed or same-named model contents | Never |
+| Use "latest available" orientations | Low implementation effort | Plausible but temporally invalid biomechanics | Never for product IK |
+| Keep old subscriptions after remap | Avoids lifecycle code | Duplicate callbacks and stale state mutation | Never |
+| Auto-delete offline rows | Cleaner table | Loses placement and reconnect continuity | Never; use explicit Forget with reference checks |
+| Auto-select first Slave for compatibility | Preserves pair UI quickly | Alias changes with discovery order | Only in an isolated test fixture, never runtime |
+| Unbounded queues to avoid drops | Appears lossless | Increasing latency and memory use | Never; newest complete state is more valuable |
+| Generate or rewrite `.osim` frames silently | Makes more bodies selectable | Breaks source reproducibility and model fingerprint | Never; runtime-only deterministic frame or explicit derived export |
 
 ## Integration Gotchas
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| ESP32/VQF → `sensor_msgs/Imu` | Preserve four values but not direction/frame semantics | Document source/target frames, ROS `(x,y,z,w)` fields, `frame_id`, acquisition timestamp, sequence, and quality |
-| ROS `message_filters` | Different QoS or arrival-time synchronization | Matching sensor QoS; synchronize header measurement stamps; bound slop and queue age |
-| OpenSense frame mapping | Assume topic labels automatically match model frames | Explicit sensor-role → model IMU Frame mapping, resolved and hashed at startup |
-| IMU Placer concept | Expect it to scale the model or locate sensors | Treat calibration as orientation registration only; manage scaling/model suitability separately |
-| SimTK/OpenSim quaternion construction | Pass ROS field order positionally | Named adapter plus identity and ±90° matrix fixtures |
-| OpenSim live solver | Share one solver/state across executor callbacks | Single-owner worker and bounded latest-pair handoff |
-| `JointState` | Use degrees, array indices, or `effort` for residual | Stable names, radians/metres, equal arrays; separate typed IK quality |
-| rosbridge | Treat WebSocket traffic as fresh valid biomechanics | Propagate source stamps and validity; consumer enforces age and state |
-| rosbag2 replay | Recompute with whichever model/config is installed | Record and verify model/config/calibration hashes and runtime version |
+| Firmware to relay | Treat current IP or truncated status ID as route identity | Require bounded `IDENTITY?` response with full verified identity before route readiness |
+| ESP-NOW Identify | Treat MAC-layer send callback as application success | Correlate a command ID echoed by device status and return reason-coded timeout/failure |
+| Mixed firmware versions | Parse new fields by size assumption | Check explicit version and exact packet size; accept known old/new layouts additively |
+| Relay to ROS fleet bridge | Let one failed connection cancel all session tasks | Isolate one task/queue per route and publish per-device failures |
+| ROS aliases | Maintain separate canonical and legacy parsing pipelines | Republish aliases from one canonical per-MAC accepted stream |
+| Rosbridge | Omit unique subscription/service IDs or cleanup | Correlate every call, cap payloads, and unsubscribe explicitly |
+| OpenSim catalog | Treat BodySet display name as solver frame | Persist component path and resolve a verified IMU `PhysicalFrame` |
+| OpenSim runtime frames | Add frames after system initialization or silently choose a joint frame | Stage deterministic frames before `initSystem`; fail closed if pinned bindings cannot do so safely |
+| Mapping persistence | Overwrite corrupt JSON on startup | Preserve/quarantine it, expose error, recover from bounded backup or reviewed save |
+| Calibration | Reuse offsets by device alone | Bind artifact to model, mapping revision, exact frame set, and convention |
+| Recording | Let Apply force Stop or imply finalization success | Block Apply while recording/finalizing and preserve independent recording status |
 
 ## Performance Traps
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| IK inside subscription callback | Pair drops and frozen diagnostics | Dedicated solver worker | As soon as solve time approaches callback interval |
-| Unbounded FIFO | Output increasingly lags real motion | Latest-value slot/small bounded queue; drop superseded pairs | Any sustained solve time above input period |
-| Rebuilding model/solver every sample | High jitter and CPU | Initialize once; sequential `track()`; rebuild only on controlled reset | Even at modest IMU rates |
-| Optimizing a full complex model for two sensors | Deadline misses and unstable coordinates | Lock irrelevant coordinates; use a model/coordinate subset justified by observability | Model- and hardware-dependent; benchmark before roadmap acceptance |
-| Reporting average latency only | Rare dangerous stale frames hidden | p50/p95/p99/max plus deadline-miss count and end-to-end age | Bursty Wi-Fi or difficult poses |
-| Unlimited diagnostic/log rate | Solver competes with serialization/I/O | Fixed-rate diagnostics, counter aggregation, rate-limited logs | Fault storms |
+| 100 Hz health/status per Slave mixed with sample traffic | ESP-NOW send errors, radio congestion, delayed ACKs | Measure airtime; reduce health rate separately from orientation sampling if needed | Validate at Master plus six current status slots |
+| One unbounded UDP queue per route | Growing latency and memory, old samples processed after reconnect | Fixed queue size, newest-data policy, per-route drop counters | During a slow consumer, reconnect storm, or high-rate multi-device run |
+| Queue every complete orientation set | IK output age grows although inputs are current | Retain only newest complete set and solve at configured bounded rate | When N-sensor OpenSim solve time exceeds input period |
+| Browser subscribes to every high-rate raw/IMU topic | UI churn and rosbridge JSON load scale with sensor count | Mapping UI consumes bounded fleet/mapping health snapshots | As additional Slaves are enabled |
+| Recreating routes/subscriptions without teardown | Duplicate updates and rising memory/CPU | Explicit lifecycle ownership, destroy/unsubscribe, generation guards | After repeated Apply/reconnect cycles |
+| Rendering raw sample history in mapping state | React rerenders overwhelm setup UI | Keep device health/state normalized; graph pipeline remains separate | At normal 100 Hz rates even with a small fleet |
 
-No universal safe solver-rate threshold should be copied from literature. Phase 18 must measure the chosen model on the target processor and set input-rate, deadline, and stale limits from the end-to-end freshness budget.
-
-## Security and Integrity Mistakes
+## Security and Safety Mistakes
 
 | Mistake | Risk | Prevention |
 |---------|------|------------|
-| Accept arbitrary model/calibration paths from ROS parameters or services | Load unintended files or inconsistent artifacts | Resolve against configured roots, validate extensions/hashes, and make runtime model changes an operator-controlled restart |
-| Allow remote calibration/reset without operator/session context | Invalidates live measurements unexpectedly | Restrict service exposure, log requester/event where possible, and require explicit state transitions |
-| Trust model/config names instead of content | Wrong calibration reused | SHA-256 content IDs for model, mapping, and calibration artifact |
-| Treat diagnostics as advisory while consumers use stale `JointState` | Unsafe downstream behavior | Validity/freshness is part of the data contract and consumer tests |
+| Accepting malformed or unbounded identity/status JSON | Browser/backend memory growth or invalid routing state | Strict schema parsing, normalized identifiers, and bounded arrays/strings/issues |
+| Trusting a changed identity on an established route | One physical endpoint can take over another device's logical mapping | Close/quarantine the route and create a new unassigned identity record |
+| Guessing an onboard LED pin or active level | Electrical conflict with SD/SPI/DIO or persistent incorrect output | Board-specific compile-time configuration and capability advertisement |
+| Blocking in ESP-NOW callbacks for Identify | Sampling, synchronization, recording, or watchdog failure | Non-blocking deadline state in the main loop |
+| Executing data from mapping/persistence payloads | User-provided content crosses a privileged backend/browser boundary | Treat mappings as closed data schemas; never execute code or model text from them |
+| Silent partial-sensor output after failure | Misleading biomechanical data presented as current | Fail closed: suppress new JointState and publish reason-coded health |
 
 ## UX Pitfalls
 
 | Pitfall | User Impact | Better Approach |
 |---------|-------------|-----------------|
-| One green “OpenSim connected” light | Runtime may be loaded while inputs, calibration, or solution are invalid | Separate runtime, pair, calibration, solver, and output-freshness states |
-| Auto-calibration with no capture evidence | Operator cannot tell whether pose was stable or sensors were swapped | Explicit capture, countdown/window, role display, quality result, calibration ID |
-| Showing frozen angles during faults | Looks like the patient stopped moving | Mark stale prominently and stop updating the biomechanical display |
-| Labeling residual as accuracy | False confidence | Call it orientation fit/error and explain that external validation determines accuracy |
-| Hiding model and calibration identity | Sessions cannot be compared | Display model/config/calibration IDs and capture time |
+| One generic Online badge | Operator cannot distinguish ESP-NOW visibility, transport, ROS topic, freshness, or sync | Layered readiness with one actionable reason per device |
+| Rows reorder or vanish during dropout | Physical placement errors while strapping/power-cycling sensors | MAC-keyed stable rows retained as stale/offline |
+| MAC hidden behind a friendly label | Visually identical devices can be confused | Optional label plus always-visible canonical/short MAC |
+| Unassigned silently means excluded | Forgotten sensors look intentionally omitted | Separate Unassigned from explicit Not used |
+| Save and Apply are conflated | Operator cannot tell whether live routing changed | Show Draft, Saved, Applied, and Runtime Ready separately |
+| Identify success lacks confirmation detail | Operator trusts the wrong physical unit | Show confirmed, sent-unconfirmed, timeout, offline, unsupported, or rejected |
+| Apply failure replaces the live view | Operator loses track of the last known-good route | Keep prior applied revision visible and show candidate failure separately |
+| Stale IK number remains on screen as current | Plausible but invalid pose may be trusted | Mark output invalid/stale and stop new JointState publication |
+| Apply silently stops recording | Session semantics and finalization become unclear | Block with explicit "Stop/finalize recording before Apply" guidance |
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **Quaternion bridge:** ROS/OpenSim order, direction, axes, and handedness pass identity and ±90° fixtures through the full adapter.
-- [ ] **Quaternion validity:** NaN, Inf, zero norm, excessive norm error, and `q/-q` sequences are rejected/canonicalized deterministically with counters.
-- [ ] **Synchronization:** asymmetric delays, drops, duplicates, reordering, clock jumps, and incompatible QoS produce bounded, diagnosed behavior.
-- [ ] **Calibration:** moving capture, wrong role/frame, insufficient samples, old model hash, and remount/reboot scenarios fail or invalidate cleanly.
-- [ ] **Model contract:** every required IMU Frame and coordinate path resolves uniquely with declared motion type and units.
-- [ ] **Observability:** each published coordinate has demonstrated sensitivity/justification; model-imposed outputs are identified.
-- [ ] **Native runtime:** a clean deployment environment imports OpenSim, reports its version, loads the model, initializes, and solves a synthetic pose.
-- [ ] **Real time:** target benchmark reports end-to-end p50/p95/p99/max age, solve time, drop count, and deadline misses under representative motion.
-- [ ] **Thread ownership:** no ROS callback or second thread mutates the OpenSim model/state/solver.
-- [ ] **Safe failure:** killing either IMU, clearing calibration, forcing a solver exception, or jumping time stops new `JointState` and emits valid stale/error health.
-- [ ] **Output contract:** joint names map to absolute coordinate paths; radians/metres and parallel-array rules are verified through rosbridge.
-- [ ] **Reproducibility:** rosbag2 plus recorded model/config/calibration IDs reproduces deterministic outputs within a declared tolerance.
-- [ ] **Validity:** live results match offline OpenSense for the same inputs before comparison with an external biomechanical reference.
-- [ ] **Claims:** documentation distinguishes software verification, OpenSense parity, repeatability, and externally established biomechanical/clinical validity.
+- [ ] **Stable identity:** Every layer uses all 48 MAC bits; collision, malformed ID, interface-MAC difference, and DHCP reorder cases pass.
+- [ ] **Reconnect:** Same MAC updates the same row/topic/mapping; different MAC at the old IP remains new and Unassigned.
+- [ ] **Canonical topics:** Per-MAC streams and legacy aliases carry identical accepted data, and `legacy_slave_id` is explicit.
+- [ ] **Identify:** Success requires application ACK; timeout, unsupported LED, offline target, and non-blocking acquisition are verified.
+- [ ] **Model identity:** Same name/different bytes yields a different hash and no silent mapping/calibration reuse.
+- [ ] **Mapping validation:** Unassigned versus Not used, duplicate segments, unknown devices, missing frames, and solver minimum are authoritative backend checks.
+- [ ] **Transactional Apply:** Failure at every staging step leaves the prior mapping/subscriptions/solver intact and does not advance applied revision.
+- [ ] **Recording interlock:** Apply is blocked during recording and finalization without stopping or altering the session.
+- [ ] **Calibration:** Artifact provenance includes model/mapping/frame set and invalidates exactly on semantic changes.
+- [ ] **Freshness:** One stale, skewed, invalid, or pre-reconnect sample closes IK output while health/acquisition continue.
+- [ ] **Bounded lifecycle:** Repeated Apply/reconnect does not grow subscription, task, queue, callback, or browser listener counts.
+- [ ] **Determinism:** N-sensor table labels, UI ordering, mapping serialization, and alias selection are stable across arbitrary input order.
+- [ ] **Promotion gate:** Legacy pair, multi-sensor recording/finalization, dynamic IK, corrupt-state recovery, and the hardware failure matrix pass before dynamic mode becomes default.
 
 ## Recovery Strategies
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Convention error discovered before data collection | LOW | Correct the single adapter; rerun golden fixtures and offline parity |
-| Convention error discovered after trials | HIGH | Correct adapter, invalidate calibrations and derived angles, reprocess raw orientation bags if complete; otherwise recollect |
-| Bad/remounted calibration | MEDIUM | Stop output, capture a new stable reference, preserve old artifact for audit, restart solver |
-| Clock/synchronization defect | MEDIUM–HIGH | Fix timestamp source, characterize skew, replay raw packets if acquisition identity/time was preserved |
-| OpenSim runtime mismatch | MEDIUM | Recreate pinned environment, run native smoke test, rebuild/redeploy for target ABI |
-| Solver overload | MEDIUM | Reduce/lock coordinate set, latest-sample scheduling, benchmark; never mask it by increasing stale tolerance |
-| Stale output consumed downstream | HIGH | Fix producer gating and consumer freshness check; audit sessions/actions that used stale values |
-| Unsupported validity claim | HIGH | Retract/narrow claim, define reference protocol, collect representative validation data, report coordinate/task-specific results |
+| Wrong identity persisted | HIGH | Stop IK/recording use, migrate only entries with independently verified full MACs, require Identify/placement review, then recalibrate |
+| Route rebound to wrong device | MEDIUM | Quarantine route, re-run identity handshake, attach route to correct MAC, flush cached samples, and re-enter readiness |
+| Partial or failed Apply | LOW if transactional; HIGH otherwise | Retain/restore last applied revision, destroy staged handles, publish failure stage, correct candidate, retry |
+| Mapping store corruption | MEDIUM | Preserve corrupt file, inspect/restore bounded backup, load empty explicit state if needed, then save a reviewed mapping |
+| Stale model mapping | MEDIUM | Load new catalog, mark missing paths unresolved, review assignments, apply a new revision, and recalibrate |
+| Stale/unsynchronized solve | LOW | Close output gate, flush offending generation, wait for a complete fresh bounded-skew set |
+| Incorrect calibration reuse | HIGH | Invalidate artifact, verify model/mapping/frame convention, perform explicit known-pose recapture, and discard affected output |
+| Identify false positive | MEDIUM | Downgrade result to unconfirmed, verify command correlation/LED configuration, and repeat physical identification before mapping |
+| Subscription leak | MEDIUM | Stop dynamic mode, enumerate owners/handles, destroy obsolete subscriptions/tasks, add generation guards and repeat-cycle tests |
+| Recording crossed a mapping change | HIGH | Quarantine the session from biomechanical interpretation; recover SD data separately and repeat under one recorded mapping revision |
 
 ## Pitfall-to-Phase Mapping
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| OpenSim ABI/runtime mismatch | Phase 15 | Clean-environment import/version/model/init/synthetic-solve smoke test |
-| Model frame/coordinate naming and units | Phase 15 | Startup schema validation plus known coordinate projection test |
-| Quaternion order/frame/handedness | Phase 16 | Full-boundary identity and ±90° axis fixtures with expected matrices/signs |
-| Normalization and antipodes | Phase 16 | Invalid corpus and alternating `q/-q` sequence yield identical physical rotations without spikes |
-| Timestamp sync/QoS | Phase 16 | Delayed/reordered/drop/clock-jump tests; enforce skew, age, and queue bounds |
-| Sensor-to-segment/reference calibration | Phase 17 | Stable multi-sample capture, held-out neutral pose, known non-neutral pose, artifact compatibility tests |
-| Drift/remount/fusion resets | Phases 16–19 | Pre/post repeated-pose drift test, reboot/remount invalidation, representative-duration trial |
-| Solver latency/threading/backlog | Phase 18 | Target stress benchmark, single-owner test instrumentation, bounded queue and deadline behavior |
-| Unsafe stale/failed output | Phase 18 | Kill-topic, calibration-clear, solver-exception, and reconnect tests prove no freshly stamped cached angles |
-| Missing observability/quality | Phase 18 | Typed status and diagnostics remain live through every injected fault; bag contains provenance |
-| Under-observed coordinates | Phase 19 | Sensitivity/rank and multiple-initial-guess study; publish only justified coordinates |
-| Overclaiming biomechanical validity | Phase 19 | Offline parity, repeatability, drift, and external-reference report with coordinate/task-specific error budget |
+| Full-MAC truncation/mutable identity | Phase 1, reinforced Phase 2 | Two devices sharing low 32 bits remain distinct end to end; malformed/changed identities are rejected |
+| Reconnect and device reordering | Phase 2 | Arbitrary DHCP/discovery order and power-cycle preserve row, topic, route identity, and legacy alias |
+| Transactional mapping revision/model hash | Phase 3 | Changed bytes produce new model ID; stale revision and staged failure leave prior Apply intact |
+| Duplicate/unmapped/unresolvable sensors | Phase 3, surfaced Phase 5 | Backend rejects forged duplicate/incomplete candidates and missing/ambiguous frames |
+| Stale/unsynchronized samples | Phase 4 | Fake clock/skew/reconnect cases stop JointState while other streams continue |
+| Calibration invalidation | Phase 4 | Model/mapping/frame/profile change clears calibration; same-MAC dropout alone does not mutate artifact |
+| Identify acknowledgement and LED safety | Phase 1, hardware Phase 6 | Lost ACK never reports confirmed; blink is targeted, bounded, non-blocking, and electrically verified |
+| Backward-compatible aliases | Phase 2, removal gate Phase 6 | Canonical and alias streams match; explicit legacy Slave remains stable across reorder |
+| Recording/finalization interlocks | Phase 3 contract, Phase 5 UX, Phase 6 acceptance | Apply is rejected while recording/finalizing; recording is never auto-stopped |
+| Bounded dynamic subscriptions/queues | Phases 2, 4, and 5 | Repeated Apply/reconnect keeps handle/listener counts bounded and reports controlled drops |
+| Deterministic test matrix | Each phase, promotion Phase 6 | Unit/fixture coverage plus multi-device hardware failure matrix passes before default switch |
 
 ## Sources
 
-### Official OpenSim / OpenSense
-
-- OpenSim, **OpenSense — Kinematics with IMU Data** (updated 2024-08-27): OpenSense assumes fusion and synchronization are already performed; calibration registers IMUs to model segments; IK minimizes orientation error. https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53084203/OpenSense+-+Kinematics+with+IMU+Data
-- OpenSim, **IMU Placer Settings File and XML Tag Definitions**: strict sensor/frame naming, space-fixed XYZ sensor-to-OpenSim rotations, reference orientation file, base sensor, and heading axis. https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53112999/IMU+Placer+Settings+File+and+XML+Tag+Definitions
-- OpenSim, **OpenSense FAQ**: IMU Placer estimates sensor orientation relative to segments, does not consider sensor position, and OpenSense does not scale a model. https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53084548/Frequently+Asked+Questions
-- OpenSim API, **InverseKinematicsSolver**: orientation references/weights, `assemble()`, efficient sequential `track()` conditions, and orientation-error computation. https://opensim-org.github.io/opensim-moco-site/docs/1.0.0/html_user/classOpenSim_1_1InverseKinematicsSolver.html
-- OpenSim, **Scripting in Python** (updated 2026-06-26): official package options, version/platform caveats, native-library paths, and installation self-test. https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53085346/Scripting+in+Python
-
-### Official ROS 2
-
-- ROS 2 `geometry_msgs/msg/Quaternion`: message field order `x,y,z,w`. https://docs.ros.org/en/ros2_packages/rolling/api/geometry_msgs/msg/Quaternion.html
-- ROS 2 `sensor_msgs/msg/Imu`: orientation/covariance semantics and invalid orientation convention. https://docs.ros.org/en/ros2_packages/rolling/api/sensor_msgs/msg/Imu.html
-- ROS 2 `message_filters`: timestamp synchronization, bounded queue/slop, and warnings against headerless/arrival-time synchronization. https://docs.ros.org/en/ros2_packages/rolling/api/message_filters/message_filters.html
-- ROS 2 Approximate Time tutorial: synchronized publisher/subscriber QoS compatibility requirement. https://docs.ros.org/en/ros2_packages/jazzy/api/message_filters/doc/Tutorials/Approximate-Synchronizer-Cpp.html
-- ROS 2 `sensor_msgs/msg/JointState`: one common measurement timestamp, radians/metres, and equal-or-empty parallel arrays. https://docs.ros.org/en/ros2_packages/rolling/api/sensor_msgs/msg/JointState.html
-- ROS 2 `diagnostic_msgs/msg/DiagnosticStatus`: standard `OK`, `WARN`, `ERROR`, and `STALE` levels. https://docs.ros.org/en/ros2_packages/rolling/api/diagnostic_msgs/msg/DiagnosticStatus.html
-
-### Primary validation evidence
-
-- Al Borno et al., **OpenSense: An open-source toolbox for inertial-measurement-unit-based measurement of lower extremity kinematics over long durations** (2022): task/coordinate-specific optical comparison and measured drift; supports validation under stated conditions, not transfer of accuracy claims. https://doi.org/10.1186/s12984-022-01001-x
-- Bailey et al., **Validity and Sensitivity of an IMU-Driven Biomechanical Model of Motor Variability for Gait** (2021): OpenSense error varied by coordinate, with larger concerns in some non-sagittal motions. https://doi.org/10.3390/s21227690
-- Slade et al., **An Open-Source and Wearable System for Measuring 3D Human Motion in Real-Time** (2022): evidence that real-time OpenSim orientation IK is feasible, while accuracy/latency remain system-specific. https://doi.org/10.1109/TBME.2021.3103201
-
-## Confidence Notes and Open Questions
-
-- **HIGH confidence:** OpenSense preprocessing/calibration assumptions; ROS quaternion field order, synchronization behavior, `JointState` units/array rules; the need for explicit validity and stale handling.
-- **MEDIUM confidence:** Specific calibration dispersion, pair-skew, stale-age, residual, drift, and solver-deadline thresholds. These must come from Phase 16–19 measurements.
-- **Open question:** Exact ESP32 quaternion direction, world frame, acquisition clock semantics, fusion reset behavior, and covariance/quality availability must be confirmed from the firmware/plugin contract.
-- **Open question:** The selected `.osim` model, intended published coordinates, OpenSim version, ROS distribution, and target Jetson ABI are not yet fixed; Phase 15 must resolve them before implementation.
-- **Open question:** With only master/slave orientations, the publishable coordinate subset depends on the actual segment mapping and model constraints; Phase 19 must demonstrate observability rather than assume three anatomical angles are independently measured.
+- `.planning/PROJECT.md` - v1.6 scope, safety constraints, full-device discovery, Identify, per-model persistence, uniqueness, and dynamic OpenSim routing.
+- `.planning/research/STACK.md` - recommended versions, typed command boundaries, full-MAC topic scheme, atomic Apply, freshness barrier, compatibility requirements, and validation gates.
+- `.planning/research/FEATURES.md` - operator workflow, table stakes, anti-features, state semantics, acceptance behaviors, recording/calibration guards, and deterministic verification scope.
+- `.planning/research/ARCHITECTURE.md` - authoritative state ownership, firmware/relay/ROS/OpenSim/Studio boundaries, six-phase build order, failure containment, migration gates, and scaling limits.
+- Primary documentation cited and evaluated in the source research: Espressif ESP-NOW addressing/send semantics, ROS 2 Humble interface semantics, rosbridge v2 correlation/subscription lifecycle, and OpenSim/OpenSense model Frame and orientation-IK guidance.
 
 ---
-*Pitfalls research for: v1.4 Real-time OpenSim IK*
-*Researched: 2026-07-27*
+*Pitfalls research for: Rehab Robotics Studio v1.6 Multi-Sensor Bone Mapping*
+*Researched: 2026-07-30*
