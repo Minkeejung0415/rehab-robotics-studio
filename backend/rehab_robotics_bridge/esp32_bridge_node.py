@@ -138,7 +138,7 @@ CONTROL_RESPONSE_PREFIXES = (
 _COMPACT_MAC_RE = re.compile(r'^[0-9A-Fa-f]{12}$')
 _DISPLAY_MAC_RE = re.compile(r'^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$')
 _CONTROL_TOKEN_RE = re.compile(r'^[A-Za-z0-9_.:,/@+-]+$')
-_COMMAND_ID_RE = re.compile(r'^[A-Za-z0-9_.:@+-]+$')
+_COMMAND_ID_RE = re.compile(r'^[A-Za-z0-9_.-]+$')
 
 ACCEL_RANGE_PRESETS = {2: 0, 4: 1, 8: 2, 16: 3}
 GYRO_RANGE_PRESETS = {250: 0, 500: 1, 1000: 2, 2000: 3}
@@ -481,6 +481,17 @@ def parse_identify_reply(
     }
 
 
+def bounded_timeout(value, name: str) -> float:
+    """Validate operator-configured identity timeouts before opening a route."""
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not 0.1 <= float(value) <= 30.0
+    ):
+        raise ValueError(f'{name} must be between 0.1 and 30.0 seconds')
+    return float(value)
+
+
 def control_int(fields: dict[str, str], name: str) -> int | None:
     try:
         return int(fields[name])
@@ -525,6 +536,9 @@ class Esp32BridgeNode(Node):
         self.declare_parameter('body_segment', '')
         self.declare_parameter('reconnect_delay_s', 5.0)
         self.declare_parameter('handshake_timeout_s', 15.0)
+        self.declare_parameter('expected_device_id', '')
+        self.declare_parameter('identity_timeout_s', 3.0)
+        self.declare_parameter('identify_timeout_s', 3.0)
         self.declare_parameter('publish_native_topics', True)
         self.declare_parameter('recording_sample_rate_hz', 100)
         self.declare_parameter('sample_rate_hz', 100)
@@ -542,6 +556,22 @@ class Esp32BridgeNode(Node):
         self._body_segment: str = self.get_parameter('body_segment').value
         self._reconnect_s: float = self.get_parameter('reconnect_delay_s').value
         self._handshake_timeout_s: float = self.get_parameter('handshake_timeout_s').value
+        expected_device_id = self.get_parameter('expected_device_id').value
+        if not isinstance(expected_device_id, str):
+            raise ValueError('expected_device_id must be a string')
+        self._expected_device_id = ''
+        if expected_device_id:
+            self._expected_device_id = normalize_device_id(expected_device_id)
+            if self._expected_device_id != expected_device_id:
+                raise ValueError('expected_device_id must be an exact canonical full identity')
+        self._identity_timeout_s = bounded_timeout(
+            self.get_parameter('identity_timeout_s').value,
+            'identity_timeout_s',
+        )
+        self._identify_timeout_s = bounded_timeout(
+            self.get_parameter('identify_timeout_s').value,
+            'identify_timeout_s',
+        )
         self._publish_native: bool = self.get_parameter('publish_native_topics').value
         self._retry_delay_s = self._reconnect_s
         self._recording_sample_rate_hz: int = self.get_parameter('recording_sample_rate_hz').value
@@ -556,7 +586,13 @@ class Esp32BridgeNode(Node):
         self._active_writer: asyncio.StreamWriter | None = None
         self._control_responses: asyncio.Queue[str] = asyncio.Queue(
             maxsize=MAX_CONTROL_QUEUE_DEPTH)
+        self._identify_responses: asyncio.Queue[str] = asyncio.Queue(
+            maxsize=MAX_CONTROL_QUEUE_DEPTH)
         self._record_command_lock: asyncio.Lock | None = None
+        self._bound_identity: dict[str, object] | None = None
+        self._peer_inventory: list[dict[str, object]] = []
+        self._unmatched_identify_replies: deque[dict[str, object]] = deque(maxlen=64)
+        self._last_confirmed_identify: dict[str, object] | None = None
         self._recording_session_id = ''
         self._recording_state = 'idle'
         self._recording_error = ''
@@ -582,6 +618,11 @@ class Esp32BridgeNode(Node):
         self._pub_raw_json = self.create_publisher(String, f'/esp/raw/{self._node_id}', 10)
         self._pub_health = self.create_publisher(String, f'/esp/status/{self._node_id}', 10)
         self._health_timer = self.create_timer(0.5, self._publish_health_status)
+        self.create_service(
+            IdentifyDevice,
+            f'/esp32/{self._node_id}/identify',
+            self._identify_device,
+        )
         if self._node_id == 'master':
             self._pub_pair_health = self.create_publisher(String, '/esp/status/pair', 10)
             self._slave_health_subscription = self.create_subscription(
@@ -608,6 +649,97 @@ class Esp32BridgeNode(Node):
         threading.Thread(target=self._loop.run_until_complete,
                          args=(self._reconnect_forever(),),
                          daemon=True).start()
+
+    @staticmethod
+    def _populate_identify_response(
+        response,
+        command_id: str,
+        target_device_id: str,
+        outcome: str,
+        applied_duration_ms: int,
+        detail: str,
+    ):
+        response.command_id = command_id
+        response.target_device_id = target_device_id
+        response.outcome = outcome
+        response.applied_duration_ms = applied_duration_ms
+        response.detail = detail
+        return response
+
+    def _identify_device(self, request, response):
+        """Serve a discriminated, application-confirmed Identify operation."""
+        command_id = str(getattr(request, 'command_id', ''))
+        raw_target = str(getattr(request, 'target_device_id', ''))
+        duration_ms = getattr(request, 'duration_ms', 0)
+        try:
+            target = normalize_device_id(raw_target)
+            if target != raw_target:
+                raise ValueError('target_device_id must be canonical')
+        except ValueError as exc:
+            return self._populate_identify_response(
+                response, command_id, raw_target, 'invalid_target', 0, str(exc))
+        try:
+            command_id, target, duration_ms = validate_identify_request(
+                command_id, target, duration_ms)
+        except ValueError as exc:
+            return self._populate_identify_response(
+                response, command_id, target, 'rejected', 0, str(exc))
+
+        metadata = self._identity_target_metadata(target)
+        if metadata is None:
+            return self._populate_identify_response(
+                response, command_id, target, 'offline', 0,
+                'target is not in the verified connected inventory')
+        if not metadata.get('identify_supported'):
+            return self._populate_identify_response(
+                response, command_id, target, 'unsupported', 0,
+                'target does not advertise Identify support')
+        if (
+            not self._loop.is_running()
+            or self._active_writer is None
+            or self._active_writer.is_closing()
+        ):
+            return self._populate_identify_response(
+                response, command_id, target, 'offline', 0,
+                'bridge stream is not connected')
+
+        try:
+            result = asyncio.run_coroutine_threadsafe(
+                self._send_identify_command(command_id, target, duration_ms),
+                self._loop,
+            ).result(timeout=self._identify_timeout_s + 1.0)
+        except (TimeoutError, FutureTimeoutError):
+            result = {
+                'command_id': command_id,
+                'target_device_id': target,
+                'outcome': 'timeout',
+                'applied_duration_ms': 0,
+                'detail': 'host wait timed out',
+            }
+        except RuntimeError as exc:
+            result = {
+                'command_id': command_id,
+                'target_device_id': target,
+                'outcome': 'offline',
+                'applied_duration_ms': 0,
+                'detail': str(exc) or 'bridge stream is not connected',
+            }
+        except Exception as exc:
+            result = {
+                'command_id': command_id,
+                'target_device_id': target,
+                'outcome': 'rejected',
+                'applied_duration_ms': 0,
+                'detail': str(exc) or 'Identify request failed',
+            }
+        return self._populate_identify_response(
+            response,
+            str(result['command_id']),
+            str(result['target_device_id']),
+            str(result['outcome']),
+            int(result['applied_duration_ms']),
+            str(result['detail']),
+        )
 
     def _set_recording(self, request: SetBool.Request, response: SetBool.Response) -> SetBool.Response:
         """Forward GUI recording requests through the master rec-v1 control path."""
@@ -803,6 +935,64 @@ class Esp32BridgeNode(Node):
             if fields.get('recording') == '1':
                 self._recording_state = 'recording'
 
+    def _bind_identity_inventory(self, inventory: dict[str, object]) -> None:
+        """Bind only verified session self; reconnects may refresh its metadata."""
+        source_self = inventory.get('self')
+        source_peers = inventory.get('peers')
+        if (
+            inventory.get('complete') is not True
+            or not isinstance(source_self, dict)
+            or not isinstance(source_peers, list)
+            or source_self.get('record') != 'self'
+            or source_self.get('verified') is not True
+        ):
+            raise ValueError('only a complete verified self inventory can bind the bridge')
+
+        device_id = str(source_self['device_id'])
+        if (
+            self._bound_identity is not None
+            and self._bound_identity.get('device_id') != device_id
+        ):
+            raise RuntimeError(
+                'route reported a different self identity; prior binding retained')
+
+        next_self = dict(source_self)
+        next_self['node_id'] = self._node_id
+        next_self['route'] = {
+            'host': self._host,
+            'port': self._port,
+            'reported_ip': source_self.get('route_ip'),
+            'transport': self._transport if hasattr(self, '_transport') else 'auto',
+        }
+        next_peers = [dict(peer) for peer in source_peers[:MAX_IDENTITY_PEERS]]
+        self._bound_identity = next_self
+        self._peer_inventory = next_peers
+
+    def _identity_target_metadata(self, target: str) -> dict[str, object] | None:
+        if (
+            self._bound_identity is not None
+            and self._bound_identity.get('device_id') == target
+        ):
+            return self._bound_identity
+        for peer in self._peer_inventory:
+            if peer.get('verified') is True and peer.get('device_id') == target:
+                return peer
+        return None
+
+    def _identity_health_snapshot(self) -> dict[str, object]:
+        return {
+            'schema': 'oe_esp32.identity.v1',
+            'node_id': self._node_id,
+            'verification': (
+                'verified' if self._bound_identity is not None else 'unverified'),
+            'self': (
+                dict(self._bound_identity)
+                if self._bound_identity is not None
+                else None
+            ),
+            'peers': [dict(peer) for peer in self._peer_inventory],
+        }
+
     def _health_snapshot(self) -> dict[str, object]:
         now = time.monotonic()
         while self._frame_times and now - self._frame_times[0] > 5.0:
@@ -824,6 +1014,16 @@ class Esp32BridgeNode(Node):
             'observed_stream_rate_hz': observed_rate,
             'last_frame_age_ms': age_ms,
             'frames_received': self._frames_received,
+            'identity': self._identity_health_snapshot(),
+            'identify': {
+                'last_confirmed': self._last_confirmed_identify,
+                'unmatched_reply_count': len(self._unmatched_identify_replies),
+                'last_unmatched': (
+                    self._unmatched_identify_replies[-1]
+                    if self._unmatched_identify_replies
+                    else None
+                ),
+            },
             'recording': {
                 'state': self._recording_state,
                 'session_id': self._recording_session_id or None,
@@ -928,13 +1128,118 @@ class Esp32BridgeNode(Node):
                 if line.startswith(expected) or line.startswith(('REC ERR', 'ERROR ')):
                     return line
 
+    async def _send_identify_command(
+        self,
+        command_id: str,
+        target_device_id: str,
+        duration_ms: int,
+    ) -> dict[str, object]:
+        """Send one exact-target Identify and wait for its correlated terminal result."""
+        command_id, target, duration_ms = validate_identify_request(
+            command_id, target_device_id, duration_ms)
+        metadata = self._identity_target_metadata(target)
+        if metadata is None:
+            return {
+                'command_id': command_id,
+                'target_device_id': target,
+                'outcome': 'offline',
+                'requested_duration_ms': duration_ms,
+                'applied_duration_ms': 0,
+                'detail': 'target is not in the verified connected inventory',
+            }
+        if not metadata.get('identify_supported'):
+            return {
+                'command_id': command_id,
+                'target_device_id': target,
+                'outcome': 'unsupported',
+                'requested_duration_ms': duration_ms,
+                'applied_duration_ms': 0,
+                'detail': 'target does not advertise Identify support',
+            }
+
+        writer = self._active_writer
+        lock = self._record_command_lock
+        if writer is None or lock is None or writer.is_closing():
+            return {
+                'command_id': command_id,
+                'target_device_id': target,
+                'outcome': 'offline',
+                'requested_duration_ms': duration_ms,
+                'applied_duration_ms': 0,
+                'detail': 'bridge stream is not connected',
+            }
+
+        async with lock:
+            writer.write(
+                (
+                    f'IDENTIFY protocol={IDENTIFY_PROTOCOL} '
+                    f'command_id={command_id} target={target} '
+                    f'duration_ms={duration_ms}\n'
+                ).encode('ascii')
+            )
+            await writer.drain()
+            deadline = asyncio.get_running_loop().time() + self._identify_timeout_s
+            sent_unconfirmed: dict[str, object] | None = None
+            while True:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    if sent_unconfirmed is not None:
+                        return sent_unconfirmed
+                    return {
+                        'command_id': command_id,
+                        'target_device_id': target,
+                        'outcome': 'timeout',
+                        'requested_duration_ms': duration_ms,
+                        'applied_duration_ms': 0,
+                        'detail': 'host timed out waiting for a correlated terminal reply',
+                    }
+                try:
+                    line = await asyncio.wait_for(
+                        self._identify_responses.get(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    if sent_unconfirmed is not None:
+                        return sent_unconfirmed
+                    return {
+                        'command_id': command_id,
+                        'target_device_id': target,
+                        'outcome': 'timeout',
+                        'requested_duration_ms': duration_ms,
+                        'applied_duration_ms': 0,
+                        'detail': 'host timed out waiting for a correlated terminal reply',
+                    }
+                try:
+                    parsed = parse_identify_reply(
+                        line,
+                        expected_command_id=command_id,
+                        expected_target=target,
+                    )
+                except ValueError as exc:
+                    self._unmatched_identify_replies.append({
+                        'observed_at_us': time.monotonic_ns() // 1000,
+                        'line': line[:MAX_CONTROL_LINE_BYTES],
+                        'reason': str(exc),
+                    })
+                    continue
+                if parsed['outcome'] == 'sent_unconfirmed':
+                    sent_unconfirmed = parsed
+                    continue
+                if parsed['outcome'] == 'confirmed':
+                    self._last_confirmed_identify = dict(parsed)
+                return parsed
+
     async def _admit_control_response(self, line: str) -> None:
         """Keep mixed-stream control traffic bounded without blocking frame parsing."""
         if len(line.encode('ascii', errors='replace')) > MAX_CONTROL_LINE_BYTES:
             return
-        if self._control_responses.full():
-            self._control_responses.get_nowait()
-        self._control_responses.put_nowait(line)
+        queue = (
+            self._identify_responses
+            if line.startswith(('IDENTIFY_ACK ', 'IDENTIFY_ERR '))
+            and hasattr(self, '_identify_responses')
+            else self._control_responses
+        )
+        if queue.full():
+            queue.get_nowait()
+        queue.put_nowait(line)
 
     async def _send_control_command_separate(self, command: str, expected: str) -> str:
         """Use a dedicated TCP connection for USB control without interrupting stream clients."""
@@ -955,6 +1260,46 @@ class Esp32BridgeNode(Node):
             writer.close()
             with contextlib.suppress(Exception):
                 await writer.wait_closed()
+
+    async def _read_identity_inventory(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> dict[str, object]:
+        """Request and consume one complete bounded id-v1 inventory."""
+        writer.write(IDENTITY_QUERY)
+        await writer.drain()
+        deadline = asyncio.get_running_loop().time() + self._identity_timeout_s
+
+        async def read_line() -> str:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError('timed out waiting for complete identity inventory')
+            raw = await asyncio.wait_for(reader.readline(), timeout=remaining)
+            if not raw:
+                raise EOFError('stream closed during identity inventory')
+            if len(raw) > MAX_CONTROL_LINE_BYTES + 2:
+                raise ValueError('identity inventory line exceeds supported bound')
+            try:
+                return raw.decode('ascii').rstrip('\r\n')
+            except UnicodeDecodeError as exc:
+                raise ValueError('identity inventory must be ASCII') from exc
+
+        records = [await read_line()]
+        self_identity = parse_identity_self(records[0])
+        peer_count = int(self_identity['peer_count'])
+        for _ in range(peer_count + 1):
+            records.append(await read_line())
+        inventory = parse_identity_inventory(records)
+        reported_self = str(inventory['self']['device_id'])
+        if (
+            self._expected_device_id
+            and reported_self != self._expected_device_id
+        ):
+            raise RuntimeError(
+                f'expected self {self._expected_device_id}, got {reported_self}')
+        self._bind_identity_inventory(inventory)
+        return inventory
 
     async def _handshake(self, reader: asyncio.StreamReader,
                          writer: asyncio.StreamWriter) -> str:
@@ -983,6 +1328,9 @@ class Esp32BridgeNode(Node):
         command is processed in the running main loop and the OK response is
         consumed by _read_frames as a normal control message.
         """
+        # Bind a complete verified session-self before legacy stream setup.
+        await self._read_identity_inventory(reader, writer)
+
         # 1. Identify ourselves
         writer.write(HANDSHAKE_CONNECT)
         await writer.drain()

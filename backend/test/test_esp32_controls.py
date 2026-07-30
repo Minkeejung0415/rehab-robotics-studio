@@ -450,6 +450,9 @@ class BridgeIdentityAndIdentifyTests(unittest.TestCase):
                     'bad command', 'esp32:aabbccddeeff', 3000)
             with self.assertRaises(ValueError):
                 await node._send_identify_command(
+                    'bad@command', 'esp32:aabbccddeeff', 3000)
+            with self.assertRaises(ValueError):
+                await node._send_identify_command(
                     'blink-1', 'esp32:aabbccddeef', 3000)
             result = await node._send_identify_command(
                 'blink-1', 'esp32:9999ccddeeff', 3000)
@@ -670,6 +673,7 @@ def _make_stub_node():
     node._bound_identity = None
     node._peer_inventory = []
     node._unmatched_identify_replies = bridge.deque(maxlen=64)
+    node._last_confirmed_identify = None
     node.get_logger = lambda: _Logger()
     return node
 
