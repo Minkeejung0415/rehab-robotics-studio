@@ -44,7 +44,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 20-02-PLAN.md — Identity-confirmed relay sessions and DHCP-safe launch
+- [x] 20-02-PLAN.md — Identity-confirmed relay sessions and DHCP-safe launch
 - [ ] 20-04-PLAN.md — Hardware-only LED pin and active-level verification
 
 **Wave 3** *(blocked on Wave 2 completion)*
@@ -136,7 +136,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 20. Full Identity and Confirmed Identify | 1/6 | In Progress | - |
+| 20. Full Identity and Confirmed Identify | 2/6 | In Progress | - |
 | 21. N-Route Relay and Canonical ROS Fleet | 0/TBD | Not started | - |
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 0/TBD | Not started | - |
 | 23. N-Sensor Calibration and Official OpenSim IK | 0/TBD | Not started | - |

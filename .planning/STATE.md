@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Multi-Sensor Bone Mapping
 status: executing
-stopped_at: Completed 20-01-PLAN.md
-last_updated: "2026-07-30T20:02:50.215Z"
+stopped_at: Completed 20-02-PLAN.md
+last_updated: "2026-07-30T20:18:39.824Z"
 last_activity: 2026-07-30
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 6
-  completed_plans: 1
-  percent: 17
+  completed_plans: 2
+  percent: 33
 ---
 
 # Project State
@@ -26,22 +26,23 @@ See: `.planning/PROJECT.md` (updated 2026-07-30)
 ## Current Position
 
 Phase: 20 (Full Identity and Confirmed Identify) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-07-30
 
-Progress: [██░░░░░░░░] 17%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
 **Current milestone:**
 
-- Plans completed: 1
+- Plans completed: 2
 - Phases completed: 0/6
 
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 20 P01 | 21 min | 2 tasks | 3 files |
+| Phase 20 P02 | 11 min | 2 tasks | 3 files |
 
 **Prior milestone reference:**
 
@@ -61,6 +62,8 @@ Decisions are logged in `PROJECT.md`. Current milestone decisions:
 - Legacy two-sensor aliases and rollback mode remain until hardware acceptance supports promotion.
 - [Phase 20]: Identity uses the full six-byte eFuse/base MAC while interface MACs, route, role, slot, and deprecated slave_id remain metadata. — Prevents low-32 collisions and mutable route metadata from becoming identity.
 - [Phase 20]: Identify confirmation is emitted only after target loop code starts the bounded LED action; ESP-NOW send completion is never confirmation. — Preserves application-level correlation and avoids false success.
+- [Phase 20]: Relay routes bind only from a complete verified id-v1 self record; peer rows remain inventory. — Prevents peer inventory, role aliases, mutable endpoints, and low-32 collisions from becoming session identity.
+- [Phase 20]: Wireless discovery accepts one verified Slave self identity or an exact expected canonical ID. — Ensures ping response order cannot select a physical device and ambiguous discovery fails closed.
 
 ### Pending Todos
 
@@ -85,6 +88,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-07-30T20:02:50.206Z
-Stopped at: Completed 20-01-PLAN.md
+Last session: 2026-07-30T20:18:29.634Z
+Stopped at: Completed 20-02-PLAN.md
 Resume file: None
