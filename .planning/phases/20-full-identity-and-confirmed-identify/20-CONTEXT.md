@@ -28,7 +28,8 @@ Give every Master and Slave a verified full 48-bit stable identity and add a saf
 ### LED and Timing Safety
 - Implement Identify as a non-blocking deadline checked from the normal loop; no `delay()`, blocking callback work, or acquisition/recording state changes are permitted.
 - Clamp requested blink duration to a documented safe range, with a 3-second default and 1-5-second accepted range.
-- Advertise Identify capability only after the exact board LED pin and active level are configured and verified; unknown board revisions return `unsupported` instead of guessing a pin.
+- For the deployed Seeed Studio XIAO ESP32S3 target, use the vendor-documented onboard user LED on GPIO 21 with active-low semantics behind an exact board-target guard; unknown board revisions return `unsupported` instead of guessing a pin.
+- Treat the vendor board definition as configuration evidence and retain actual one-device blink/electrical behavior as an end-of-phase human check, not a mid-phase prerequisite that blocks all later software work.
 - Restoring the LED after Identify must restore its prior application-owned state and must not interfere with any recording, fault, or other future LED semantics.
 
 ### Compatibility and Verification

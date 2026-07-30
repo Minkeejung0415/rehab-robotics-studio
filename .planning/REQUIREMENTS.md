@@ -78,7 +78,7 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | ID-01 | Phase 20 | Pending |
-| ID-02 | Phase 20 | Pending |
+| ID-02 | Phase 21 | Pending |
 | ID-03 | Phase 20 | Pending |
 | FLEET-01 | Phase 21 | Pending |
 | FLEET-02 | Phase 21 | Pending |
