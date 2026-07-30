@@ -42,7 +42,7 @@ Progress: [███░░░░░░░] 33%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 20 P01 | 21 min | 2 tasks | 3 files |
-| Phase 20 P02 | 11 min | 2 tasks | 3 files |
+| Phase 20 P02 | 15 min | 2 tasks | 3 files |
 
 **Prior milestone reference:**
 

@@ -39,7 +39,7 @@ patterns-established:
 
 requirements-completed: [ID-01, ID-03]
 
-duration: 11min
+duration: 15min
 completed: 2026-07-30
 ---
 
@@ -49,9 +49,9 @@ completed: 2026-07-30
 
 ## Performance
 
-- **Duration:** 11 min
+- **Duration:** 15 min
 - **Started:** 2026-07-30T20:05:47Z
-- **Completed:** 2026-07-30T20:16:56Z
+- **Completed:** 2026-07-30T20:20:58Z
 - **Tasks:** 2
 - **Files modified:** 3
 
@@ -70,6 +70,7 @@ Each TDD task has a RED test commit followed by a GREEN implementation commit:
 1. **Task 1: Make relay sessions identity-confirmed and control-transparent**
    - `431bb60` — RED: failing relay identity, reconnect, transparency, and isolation contracts
    - `b89dadd` — GREEN: strict identity inventory parser, session registry, relay gate, and transparent forwarding
+   - `fbacb88` — Rule 1 fix: bounded rolling scan quarantines changed self identity split across TCP chunks
 2. **Task 2: Select wireless routes by verified identity instead of DHCP order**
    - `6ba45a0` — RED: failing launcher identity-probe and metadata-separation contracts
    - `ba2c575` — GREEN: complete candidate probes, exact expected-ID selection, and verified launch arguments
@@ -82,7 +83,7 @@ Each TDD task has a RED test commit followed by a GREEN implementation commit:
 
 ## Verification
 
-- `python -m unittest backend.test.test_stepesp_udp_relay -v` — PASS, 18 tests.
+- `python -m unittest backend.test.test_stepesp_udp_relay -v` — PASS, 19 tests.
 - `python -m py_compile scripts/stepesp_tcp_udp_relay.py backend/test/test_stepesp_udp_relay.py` — PASS.
 - `[scriptblock]::Create((Get-Content -Raw scripts/start_stepesp_wireless.ps1))` — PASS.
 - Launcher contract checks — PASS: no `$responsiveStations[0]`; verified Master/Slave IDs are separate from role aliases and endpoints.
@@ -106,10 +107,18 @@ Each TDD task has a RED test commit followed by a GREEN implementation commit:
 - **Verification:** State reports plan 3 of 6 with 2 completed plans and 33%; ROADMAP reports 2/6 In Progress.
 - **Committed in:** Plan metadata commit.
 
+**2. [Rule 1 - Bug] Quarantined identity changes split across stream boundaries**
+- **Found during:** Final threat-surface review
+- **Issue:** The live relay initially checked only lines that began a received TCP chunk, so an `IDENTITY_OK` preceded by binary bytes or split across chunks could evade changed-identity quarantine.
+- **Fix:** Added a bounded rolling prefix/line scanner that validates every complete session-self record regardless of binary prefix or TCP chunk boundary.
+- **Files modified:** `scripts/stepesp_tcp_udp_relay.py`, `backend/test/test_stepesp_udp_relay.py`
+- **Verification:** New split-prefix fixture passes with 19 focused tests; Python compilation and PowerShell parse still pass.
+- **Committed in:** `fbacb88`
+
 ---
 
-**Total deviations:** 1 auto-fixed (1 bug).
-**Impact on plan:** Tracking-only correction; relay, launcher, and test scope were unchanged.
+**Total deviations:** 2 auto-fixed (2 bugs).
+**Impact on plan:** Both fixes enforce the planned tracking and tampering contracts without expanding scope.
 
 ## Issues Encountered
 
@@ -131,8 +140,8 @@ None.
 ## Self-Check: PASSED
 
 - All three plan-owned implementation/test files and this summary exist.
-- All four RED/GREEN task commits are present in Git history.
-- The final 18-test suite, Python compile checks, PowerShell parse, and launcher preservation contracts passed.
+- All four RED/GREEN task commits and the focused threat-model fix commit are present in Git history.
+- The final 19-test suite, Python compile checks, PowerShell parse, and launcher preservation contracts passed.
 
 ---
 *Phase: 20-full-identity-and-confirmed-identify*
