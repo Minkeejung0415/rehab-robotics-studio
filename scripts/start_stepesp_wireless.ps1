@@ -2,8 +2,10 @@ param(
   [string]$Distro = 'Ubuntu-22.04',
   [string]$MasterHost = '192.168.4.1',
   [int]$MasterPort = 5000,
+  [string]$ExpectedMasterDeviceId = '',
   [string]$SlaveHost = 'auto',
   [int]$SlavePort = 5000,
+  [string]$ExpectedSlaveDeviceId = '',
   [int]$UdpPort = 55001,
   [int]$RelayPort = 5002,
   [int]$SlaveRelayPort = 5003,
@@ -21,6 +23,212 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+function ConvertTo-StepEspCanonicalId {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$DeviceId,
+    [string]$Label = 'device identity'
+  )
+
+  if ($DeviceId -notmatch '^esp32:[0-9a-fA-F]{12}$') {
+    throw "$Label must use the exact canonical form esp32:aabbccddeeff."
+  }
+  return $DeviceId.ToLowerInvariant()
+}
+
+function ConvertTo-StepEspMacId {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Mac,
+    [string]$Label
+  )
+
+  if ($Mac -notmatch '^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$') {
+    throw "$Label is not a complete six-byte MAC."
+  }
+  return "esp32:$($Mac.Replace(':', '').ToLowerInvariant())"
+}
+
+function ConvertFrom-StepEspControlFields {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Line
+  )
+
+  if ($Line.Length -gt 768) {
+    throw 'Identity response line exceeds the 768-byte bound.'
+  }
+  $parts = @($Line.Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries))
+  if ($parts.Count -eq 0) {
+    throw 'Identity response contained an empty line.'
+  }
+  $fields = @{}
+  for ($index = 1; $index -lt $parts.Count; $index++) {
+    if ($parts[$index] -notmatch '^([A-Za-z_][A-Za-z0-9_]*)=([A-Za-z0-9_.:,/@+\-]+)$') {
+      throw "Malformed identity field: $($parts[$index])"
+    }
+    if ($fields.ContainsKey($Matches[1])) {
+      throw "Duplicate identity field: $($Matches[1])"
+    }
+    $fields[$Matches[1]] = $Matches[2]
+  }
+  return [pscustomobject]@{
+    Prefix = $parts[0]
+    Fields = $fields
+  }
+}
+
+function Get-StepEspIdentity {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$HostAddress,
+    [Parameter(Mandatory = $true)]
+    [int]$Port,
+    [int]$TimeoutMs = 3000
+  )
+
+  $client = [System.Net.Sockets.TcpClient]::new()
+  try {
+    $connect = $client.ConnectAsync($HostAddress, $Port)
+    if (-not $connect.Wait([Math]::Min($TimeoutMs, 2000))) {
+      throw "Timed out connecting to identity endpoint $HostAddress`:$Port."
+    }
+    if ($connect.IsFaulted) {
+      throw $connect.Exception.GetBaseException()
+    }
+
+    $stream = $client.GetStream()
+    $stream.ReadTimeout = 250
+    $stream.WriteTimeout = 1000
+    $request = [System.Text.Encoding]::ASCII.GetBytes("IDENTITY?`n")
+    $stream.Write($request, 0, $request.Length)
+    $stream.Flush()
+
+    $buffer = [byte[]]::new(4096)
+    $text = [System.Text.StringBuilder]::new()
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+    $receivedBytes = 0
+    $selfFields = $null
+    $advertisedPeerCount = -1
+    $peers = [System.Collections.Generic.List[string]]::new()
+
+    while ([DateTime]::UtcNow -lt $deadline) {
+      try {
+        $count = $stream.Read($buffer, 0, $buffer.Length)
+      } catch [System.IO.IOException] {
+        continue
+      }
+      if ($count -eq 0) {
+        break
+      }
+      $receivedBytes += $count
+      if ($receivedBytes -gt 16384) {
+        throw "Identity response from $HostAddress exceeds the 16384-byte bound."
+      }
+      [void]$text.Append([System.Text.Encoding]::ASCII.GetString($buffer, 0, $count))
+
+      while (($newline = $text.ToString().IndexOf("`n", [StringComparison]::Ordinal)) -ge 0) {
+        $line = $text.ToString(0, $newline).TrimEnd("`r")
+        [void]$text.Remove(0, $newline + 1)
+
+        if (($line.StartsWith('IDENTITY_PEER ') -or $line.StartsWith('IDENTITY_END ')) -and -not $selfFields) {
+          throw "Identity inventory from $HostAddress placed peer/end before record=self."
+        }
+
+        if ($line.StartsWith('IDENTITY_OK ')) {
+          if ($selfFields) {
+            throw "Identity inventory from $HostAddress contains duplicate record=self."
+          }
+          $parsed = ConvertFrom-StepEspControlFields -Line $line
+          $selfFields = $parsed.Fields
+          if (
+            $parsed.Prefix -ne 'IDENTITY_OK' -or
+            $selfFields.protocol -ne 'id-v1' -or
+            $selfFields.record -ne 'self' -or
+            $selfFields.verified -ne '1'
+          ) {
+            throw "Identity self row must be IDENTITY_OK protocol=id-v1 record=self verified=1."
+          }
+          $canonicalSelf = ConvertTo-StepEspCanonicalId -DeviceId $selfFields.device_id -Label "Identity from $HostAddress"
+          if (
+            (ConvertTo-StepEspMacId -Mac $selfFields.display_mac -Label 'display_mac') -ne $canonicalSelf -or
+            (ConvertTo-StepEspMacId -Mac $selfFields.base_mac -Label 'base_mac') -ne $canonicalSelf
+          ) {
+            throw "Identity MAC metadata from $HostAddress does not match its device_id."
+          }
+          $parsedCount = 0
+          if (
+            -not [int]::TryParse($selfFields.peer_count, [ref]$parsedCount) -or
+            $parsedCount -lt 0 -or
+            $parsedCount -gt 64
+          ) {
+            throw "Identity peer_count from $HostAddress is invalid."
+          }
+          $advertisedPeerCount = $parsedCount
+          continue
+        }
+
+        if ($selfFields -and $line.StartsWith('IDENTITY_PEER ')) {
+          if ($peers.Count -ge $advertisedPeerCount) {
+            throw "Identity inventory from $HostAddress exceeds its advertised peer_count."
+          }
+          $parsed = ConvertFrom-StepEspControlFields -Line $line
+          $peerFields = $parsed.Fields
+          if (
+            $parsed.Prefix -ne 'IDENTITY_PEER' -or
+            $peerFields.protocol -ne 'id-v1' -or
+            $peerFields.record -ne 'peer' -or
+            $peerFields.verified -notin @('0', '1')
+          ) {
+            throw "Identity peer row must be IDENTITY_PEER protocol=id-v1 record=peer."
+          }
+          if ($peerFields.verified -eq '1') {
+            $peerId = ConvertTo-StepEspCanonicalId -DeviceId $peerFields.device_id -Label 'Peer identity'
+          } elseif ($peerFields.device_id -eq 'unknown') {
+            $peerId = "unverified:$($peerFields.transport_mac)"
+          } else {
+            throw 'Unverified peer must report device_id=unknown.'
+          }
+          if ($peers.Contains($peerId)) {
+            throw "Identity inventory from $HostAddress contains a duplicate peer."
+          }
+          [void]$peers.Add($peerId)
+          continue
+        }
+
+        if ($selfFields -and $line.StartsWith('IDENTITY_END ')) {
+          $parsed = ConvertFrom-StepEspControlFields -Line $line
+          $endFields = $parsed.Fields
+          $endCount = -1
+          if (
+            $parsed.Prefix -ne 'IDENTITY_END' -or
+            $endFields.protocol -ne 'id-v1' -or
+            -not [int]::TryParse($endFields.peer_count, [ref]$endCount) -or
+            $endCount -ne $advertisedPeerCount -or
+            $peers.Count -ne $advertisedPeerCount
+          ) {
+            throw "Identity terminator from $HostAddress does not match peer_count."
+          }
+          return [pscustomobject]@{
+            Host = $HostAddress
+            DeviceId = $canonicalSelf
+            Role = $selfFields.role
+            PeerIds = @($peers)
+          }
+        }
+
+        if ($selfFields) {
+          throw "Identity inventory from $HostAddress was interrupted before IDENTITY_END."
+        }
+      }
+    }
+    throw "Endpoint $HostAddress did not return a complete IDENTITY_OK/IDENTITY_PEER/IDENTITY_END inventory."
+  } finally {
+    $client.Dispose()
+  }
+}
+
 $workspace = Split-Path -Parent $PSScriptRoot
 $relayScript = Join-Path $workspace 'scripts\stepesp_tcp_udp_relay.py'
 $serialDrainScript = Join-Path $workspace 'scripts\stepesp_serial_drain.py'
@@ -109,10 +317,20 @@ if (-not $wifiAddress) {
   throw "STEP_ESP32 is associated, but $WifiInterface has no 192.168.4.x address."
 }
 
-$resolvedSlaveHost = $SlaveHost
+$expectedMasterCanonical = if ($ExpectedMasterDeviceId) {
+  ConvertTo-StepEspCanonicalId -DeviceId $ExpectedMasterDeviceId -Label 'Expected Master identity'
+} else {
+  $null
+}
+$expectedSlaveCanonical = if ($ExpectedSlaveDeviceId) {
+  ConvertTo-StepEspCanonicalId -DeviceId $ExpectedSlaveDeviceId -Label 'Expected Slave identity'
+} else {
+  $null
+}
+
+$candidateSlaveHosts = @()
 if ($SlaveHost -eq 'auto') {
-  # DHCP assignment order is not stable: the laptop may receive .2 before the
-  # slave joins. Find the other responding station instead of assuming .2.
+  # Ping only discovers candidate routes. It never selects device identity.
   $responsiveStations = @()
   for ($attempt = 0; $attempt -lt 15 -and $responsiveStations.Count -eq 0; $attempt++) {
     $responsiveStations = @(
@@ -129,16 +347,13 @@ if ($SlaveHost -eq 'auto') {
   if ($responsiveStations.Count -eq 0) {
     throw "Could not discover the slave on STEP_ESP32. Power the slave, wait for it to join, then retry or pass -SlaveHost 192.168.4.x."
   }
-  if ($responsiveStations.Count -gt 1) {
-    throw "Multiple STEP_ESP32 stations responded ($($responsiveStations -join ', ')). Retry with the slave address explicitly: -SlaveHost 192.168.4.x."
-  }
-  $resolvedSlaveHost = $responsiveStations[0]
+  $candidateSlaveHosts = @($responsiveStations | Sort-Object -Unique)
+} else {
+  $candidateSlaveHosts = @($SlaveHost)
 }
-if ($resolvedSlaveHost -eq $wifiAddress) {
-  throw "SlaveHost $resolvedSlaveHost is this Windows laptop, not the slave. Use -SlaveHost with the slave's actual STEP_ESP32 address."
+if ($candidateSlaveHosts -contains $wifiAddress) {
+  throw "SlaveHost includes this Windows laptop ($wifiAddress), not a slave endpoint."
 }
-
-Write-Host "STEP_ESP32 addresses: master=$MasterHost, slave=$resolvedSlaveHost, Windows=$wifiAddress"
 
 New-Item -ItemType Directory -Path (Split-Path -Parent $relayLog) -Force | Out-Null
 
@@ -160,17 +375,74 @@ if (-not $SkipGui) {
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 }
 
-# Give the ESP TCP server time to observe the old relay's FIN and release its
-# single active client before the replacement relay connects. Do not probe its
-# TCP port here: even a reachability probe consumes that single-client slot.
+# Give each ESP TCP server time to observe the old relay's FIN and release its
+# single active client before the bounded identity probes connect.
 Start-Sleep -Seconds 6
+
+$masterIdentity = Get-StepEspIdentity -HostAddress $MasterHost -Port $MasterPort
+if ($masterIdentity.Role -ne 'master') {
+  throw "Master route $MasterHost reported role=$($masterIdentity.Role), not master."
+}
+if ($expectedMasterCanonical -and $masterIdentity.DeviceId -ne $expectedMasterCanonical) {
+  throw "Master route $MasterHost reported $($masterIdentity.DeviceId), expected $expectedMasterCanonical."
+}
+$verifiedMasterDeviceId = $masterIdentity.DeviceId
+
+$slaveIdentityProbes = @()
+foreach ($candidateHost in $candidateSlaveHosts) {
+  try {
+    $probe = Get-StepEspIdentity -HostAddress $candidateHost -Port $SlavePort
+    if ($probe.Role -ne 'slave') {
+      Write-Warning "Ignoring candidate $candidateHost because its verified self role is $($probe.Role), not slave."
+      continue
+    }
+    $slaveIdentityProbes += $probe
+  } catch {
+    Write-Warning "Identity probe rejected candidate $candidateHost`: $($_.Exception.Message)"
+  }
+}
+
+$verifiedSlaveCandidates = @($slaveIdentityProbes)
+if ($expectedSlaveCanonical) {
+  $verifiedSlaveCandidates = @($slaveIdentityProbes | Where-Object {
+    $_.DeviceId -eq $expectedSlaveCanonical
+  })
+}
+$discoveredSelfIds = @(
+  $slaveIdentityProbes |
+    Sort-Object -Property DeviceId, Host |
+    ForEach-Object { "$($_.DeviceId)@$($_.Host)" }
+)
+if ($verifiedSlaveCandidates.Count -eq 0) {
+  $discovered = if ($discoveredSelfIds.Count) {
+    $discoveredSelfIds -join ', '
+  } else {
+    'none'
+  }
+  throw "No verified Slave self identity matched. Discovered verified self identities: $discovered"
+}
+if ($verifiedSlaveCandidates.Count -gt 1) {
+  throw "Slave route selection is ambiguous. Discovered verified self identities: $($discoveredSelfIds -join ', '). Pass -ExpectedSlaveDeviceId esp32:aabbccddeeff."
+}
+
+$selectedSlave = $verifiedSlaveCandidates[0]
+$resolvedSlaveHost = $selectedSlave.Host
+$verifiedSlaveDeviceId = $selectedSlave.DeviceId
+if ($verifiedSlaveDeviceId -eq $verifiedMasterDeviceId) {
+  throw "Master and Slave routes reported the same self identity $verifiedMasterDeviceId."
+}
+
+Write-Host "STEP_ESP32 routes: master=$MasterHost ($verifiedMasterDeviceId), slave=$resolvedSlaveHost ($verifiedSlaveDeviceId), Windows=$wifiAddress"
+
+# The short-lived identity probe closes before the relay takes ownership.
+Start-Sleep -Seconds 2
 
 $wslGateway = (wsl -d $Distro -- bash -lc "ip route show default | cut -d' ' -f3").Trim()
 if (-not $wslGateway) {
   throw 'Could not determine the Windows gateway address visible from WSL.'
 }
 
-$relayArgs = "`"$relayScript`" --esp-host $MasterHost --esp-port $MasterPort --udp-port $UdpPort --listen-port $RelayPort --slave-host $resolvedSlaveHost --slave-esp-port $SlavePort --slave-listen-port $SlaveRelayPort"
+$relayArgs = "`"$relayScript`" --esp-host $MasterHost --esp-port $MasterPort --expected-device-id $verifiedMasterDeviceId --udp-port $UdpPort --listen-port $RelayPort --slave-host $resolvedSlaveHost --slave-esp-port $SlavePort --slave-listen-port $SlaveRelayPort --slave-expected-device-id $verifiedSlaveDeviceId"
 $availableSerialPorts = [System.IO.Ports.SerialPort]::GetPortNames()
 if ($DiagnosticPort -and $availableSerialPorts -contains $DiagnosticPort) {
   $serialArgs = "`"$serialDrainScript`" $DiagnosticPort"
@@ -183,8 +455,8 @@ Start-Process -FilePath python.exe -ArgumentList $relayArgs -RedirectStandardOut
 Start-Sleep -Milliseconds 750
 
 $rosEnvironment = "export ROS_DOMAIN_ID=$RosDomainId; source /opt/ros/humble/setup.bash; source $RosInstall/setup.bash; source $OpenSimInstall/setup.bash"
-$master = "$rosEnvironment; exec ros2 run rehab_robotics_bridge esp32_bridge_node --ros-args -r __node:=esp_bridge_master -p node_id:=master -p host:=$wslGateway -p port:=$RelayPort -p transport:=tcp -p body_segment:=femur_r_imu -p recording_control_mode:=active > $bridgeLog 2>&1"
-$slave = "$rosEnvironment; exec ros2 run rehab_robotics_bridge esp32_bridge_node --ros-args -r __node:=esp_bridge_slave -p node_id:=slave -p host:=$wslGateway -p port:=$SlaveRelayPort -p transport:=tcp -p body_segment:=tibia_r_imu -p recording_control_mode:=active > $slaveBridgeLog 2>&1"
+$master = "$rosEnvironment; exec ros2 run rehab_robotics_bridge esp32_bridge_node --ros-args -r __node:=esp_bridge_master -p node_id:=master -p expected_device_id:=$verifiedMasterDeviceId -p host:=$wslGateway -p port:=$RelayPort -p transport:=tcp -p body_segment:=femur_r_imu -p recording_control_mode:=active > $bridgeLog 2>&1"
+$slave = "$rosEnvironment; exec ros2 run rehab_robotics_bridge esp32_bridge_node --ros-args -r __node:=esp_bridge_slave -p node_id:=slave -p expected_device_id:=$verifiedSlaveDeviceId -p host:=$wslGateway -p port:=$SlaveRelayPort -p transport:=tcp -p body_segment:=tibia_r_imu -p recording_control_mode:=active > $slaveBridgeLog 2>&1"
 $rosbridge = "$rosEnvironment; exec ros2 run rosbridge_server rosbridge_websocket --ros-args -p port:=9090 -p address:=0.0.0.0 > $rosbridgeLog 2>&1"
 $observer = "$rosEnvironment; exec ros2 run rehab_robotics_bridge processing_block_observer > $observerLog 2>&1"
 $openSim = "export ROS_DOMAIN_ID=$RosDomainId; exec bash $openSimRunner $OpenSimModel false master_imu_topic:=/esp32/master/imu slave_imu_topic:=/esp32/slave/imu > $openSimLog 2>&1"
