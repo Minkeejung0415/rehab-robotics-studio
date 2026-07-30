@@ -60,12 +60,18 @@ def _complete_inventory(
     *,
     endpoint: str = '192.168.4.1',
 ):
+    peer_ids = [
+        peer_id for peer_id in (PEER_ONE_ID, PEER_TWO_ID)
+        if peer_id != device_id
+    ]
     return relay_module.parse_identity_inventory(
         [
-            _self_line(device_id),
-            _peer_line(PEER_ONE_ID, 0),
-            _peer_line(PEER_TWO_ID, 1),
-            _end_line(),
+            _self_line(device_id, peer_count=len(peer_ids)),
+            *[
+                _peer_line(peer_id, slot)
+                for slot, peer_id in enumerate(peer_ids)
+            ],
+            _end_line(len(peer_ids)),
         ],
         endpoint=endpoint,
     )
