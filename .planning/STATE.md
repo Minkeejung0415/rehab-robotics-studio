@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Multi-Sensor Bone Mapping
 status: executing
-stopped_at: Completed 20-02-PLAN.md
-last_updated: "2026-07-30T20:18:39.824Z"
+stopped_at: Completed 20-03-PLAN.md; 20-04 already complete
+last_updated: "2026-07-30T21:11:02.449Z"
 last_activity: 2026-07-30
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 6
-  completed_plans: 2
-  percent: 33
+  completed_plans: 4
+  percent: 67
 ---
 
 # Project State
@@ -26,23 +26,24 @@ See: `.planning/PROJECT.md` (updated 2026-07-30)
 ## Current Position
 
 Phase: 20 (Full Identity and Confirmed Identify) — EXECUTING
-Plan: 3 of 6
+Plan: 5 of 6
 Status: Ready to execute
 Last activity: 2026-07-30
 
-Progress: [███░░░░░░░] 33%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
 **Current milestone:**
 
-- Plans completed: 2
+- Plans completed: 4
 - Phases completed: 0/6
 
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 20 P01 | 21 min | 2 tasks | 3 files |
 | Phase 20 P02 | 15 min | 2 tasks | 3 files |
+| Phase 20 P03 | 35 min | 2 tasks | 4 files |
 
 **Prior milestone reference:**
 
@@ -64,6 +65,9 @@ Decisions are logged in `PROJECT.md`. Current milestone decisions:
 - [Phase 20]: Identify confirmation is emitted only after target loop code starts the bounded LED action; ESP-NOW send completion is never confirmation. — Preserves application-level correlation and avoids false success.
 - [Phase 20]: Relay routes bind only from a complete verified id-v1 self record; peer rows remain inventory. — Prevents peer inventory, role aliases, mutable endpoints, and low-32 collisions from becoming session identity.
 - [Phase 20]: Wireless discovery accepts one verified Slave self identity or an exact expected canonical ID. — Ensures ping response order cannot select a physical device and ambiguous discovery fails closed.
+- [Phase 20]: Only a complete verified record=self row binds the bridge; peer rows remain bounded inventory and cannot satisfy expected_device_id. — Prevents peer inventory from masquerading as the serial device identity.
+- [Phase 20]: Existing Master/Slave publishers remain the only Phase 20 data publishers; device_topic_token is a pure Phase 21 foundation helper. — Preserves fixed role-topic compatibility until canonical fleet routing is introduced.
+- [Phase 20]: sent_unconfirmed remains observable and non-success; only a correlated confirmed reply updates last-confirmed state. — Prevents transport acceptance from being reported as physical Identify confirmation.
 
 ### Pending Todos
 
@@ -88,6 +92,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-07-30T20:18:29.634Z
-Stopped at: Completed 20-02-PLAN.md
+Last session: 2026-07-30T21:11:02.440Z
+Stopped at: Completed 20-03-PLAN.md; 20-04 already complete
 Resume file: None
