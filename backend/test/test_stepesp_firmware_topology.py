@@ -239,7 +239,7 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
         for source in (self.master, self.slave):
             self.assertRegex(
                 source,
-                r'#if defined\(ARDUINO_XIAO_ESP32S3\).*?'
+                r'(?s)#if defined\(ARDUINO_XIAO_ESP32S3\).*?'
                 r'#define STEPESP_IDENTIFY_LED_VERIFIED 1.*?'
                 r'#define STEPESP_IDENTIFY_LED_PIN 21.*?'
                 r'#define STEPESP_IDENTIFY_LED_ACTIVE_LEVEL LOW.*?'
