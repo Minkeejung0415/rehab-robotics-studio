@@ -18,6 +18,23 @@ def define(source: str, name: str) -> str:
     return match.group(1).strip().strip('"')
 
 
+def xiao_identify_led_branches(source: str) -> tuple[str, str]:
+    match = re.search(
+        r'^#if defined\(ARDUINO_XIAO_ESP32S3\)\s*$'
+        r'(?P<supported>.*?)'
+        r'^#else\s*$'
+        r'(?P<unsupported>.*?)'
+        r'^#endif\s*$',
+        source,
+        re.MULTILINE | re.DOTALL,
+    )
+    if match is None:
+        raise AssertionError(
+            'missing exact ARDUINO_XIAO_ESP32S3 Identify LED guard'
+        )
+    return match.group('supported'), match.group('unsupported')
+
+
 def struct_body(source: str, name: str) -> str:
     match = re.search(
         rf'struct\s+{re.escape(name)}\s*\{{(?P<body>.*?)\}}\s*;',
@@ -236,21 +253,46 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
         )
 
     def test_xiao_led_capability_is_exactly_guarded_and_fail_closed(self):
-        for source in (self.master, self.slave):
-            self.assertRegex(
-                source,
-                r'(?s)#if defined\(ARDUINO_XIAO_ESP32S3\).*?'
-                r'#define STEPESP_IDENTIFY_LED_VERIFIED 1.*?'
-                r'#define STEPESP_IDENTIFY_LED_PIN 21.*?'
-                r'#define STEPESP_IDENTIFY_LED_ACTIVE_LEVEL LOW.*?'
-                r'#else.*?'
-                r'#define STEPESP_IDENTIFY_LED_VERIFIED 0',
-            )
-            self.assertIn(
-                '#define STEPESP_IDENTIFY_LED_BOARD_REVISION '
-                '"seeed-xiao-esp32s3"',
-                source,
-            )
+        master_supported, master_unsupported = xiao_identify_led_branches(
+            self.master
+        )
+        slave_supported, slave_unsupported = xiao_identify_led_branches(
+            self.slave
+        )
+        self.assertEqual(master_supported, slave_supported)
+        self.assertEqual(master_unsupported, slave_unsupported)
+
+        self.assertEqual(
+            define(master_supported, 'STEPESP_IDENTIFY_LED_VERIFIED'),
+            '1',
+        )
+        self.assertEqual(
+            define(master_supported, 'STEPESP_IDENTIFY_LED_PIN'),
+            'GPIO_NUM_21',
+        )
+        self.assertEqual(
+            define(master_supported, 'STEPESP_IDENTIFY_LED_ACTIVE_LEVEL'),
+            'LOW',
+        )
+        self.assertEqual(
+            define(master_supported, 'STEPESP_IDENTIFY_LED_BOARD_REVISION'),
+            'seeed-xiao-esp32s3',
+        )
+
+        self.assertEqual(
+            define(master_unsupported, 'STEPESP_IDENTIFY_LED_VERIFIED'),
+            '0',
+        )
+        self.assertEqual(
+            define(master_unsupported, 'STEPESP_IDENTIFY_LED_BOARD_REVISION'),
+            'unsupported',
+        )
+        self.assertNotIn('STEPESP_IDENTIFY_LED_PIN', master_unsupported)
+        self.assertNotIn(
+            'STEPESP_IDENTIFY_LED_ACTIVE_LEVEL',
+            master_unsupported,
+        )
+        self.assertNotIn('GPIO_NUM_21', master_unsupported)
 
     def test_identify_packet_schemas_match_and_require_exact_validation(self):
         request_fields = (
@@ -392,21 +434,29 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
             'g_identify_pending_request = *request;',
             slave_receive,
         )
-        for callback in (master_receive, slave_receive):
+        callbacks = (
+            master_receive,
+            slave_receive,
+            function_body(self.master, 'onEspNowSent'),
+            function_body(self.slave, 'onEspNowSent'),
+        )
+        for callback in callbacks:
             self.assertNotIn('digitalWrite(', callback)
             self.assertNotIn('pinMode(', callback)
             self.assertNotIn('delay(', callback)
 
-        for source in (self.master, self.slave):
-            send_callback = function_body(source, 'onEspNowSent')
+        for send_callback in callbacks[2:]:
             self.assertNotIn('IDENTIFY_OUTCOME_CONFIRMED', send_callback)
             self.assertNotIn('confirmed', send_callback)
 
     def test_identify_tick_is_non_blocking_idempotent_and_restores_led(self):
         forbidden_assignment = re.compile(
-            r'\b(?:streaming|g_sd_recording|g_sample_hz|g_sample_last_us|'
-            r'g_filter_on|g_rec_state|g_rec_armed|g_rec_start_at_us|'
-            r'g_rec_stop_at_us|g_sd_ready)\s*=(?!=)'
+            r'\b(?:streaming|g_stream_target_ip|g_sd_recording|'
+            r'g_relay_only_recording|g_sample_hz|g_sample_last_us|'
+            r'g_generated_samples|g_filter_on|g_rec_state|g_rec_armed|'
+            r'g_rec_start_at_us|g_rec_stop_at_us|g_rec_grace_deadline_ms|'
+            r'g_sd_ready|g_sd_saved_samples|g_sd_write_errors|'
+            r'g_sd_queue_drops)\s*=(?!=)'
         )
         for source in (self.master, self.slave):
             tick = function_body(source, 'identifyTick')
@@ -417,6 +467,16 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
             self.assertIn('g_identify_active_command_id', tick)
             self.assertIn('g_identify_deadline_ms', tick)
             self.assertIn('g_identify_prior_led_level', tick)
+            self.assertRegex(
+                tick,
+                r'g_identify_prior_led_level\s*=\s*'
+                r'digitalRead\(STEPESP_IDENTIFY_LED_PIN\)',
+            )
+            self.assertRegex(
+                tick,
+                r'g_identify_deadline_ms\s*=\s*'
+                r'now_ms\s*\+\s*request\.requested_duration_ms',
+            )
             self.assertIn(
                 'digitalWrite(STEPESP_IDENTIFY_LED_PIN, '
                 'g_identify_prior_led_level)',
