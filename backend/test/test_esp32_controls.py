@@ -54,6 +54,12 @@ def _load_bridge_module():
     sys.modules.setdefault('std_srvs', std_srvs)
     sys.modules.setdefault('std_srvs.srv', std_srvs.srv)
 
+    rehab_interfaces = types.ModuleType('rehab_robotics_interfaces')
+    rehab_interfaces.srv = types.ModuleType('rehab_robotics_interfaces.srv')
+    rehab_interfaces.srv.IdentifyDevice = type('IdentifyDevice', (), {})
+    sys.modules.setdefault('rehab_robotics_interfaces', rehab_interfaces)
+    sys.modules.setdefault('rehab_robotics_interfaces.srv', rehab_interfaces.srv)
+
     path = Path(__file__).parents[1] / 'rehab_robotics_bridge' / 'esp32_bridge_node.py'
     spec = importlib.util.spec_from_file_location('esp32_bridge_node_controls_test', path)
     module = importlib.util.module_from_spec(spec)
@@ -64,6 +70,204 @@ def _load_bridge_module():
 
 bridge = _load_bridge_module()
 mapper = bridge.Esp32BridgeNode._control_command_for_parameter
+
+
+def _identity_self_line(
+    device_id='esp32:aabbccddeeff',
+    peer_count=2,
+    *,
+    role='master',
+    route_ip='192.168.4.1',
+):
+    display = bridge.display_mac(device_id)
+    return (
+        f'IDENTITY_OK protocol=id-v1 record=self peer_count={peer_count} '
+        f'device_id={device_id} display_mac={display} base_mac={display} '
+        f'sta_mac=AA:BB:CC:DD:EE:F0 ap_mac=AA:BB:CC:DD:EE:F1 '
+        f'espnow_mac=AA:BB:CC:DD:EE:F2 role={role} route_ip={route_ip} '
+        'schema_version=1 verified=1 identify_supported=1 '
+        'board_revision=xiao_esp32s3'
+    )
+
+
+def _identity_peer_line(
+    device_id,
+    *,
+    transport_mac='10:20:30:40:50:60',
+    slave_id='ccddeeff',
+):
+    display = bridge.display_mac(device_id)
+    return (
+        'IDENTITY_PEER protocol=id-v1 record=peer '
+        f'device_id={device_id} display_mac={display} base_mac={display} '
+        f'sta_mac={display} ap_mac={display} espnow_mac={display} '
+        f'transport_mac={transport_mac} role=slave schema_version=1 '
+        f'verified=1 identify_supported=1 slave_id_deprecated={slave_id}'
+    )
+
+
+def _identity_end_line(peer_count=2):
+    return f'IDENTITY_END protocol=id-v1 peer_count={peer_count}'
+
+
+def _identify_reply(
+    outcome,
+    *,
+    command_id='blink-1',
+    target='esp32:aabbccddeeff',
+    prefix=None,
+    requested_duration_ms=3000,
+    applied_duration_ms=None,
+):
+    if prefix is None:
+        prefix = 'IDENTIFY_ACK' if outcome in {'confirmed', 'sent_unconfirmed'} else 'IDENTIFY_ERR'
+    if applied_duration_ms is None:
+        applied_duration_ms = requested_duration_ms if outcome == 'confirmed' else 0
+    return (
+        f'{prefix} protocol=identify-v1 command_id={command_id} target={target} '
+        f'outcome={outcome} requested_duration_ms={requested_duration_ms} '
+        f'applied_duration_ms={applied_duration_ms} detail=fixture'
+    )
+
+
+class IdentityHelperContractTests(unittest.TestCase):
+    def test_service_contract_is_primitive_and_build_registered(self):
+        repo_root = Path(__file__).parents[2]
+        service = (repo_root / 'rehab_robotics_interfaces' / 'srv' / 'IdentifyDevice.srv').read_text()
+        self.assertEqual(
+            service.splitlines(),
+            [
+                'string command_id',
+                'string target_device_id',
+                'uint32 duration_ms',
+                '---',
+                'string command_id',
+                'string target_device_id',
+                'string outcome',
+                'uint32 applied_duration_ms',
+                'string detail',
+            ],
+        )
+        cmake = (repo_root / 'rehab_robotics_interfaces' / 'CMakeLists.txt').read_text()
+        self.assertIn('"msg/ProcessingBlockUpdate.msg"', cmake)
+        self.assertIn('"srv/IdentifyDevice.srv"', cmake)
+        self.assertEqual(cmake.count('rosidl_generate_interfaces'), 1)
+
+    def test_full_mac_normalization_display_and_collision_safe_topic_tokens(self):
+        self.assertEqual(bridge.normalize_device_id('aabbccddeeff'), 'esp32:aabbccddeeff')
+        self.assertEqual(bridge.normalize_device_id('AA:BB:CC:DD:EE:FF'), 'esp32:aabbccddeeff')
+        self.assertEqual(bridge.normalize_device_id('esp32:AABBCCDDEEFF'), 'esp32:aabbccddeeff')
+        self.assertEqual(bridge.display_mac('esp32:aabbccddeeff'), 'AA:BB:CC:DD:EE:FF')
+        self.assertEqual(bridge.device_topic_token('esp32:aabbccddeeff'), 'mac_aabbccddeeff')
+        self.assertNotEqual(
+            bridge.device_topic_token('esp32:1111ccddeeff'),
+            bridge.device_topic_token('esp32:2222ccddeeff'),
+        )
+        for malformed in (
+            '', 'aabbccddeef', '00aabbccddeeff', 'esp32:aabbccddeef',
+            'AA:BB:CC:DD:EE', 'AA:BB:CC:DD:EE:FG', 'esp32:unknown',
+        ):
+            with self.subTest(malformed=malformed):
+                with self.assertRaises(ValueError):
+                    bridge.normalize_device_id(malformed)
+
+    def test_counted_inventory_requires_one_self_peers_and_matching_end(self):
+        lines = [
+            _identity_self_line(),
+            _identity_peer_line('esp32:1111ccddeeff'),
+            _identity_peer_line('esp32:2222ccddeeff'),
+            _identity_end_line(),
+        ]
+        inventory = bridge.parse_identity_inventory(lines)
+        self.assertEqual(inventory['self']['device_id'], 'esp32:aabbccddeeff')
+        self.assertEqual(
+            [peer['device_id'] for peer in inventory['peers']],
+            ['esp32:1111ccddeeff', 'esp32:2222ccddeeff'],
+        )
+        self.assertTrue(inventory['complete'])
+
+        invalid_inventories = (
+            lines[1:],
+            [lines[0], lines[0], *lines[1:]],
+            [lines[1], lines[0], lines[2], lines[3]],
+            [lines[0], lines[1], lines[1], lines[3]],
+            [lines[0], _identity_peer_line('esp32:aabbccddeeff'), lines[2], lines[3]],
+            lines[:-1],
+            [*lines[:-1], _identity_end_line(1)],
+            [_identity_self_line(peer_count=1), lines[1], lines[2], _identity_end_line(1)],
+        )
+        for invalid in invalid_inventories:
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    bridge.parse_identity_inventory(invalid)
+
+    def test_identity_records_reject_wrong_protocol_record_and_oversized_lines(self):
+        valid = _identity_self_line()
+        mutations = (
+            valid.replace('protocol=id-v1', 'protocol=id-v2'),
+            valid.replace('record=self', 'record=peer'),
+            valid.replace('device_id=esp32:aabbccddeeff', 'device_id=esp32:aabbccddeef'),
+            valid.replace('display_mac=AA:BB:CC:DD:EE:FF', 'display_mac=AA:BB:CC:DD:EE:00'),
+            valid + ('x' * 800),
+        )
+        for malformed in mutations:
+            with self.subTest(malformed=malformed[-40:]):
+                with self.assertRaises(ValueError):
+                    bridge.parse_identity_self(malformed)
+
+    def test_identify_request_validation_and_all_correlated_outcomes(self):
+        for duration in (1000, 3000, 5000):
+            self.assertEqual(
+                bridge.validate_identify_request('blink-1', 'esp32:aabbccddeeff', duration),
+                ('blink-1', 'esp32:aabbccddeeff', duration),
+            )
+        for duration in (999, 5001):
+            with self.assertRaises(ValueError):
+                bridge.validate_identify_request('blink-1', 'esp32:aabbccddeeff', duration)
+
+        for outcome in bridge.IDENTIFY_OUTCOMES:
+            parsed = bridge.parse_identify_reply(
+                _identify_reply(outcome),
+                expected_command_id='blink-1',
+                expected_target='esp32:aabbccddeeff',
+            )
+            self.assertEqual(parsed['outcome'], outcome)
+
+    def test_identify_reply_rejects_unmatched_malformed_and_wrong_prefix(self):
+        cases = (
+            _identify_reply('confirmed', command_id='other'),
+            _identify_reply('confirmed', target='esp32:0011ccddeeff'),
+            _identify_reply('unknown'),
+            _identify_reply('confirmed').replace('protocol=identify-v1', 'protocol=identify-v2'),
+            _identify_reply('confirmed', prefix='IDENTIFY_ERR'),
+            _identify_reply('offline', prefix='IDENTIFY_ACK'),
+            _identify_reply('confirmed') + ('x' * 800),
+        )
+        for reply in cases:
+            with self.subTest(reply=reply[-50:]):
+                with self.assertRaises(ValueError):
+                    bridge.parse_identify_reply(
+                        reply,
+                        expected_command_id='blink-1',
+                        expected_target='esp32:aabbccddeeff',
+                    )
+
+    def test_identity_and_identify_prefixes_are_bounded_control_messages(self):
+        for prefix in (
+            b'IDENTITY_OK ', b'IDENTITY_PEER ', b'IDENTITY_END ',
+            b'IDENTIFY_ACK ', b'IDENTIFY_ERR ',
+        ):
+            self.assertIn(prefix, bridge.CONTROL_RESPONSE_PREFIXES)
+
+        async def exercise_queue():
+            node = object.__new__(bridge.Esp32BridgeNode)
+            node._control_responses = asyncio.Queue(maxsize=2)
+            await node._admit_control_response('first')
+            await node._admit_control_response('second')
+            await node._admit_control_response('third')
+            return [node._control_responses.get_nowait(), node._control_responses.get_nowait()]
+
+        self.assertEqual(asyncio.run(exercise_queue()), ['second', 'third'])
 
 
 class Esp32ControlContractTests(unittest.TestCase):
@@ -273,7 +477,7 @@ class ConfirmedRangeRetentionTests(unittest.TestCase):
     """Verify nullable confirmed-range design and _store_confirmed_control_value."""
 
     def test_handshake_confirms_ranges_before_starting_binary_stream(self):
-        """CFG range commands must run while the firmware still accepts text."""
+        """CFG range commands run in text mode; FILTER is sent post-STARTED."""
 
         class Reader:
             def __init__(self):
@@ -331,6 +535,7 @@ class ConfirmedRangeRetentionTests(unittest.TestCase):
                 b'CFG 0 ACC 0\n',
                 b'CFG 0 GYR 0\n',
                 bridge.HANDSHAKE_START,
+                b'FILTER ON\n',  # fire-and-forget after STARTED; not before START
             ],
         )
         self.assertEqual(node._confirmed_accel_range_g, 2)
