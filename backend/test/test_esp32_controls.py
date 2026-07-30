@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import asyncio
+import json
 import sys
 import types
 import unittest
@@ -270,6 +271,195 @@ class IdentityHelperContractTests(unittest.TestCase):
         self.assertEqual(asyncio.run(exercise_queue()), ['second', 'third'])
 
 
+class BridgeIdentityAndIdentifyTests(unittest.TestCase):
+    def test_identity_handshake_completes_before_legacy_stream_handshake(self):
+        class Reader:
+            def __init__(self):
+                self._buffer = bytearray(b'SENSORS:0,ICM20948\n')
+                self._responses = iter((
+                    (_identity_self_line(peer_count=0) + '\n').encode(),
+                    (_identity_end_line(peer_count=0) + '\n').encode(),
+                    b'14 channels; sample_rate=100; node=esp32s3_arduino; transport=tcp\n',
+                    asyncio.TimeoutError(),
+                    b'OK CFG ACC 0\n',
+                    b'OK CFG GYR 0\n',
+                    b'STARTED BIN:esp32s3_arduino transport=tcp\n',
+                    b'SENSORS:0,ICM20948\n',
+                ))
+
+            async def readline(self):
+                response = next(self._responses)
+                if isinstance(response, BaseException):
+                    raise response
+                if response.startswith(b'SENSORS:'):
+                    self._buffer.clear()
+                return response
+
+        async def run_handshake():
+            node = _make_stub_node()
+            writer = _Writer()
+            transport = await bridge.Esp32BridgeNode._handshake(node, Reader(), writer)
+            return node, writer, transport
+
+        node, writer, transport = asyncio.run(run_handshake())
+        self.assertEqual(transport, 'tcp')
+        self.assertEqual(writer.writes[0:2], [bridge.IDENTITY_QUERY, bridge.HANDSHAKE_CONNECT])
+        self.assertEqual(node._bound_identity['device_id'], 'esp32:aabbccddeeff')
+        self.assertEqual(node._peer_inventory, [])
+
+    def test_incomplete_inventory_and_expected_peer_never_accept_stream(self):
+        async def incomplete():
+            node = _make_stub_node()
+            reader = _LineReader([
+                _identity_self_line(peer_count=1),
+                _identity_peer_line('esp32:1111ccddeeff'),
+            ])
+            with self.assertRaises((EOFError, ValueError)):
+                await bridge.Esp32BridgeNode._read_identity_inventory(node, reader, _Writer())
+            self.assertIsNone(node._bound_identity)
+
+        async def expected_peer():
+            node = _make_stub_node()
+            node._expected_device_id = 'esp32:1111ccddeeff'
+            reader = _LineReader([
+                _identity_self_line(peer_count=1),
+                _identity_peer_line('esp32:1111ccddeeff'),
+                _identity_end_line(peer_count=1),
+            ])
+            with self.assertRaises(RuntimeError):
+                await bridge.Esp32BridgeNode._read_identity_inventory(node, reader, _Writer())
+            self.assertIsNone(node._bound_identity)
+
+        asyncio.run(incomplete())
+        asyncio.run(expected_peer())
+
+    def test_same_self_refreshes_metadata_but_changed_self_is_rejected(self):
+        node = _make_stub_node()
+        first = bridge.parse_identity_inventory([
+            _identity_self_line(peer_count=0, route_ip='192.168.4.1'),
+            _identity_end_line(peer_count=0),
+        ])
+        second = bridge.parse_identity_inventory([
+            _identity_self_line(peer_count=0, route_ip='192.168.4.99'),
+            _identity_end_line(peer_count=0),
+        ])
+        changed = bridge.parse_identity_inventory([
+            _identity_self_line(
+                device_id='esp32:001122334455',
+                peer_count=0,
+                route_ip='192.168.4.1',
+            ),
+            _identity_end_line(peer_count=0),
+        ])
+
+        node._bind_identity_inventory(first)
+        node._bind_identity_inventory(second)
+        self.assertEqual(node._bound_identity['route']['reported_ip'], '192.168.4.99')
+        retained = json.loads(json.dumps(node._bound_identity))
+        with self.assertRaises(RuntimeError):
+            node._bind_identity_inventory(changed)
+        self.assertEqual(node._bound_identity, retained)
+
+    def test_health_snapshot_exposes_verified_self_and_distinct_peer_inventory(self):
+        node = _make_health_stub()
+        inventory = bridge.parse_identity_inventory([
+            _identity_self_line(peer_count=1),
+            _identity_peer_line('esp32:1111ccddeeff'),
+            _identity_end_line(peer_count=1),
+        ])
+        node._bind_identity_inventory(inventory)
+        snapshot = node._health_snapshot()
+
+        self.assertEqual(snapshot['identity']['schema'], 'oe_esp32.identity.v1')
+        self.assertEqual(snapshot['identity']['self']['device_id'], 'esp32:aabbccddeeff')
+        self.assertEqual(snapshot['identity']['self']['node_id'], 'master')
+        self.assertEqual(snapshot['identity']['self']['display_mac'], 'AA:BB:CC:DD:EE:FF')
+        self.assertEqual(snapshot['identity']['self']['role'], 'master')
+        self.assertEqual(snapshot['identity']['self']['route']['host'], '192.168.4.1')
+        self.assertEqual(snapshot['identity']['peers'][0]['device_id'], 'esp32:1111ccddeeff')
+        self.assertNotEqual(
+            snapshot['identity']['self']['record'],
+            snapshot['identity']['peers'][0]['record'],
+        )
+
+    def test_phase20_preserves_fixed_publishers_and_only_adds_role_identify_service(self):
+        source = (
+            Path(__file__).parents[1]
+            / 'rehab_robotics_bridge'
+            / 'esp32_bridge_node.py'
+        ).read_text(encoding='utf-8')
+        self.assertIn("f'{prefix}/imu'", source)
+        self.assertIn("f'{prefix}/raw'", source)
+        self.assertIn("f'/esp/raw/{self._node_id}'", source)
+        self.assertIn("f'/esp/status/{self._node_id}'", source)
+        self.assertIn("f'/esp32/{self._node_id}/identify'", source)
+        self.assertEqual(source.count('device_topic_token('), 1)
+        self.assertNotIn('/esp32/mac_', source)
+        self.assertNotIn('_canonical_publishers', source)
+
+    def test_identify_waits_for_correlated_terminal_confirmation(self):
+        async def exercise():
+            node = _make_identify_stub()
+            await node._identify_responses.put(
+                _identify_reply('confirmed', command_id='late-command'))
+            await node._identify_responses.put(
+                _identify_reply('confirmed', target='esp32:1111ccddeeff'))
+            await node._identify_responses.put(_identify_reply('sent_unconfirmed'))
+            await node._identify_responses.put(_identify_reply('confirmed'))
+            result = await node._send_identify_command(
+                'blink-1', 'esp32:aabbccddeeff', 3000)
+            return node, result
+
+        node, result = asyncio.run(exercise())
+        self.assertEqual(result['outcome'], 'confirmed')
+        self.assertEqual(result['applied_duration_ms'], 3000)
+        self.assertEqual(node._last_confirmed_identify['command_id'], 'blink-1')
+        self.assertEqual(len(node._unmatched_identify_replies), 2)
+        self.assertEqual(
+            node._active_writer.writes,
+            [
+                b'IDENTIFY protocol=identify-v1 command_id=blink-1 '
+                b'target=esp32:aabbccddeeff duration_ms=3000\n',
+            ],
+        )
+
+    def test_identify_maps_every_nonconfirmed_outcome_without_confirmed_mutation(self):
+        async def exercise(outcome):
+            node = _make_identify_stub()
+            node._last_confirmed_identify = {'command_id': 'prior'}
+            await node._identify_responses.put(_identify_reply(outcome))
+            result = await node._send_identify_command(
+                'blink-1', 'esp32:aabbccddeeff', 3000)
+            return node, result
+
+        for outcome in ('timeout', 'offline', 'unsupported', 'rejected', 'invalid_target'):
+            with self.subTest(outcome=outcome):
+                node, result = asyncio.run(exercise(outcome))
+                self.assertEqual(result['outcome'], outcome)
+                self.assertEqual(node._last_confirmed_identify, {'command_id': 'prior'})
+
+        node, result = asyncio.run(exercise('sent_unconfirmed'))
+        self.assertEqual(result['outcome'], 'sent_unconfirmed')
+        self.assertEqual(node._last_confirmed_identify, {'command_id': 'prior'})
+
+    def test_invalid_identify_input_and_unknown_target_perform_no_io(self):
+        async def exercise():
+            node = _make_identify_stub()
+            with self.assertRaises(ValueError):
+                await node._send_identify_command(
+                    'bad command', 'esp32:aabbccddeeff', 3000)
+            with self.assertRaises(ValueError):
+                await node._send_identify_command(
+                    'blink-1', 'esp32:aabbccddeef', 3000)
+            result = await node._send_identify_command(
+                'blink-1', 'esp32:9999ccddeeff', 3000)
+            return node, result
+
+        node, result = asyncio.run(exercise())
+        self.assertEqual(result['outcome'], 'offline')
+        self.assertEqual(node._active_writer.writes, [])
+
+
 class Esp32ControlContractTests(unittest.TestCase):
     def test_supported_controls_have_expected_firmware_acknowledgements(self):
         self.assertEqual(mapper('sample_rate_hz', 137), ('FREQ:137', 'OK FREQ:137', ''))
@@ -470,6 +660,88 @@ def _make_stub_node():
     node._recording_sample_rate_hz = 100
     node._effective_sample_rate_hz = 100
     node._filter_enabled = True
+    node._node_id = 'master'
+    node._host = '192.168.4.1'
+    node._port = 5000
+    node._handshake_timeout_s = 0.1
+    node._identity_timeout_s = 0.1
+    node._identify_timeout_s = 0.01
+    node._expected_device_id = ''
+    node._bound_identity = None
+    node._peer_inventory = []
+    node._unmatched_identify_replies = bridge.deque(maxlen=64)
+    node.get_logger = lambda: _Logger()
+    return node
+
+
+class _Logger:
+    def info(self, _message):
+        pass
+
+    def warning(self, _message):
+        pass
+
+
+class _Writer:
+    def __init__(self):
+        self.writes = []
+
+    def write(self, data):
+        self.writes.append(data)
+
+    async def drain(self):
+        pass
+
+    def is_closing(self):
+        return False
+
+
+class _LineReader:
+    def __init__(self, lines):
+        self._lines = [
+            line if isinstance(line, bytes) else (line + '\n').encode('ascii')
+            for line in lines
+        ]
+
+    async def readline(self):
+        if not self._lines:
+            return b''
+        return self._lines.pop(0)
+
+
+def _make_health_stub():
+    node = _make_stub_node()
+    node._frame_times = bridge.deque()
+    node._last_frame_monotonic = None
+    node._connection_state = 'connected'
+    node._reconnect_count = 0
+    node._frames_received = 0
+    node._recording_state = 'idle'
+    node._recording_session_id = ''
+    node._recording_error = ''
+    node._recording_health = {
+        'sd_ready': None,
+        'saved_samples': None,
+        'file_byte_size': None,
+        'file_checksum': None,
+        'checksum_type': None,
+        'finalization_reason': None,
+    }
+    return node
+
+
+def _make_identify_stub():
+    node = _make_stub_node()
+    node._active_writer = _Writer()
+    node._record_command_lock = asyncio.Lock()
+    node._control_responses = asyncio.Queue(maxsize=8)
+    node._identify_responses = asyncio.Queue(maxsize=8)
+    node._last_confirmed_identify = None
+    node._bind_identity_inventory(bridge.parse_identity_inventory([
+        _identity_self_line(peer_count=1),
+        _identity_peer_line('esp32:1111ccddeeff'),
+        _identity_end_line(peer_count=1),
+    ]))
     return node
 
 
@@ -483,6 +755,8 @@ class ConfirmedRangeRetentionTests(unittest.TestCase):
             def __init__(self):
                 self._buffer = bytearray(b'SENSORS:0,ICM20948\n')
                 self._responses = iter((
+                    (_identity_self_line(peer_count=0) + '\n').encode(),
+                    (_identity_end_line(peer_count=0) + '\n').encode(),
                     b'14 channels; sample_rate=100; node=esp32s3_arduino; transport=tcp\n',
                     asyncio.TimeoutError(),
                     b'OK CFG ACC 0\n',
@@ -531,6 +805,7 @@ class ConfirmedRangeRetentionTests(unittest.TestCase):
         self.assertEqual(
             writer.writes,
             [
+                bridge.IDENTITY_QUERY,
                 bridge.HANDSHAKE_CONNECT,
                 b'CFG 0 ACC 0\n',
                 b'CFG 0 GYR 0\n',
