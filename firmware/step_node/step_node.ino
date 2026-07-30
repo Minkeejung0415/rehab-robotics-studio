@@ -118,15 +118,15 @@ struct IdentifyAckPacket;
 #define NODE_IS_MASTER true
 #define ENABLE_SD true
 
+// The official XIAO ESP32S3 variant maps its active-low user LED to GPIO 21.
+// Do not define a fallback pin: unknown board targets must remain unsupported.
 #if defined(ARDUINO_XIAO_ESP32S3)
 #define STEPESP_IDENTIFY_LED_VERIFIED 1
-#define STEPESP_IDENTIFY_LED_PIN 21
+#define STEPESP_IDENTIFY_LED_PIN GPIO_NUM_21
 #define STEPESP_IDENTIFY_LED_ACTIVE_LEVEL LOW
 #define STEPESP_IDENTIFY_LED_BOARD_REVISION "seeed-xiao-esp32s3"
 #else
 #define STEPESP_IDENTIFY_LED_VERIFIED 0
-#define STEPESP_IDENTIFY_LED_PIN -1
-#define STEPESP_IDENTIFY_LED_ACTIVE_LEVEL LOW
 #define STEPESP_IDENTIFY_LED_BOARD_REVISION "unsupported"
 #endif
 
