@@ -8,6 +8,13 @@ import sys
 import unittest
 from pathlib import Path
 
+from backend.test.test_stepesp_firmware_topology import (
+    CROSS_LAYER_BINDING_ATTACKS,
+    CROSS_LAYER_IDENTITY_REJECTION_CASES,
+    CROSS_LAYER_IDENTIFY_OUTCOMES,
+    CROSS_LAYER_LOW32_COLLISION_IDS,
+)
+
 
 REPO_ROOT = Path(__file__).parents[2]
 RELAY_PATH = REPO_ROOT / 'scripts' / 'stepesp_tcp_udp_relay.py'
@@ -204,6 +211,69 @@ class IdentityContractTests(unittest.TestCase):
                         endpoint='192.168.4.1',
                     )
 
+    def test_cross_layer_identity_matrix_rejects_every_binding_attack(self):
+        cases = {
+            'missing_self': [
+                _peer_line(PEER_ONE_ID, 0),
+                _end_line(1),
+            ],
+            'duplicate_self': [
+                _self_line(peer_count=0),
+                _self_line(peer_count=0),
+                _end_line(0),
+            ],
+            'peer_before_self': [
+                _peer_line(PEER_ONE_ID, 0),
+                _self_line(peer_count=1),
+                _end_line(1),
+            ],
+            'peer_reuses_self': [
+                _self_line(peer_count=1),
+                _peer_line(SELF_ID, 0),
+                _end_line(1),
+            ],
+            'duplicate_peer': [
+                _self_line(peer_count=2),
+                _peer_line(PEER_ONE_ID, 0),
+                _peer_line(PEER_ONE_ID, 1),
+                _end_line(2),
+            ],
+            'count_mismatch': [
+                _self_line(peer_count=2),
+                _peer_line(PEER_ONE_ID, 0),
+                _end_line(2),
+            ],
+            'missing_terminator': [
+                _self_line(peer_count=1),
+                _peer_line(PEER_ONE_ID, 0),
+            ],
+            'mismatched_terminator': [
+                _self_line(peer_count=1),
+                _peer_line(PEER_ONE_ID, 0),
+                _end_line(2),
+            ],
+        }
+        self.assertEqual(set(cases), set(CROSS_LAYER_IDENTITY_REJECTION_CASES))
+        for label, lines in cases.items():
+            with self.subTest(label=label):
+                with self.assertRaises(relay_module.IdentityProtocolError):
+                    relay_module.parse_identity_inventory(
+                        lines,
+                        endpoint='192.168.4.1',
+                    )
+
+        self.assertEqual(CROSS_LAYER_BINDING_ATTACKS, ('peer_matches_expected',))
+        with self.assertRaises(relay_module.IdentityProtocolError):
+            relay_module.parse_identity_inventory(
+                [
+                    _self_line(peer_count=1),
+                    _peer_line(PEER_ONE_ID, 0),
+                    _end_line(1),
+                ],
+                endpoint='192.168.4.1',
+                expected_device_id=PEER_ONE_ID,
+            )
+
     def test_reconnect_updates_endpoint_metadata_for_the_same_full_mac(self):
         registry = relay_module.SessionIdentityRegistry()
         first = registry.bind(_complete_inventory(endpoint='192.168.4.3').session)
@@ -226,10 +296,12 @@ class IdentityContractTests(unittest.TestCase):
 
     def test_low_32_bit_collision_does_not_merge_devices(self):
         registry = relay_module.SessionIdentityRegistry()
-        first = registry.bind(_complete_inventory(SELF_ID).session)
+        first_id, second_id = CROSS_LAYER_LOW32_COLLISION_IDS
+        first = registry.bind(_complete_inventory(first_id).session)
         second = registry.bind(
-            _complete_inventory(PEER_TWO_ID, endpoint='192.168.4.8').session
+            _complete_inventory(second_id, endpoint='192.168.4.8').session
         )
+        self.assertEqual(first_id[-8:], second_id[-8:])
         self.assertNotEqual(first.device_id, second.device_id)
         self.assertEqual(len(registry.identities), 2)
 
@@ -369,7 +441,7 @@ class StepEspUdpRelayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bytes(master_writer.data), master_frame)
         self.assertEqual(bytes(slave_writer.data), slave_frame)
 
-    async def test_identify_terminal_reply_is_forwarded_byte_identically(self):
+    async def test_identify_outcome_matrix_and_binary_traffic_are_forwarded_byte_identically(self):
         relay = relay_module.StepEspRelay(
             'master',
             '192.168.4.1',
@@ -378,13 +450,56 @@ class StepEspUdpRelayTests(unittest.IsolatedAsyncioTestCase):
         )
         writer = _Writer()
         relay._downstream_writer = writer
-        reply = (
-            b'IDENTIFY_ACK protocol=identify-v1 command_id=blink-1 '
-            b'target=esp32:aabbccddeeff outcome=confirmed duration_ms=3000 '
-            b'detail=started\n'
+        replies = b''.join(
+            (
+                b'IDENTIFY_ACK'
+                if outcome in {'confirmed', 'sent_unconfirmed'}
+                else b'IDENTIFY_ERR'
+            )
+            + b' protocol=identify-v1 command_id=blink-1 '
+            + b'target=esp32:aabbccddeeff outcome='
+            + outcome.encode('ascii')
+            + b' duration_ms=3000 detail=fixture\n'
+            for outcome in CROSS_LAYER_IDENTIFY_OUTCOMES
         )
-        await relay._forward_esp_control(_Socket([reply, b'']))
-        self.assertEqual(bytes(writer.data), reply)
+        mixed = (b'\xa1' * 50) + replies + (b'\xb2' * 50)
+        await relay._forward_esp_control(_Socket([mixed, b'']))
+        self.assertEqual(bytes(writer.data), mixed)
+
+    async def test_malformed_inventory_cannot_poison_an_unrelated_live_route(self):
+        with self.assertRaises(relay_module.IdentityProtocolError):
+            relay_module.parse_identity_inventory(
+                [
+                    _peer_line(PEER_ONE_ID, 0),
+                    _self_line(peer_count=1),
+                    _end_line(1),
+                ],
+                endpoint='192.168.4.1',
+            )
+
+        malformed = relay_module.StepEspRelay('master', '192.168.4.1', 5000)
+        live = relay_module.StepEspRelay('slave', '192.168.4.3', 5000)
+        live_writer = _Writer()
+        live._downstream_writer = live_writer
+        live._udp_enabled.set()
+        router = relay_module.UdpRouter(
+            55001,
+            {
+                '192.168.4.1': malformed,
+                '192.168.4.3': live,
+            },
+        )
+        worker = asyncio.create_task(router._forward_route('192.168.4.3'))
+        try:
+            self.assertTrue(router.route_datagram('192.168.4.3', b'live-frame'))
+            await asyncio.wait_for(
+                router.queues['192.168.4.3'].join(),
+                timeout=0.5,
+            )
+        finally:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+        self.assertEqual(bytes(live_writer.data), b'live-frame')
 
     async def test_split_identity_change_after_binary_is_quarantined(self):
         relay = relay_module.StepEspRelay('master', '192.168.4.1', 5000)

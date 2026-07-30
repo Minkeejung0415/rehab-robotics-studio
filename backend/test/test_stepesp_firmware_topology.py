@@ -10,6 +10,51 @@ REPO_ROOT = Path(__file__).parents[2]
 MASTER_SOURCE = REPO_ROOT / 'firmware' / 'step_node' / 'step_node.ino'
 SLAVE_SOURCE = REPO_ROOT / 'firmware' / 'step_node_slave' / 'step_node_slave.ino'
 
+# Shared by the firmware, relay, and bridge suites so every adjacent layer is
+# checked against one named protocol matrix instead of drifting fixture copies.
+CROSS_LAYER_SELF_ID = 'esp32:aabbccddeeff'
+CROSS_LAYER_PEER_IDS = (
+    'esp32:112233445566',
+    'esp32:77bbccddeeff',
+)
+CROSS_LAYER_LOW32_COLLISION_IDS = (
+    'esp32:1111ccddeeff',
+    'esp32:2222ccddeeff',
+)
+CROSS_LAYER_IDENTITY_REJECTION_CASES = (
+    'missing_self',
+    'duplicate_self',
+    'peer_before_self',
+    'peer_reuses_self',
+    'duplicate_peer',
+    'count_mismatch',
+    'missing_terminator',
+    'mismatched_terminator',
+)
+CROSS_LAYER_BINDING_ATTACKS = ('peer_matches_expected',)
+CROSS_LAYER_IDENTIFY_OUTCOMES = (
+    'confirmed',
+    'sent_unconfirmed',
+    'timeout',
+    'offline',
+    'unsupported',
+    'rejected',
+    'invalid_target',
+)
+CROSS_LAYER_FALSE_CONFIRM_CASES = (
+    'wrong_command',
+    'wrong_target',
+    'duplicate_unmatched',
+    'late',
+    'lost',
+    'sent_unconfirmed',
+    'timeout',
+    'offline',
+    'unsupported',
+    'rejected',
+    'invalid_target',
+)
+
 
 def define(source: str, name: str) -> str:
     match = re.search(rf'^#define\s+{re.escape(name)}\s+(.+?)\s*(?://.*)?$', source, re.MULTILINE)
@@ -188,8 +233,8 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
             )
 
     def test_full_mac_collision_does_not_collapse_identity(self):
-        first = bytes.fromhex('001122334455')
-        second = bytes.fromhex('aabb22334455')
+        first = bytes.fromhex(CROSS_LAYER_LOW32_COLLISION_IDS[0][6:])
+        second = bytes.fromhex(CROSS_LAYER_LOW32_COLLISION_IDS[1][6:])
         self.assertEqual(first[-4:], second[-4:])
         self.assertNotEqual(canonical_device_id(first), canonical_device_id(second))
         for source in (self.master, self.slave):
@@ -235,6 +280,53 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
             command = function_body(source, 'handleLine')
             self.assertIn('line.equalsIgnoreCase("IDENTITY?")', command)
             self.assertIn('printIdentityInventory();', command)
+
+    def test_cross_layer_matrix_pins_exact_firmware_producer_and_identify_contract(self):
+        master_inventory = function_body(self.master, 'printIdentityInventory')
+        slave_inventory = function_body(self.slave, 'printIdentityInventory')
+        self.assertEqual(
+            master_inventory.count(
+                'IDENTITY_OK protocol=id-v1 record=self peer_count=%d'
+            ),
+            1,
+        )
+        self.assertEqual(
+            master_inventory.count(
+                'IDENTITY_PEER protocol=id-v1 record=peer'
+            ),
+            2,
+        )
+        self.assertEqual(
+            master_inventory.count(
+                'IDENTITY_END protocol=id-v1 peer_count=%d'
+            ),
+            1,
+        )
+        self.assertEqual(
+            slave_inventory.count(
+                'IDENTITY_OK protocol=id-v1 record=self peer_count=0'
+            ),
+            1,
+        )
+        self.assertEqual(slave_inventory.count('IDENTITY_PEER'), 0)
+        self.assertEqual(
+            slave_inventory.count(
+                'IDENTITY_END protocol=id-v1 peer_count=0'
+            ),
+            1,
+        )
+
+        dispatch = function_body(self.master, 'dispatchIdentifyRequest')
+        self.assertIn('memcmp(self.base_mac, target_mac, 6)', dispatch)
+        self.assertRegex(
+            dispatch,
+            r'memcmp\(slot\.identity\.base_mac,\s*target_mac,\s*6\)',
+        )
+        self.assertNotIn('slave_id', dispatch)
+        host_output = function_body(self.master, 'emitIdentifyHostResult')
+        for outcome in CROSS_LAYER_IDENTIFY_OUTCOMES:
+            self.assertIn(f'"{outcome}"', self.master)
+        self.assertIn('command_id=%s target=%s outcome=%s', host_output)
 
     def test_legacy_status_remains_unverified_and_not_an_identity_key(self):
         master_inventory = function_body(self.master, 'printIdentityInventory')
@@ -388,15 +480,7 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
         self.assertIn('IDENTIFY_ERR protocol=identify-v1', host_output)
         self.assertIn('command_id=%s target=%s outcome=%s', host_output)
         self.assertIn('applied_duration_ms=%lu detail=%s', host_output)
-        for outcome in (
-            'confirmed',
-            'sent_unconfirmed',
-            'timeout',
-            'offline',
-            'unsupported',
-            'rejected',
-            'invalid_target',
-        ):
+        for outcome in CROSS_LAYER_IDENTIFY_OUTCOMES:
             self.assertIn(f'"{outcome}"', self.master)
 
     def test_master_identify_parser_targets_self_or_one_full_mac_peer(self):

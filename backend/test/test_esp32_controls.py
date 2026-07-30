@@ -9,6 +9,14 @@ import types
 import unittest
 from pathlib import Path
 
+from backend.test.test_stepesp_firmware_topology import (
+    CROSS_LAYER_BINDING_ATTACKS,
+    CROSS_LAYER_FALSE_CONFIRM_CASES,
+    CROSS_LAYER_IDENTITY_REJECTION_CASES,
+    CROSS_LAYER_IDENTIFY_OUTCOMES,
+    CROSS_LAYER_LOW32_COLLISION_IDS,
+)
+
 
 def _load_bridge_module():
     """Load the command mapper with lightweight ROS message stand-ins.
@@ -160,9 +168,11 @@ class IdentityHelperContractTests(unittest.TestCase):
         self.assertEqual(bridge.normalize_device_id('esp32:AABBCCDDEEFF'), 'esp32:aabbccddeeff')
         self.assertEqual(bridge.display_mac('esp32:aabbccddeeff'), 'AA:BB:CC:DD:EE:FF')
         self.assertEqual(bridge.device_topic_token('esp32:aabbccddeeff'), 'mac_aabbccddeeff')
+        first_id, second_id = CROSS_LAYER_LOW32_COLLISION_IDS
+        self.assertEqual(first_id[-8:], second_id[-8:])
         self.assertNotEqual(
-            bridge.device_topic_token('esp32:1111ccddeeff'),
-            bridge.device_topic_token('esp32:2222ccddeeff'),
+            bridge.device_topic_token(first_id),
+            bridge.device_topic_token(second_id),
         )
         for malformed in (
             '', 'aabbccddeef', '00aabbccddeeff', 'esp32:aabbccddeef',
@@ -202,6 +212,54 @@ class IdentityHelperContractTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     bridge.parse_identity_inventory(invalid)
 
+    def test_cross_layer_identity_matrix_rejects_every_binding_attack(self):
+        cases = {
+            'missing_self': [
+                _identity_peer_line('esp32:1111ccddeeff'),
+                _identity_end_line(1),
+            ],
+            'duplicate_self': [
+                _identity_self_line(peer_count=0),
+                _identity_self_line(peer_count=0),
+                _identity_end_line(0),
+            ],
+            'peer_before_self': [
+                _identity_peer_line('esp32:1111ccddeeff'),
+                _identity_self_line(peer_count=1),
+                _identity_end_line(1),
+            ],
+            'peer_reuses_self': [
+                _identity_self_line(peer_count=1),
+                _identity_peer_line('esp32:aabbccddeeff'),
+                _identity_end_line(1),
+            ],
+            'duplicate_peer': [
+                _identity_self_line(peer_count=2),
+                _identity_peer_line('esp32:1111ccddeeff'),
+                _identity_peer_line('esp32:1111ccddeeff'),
+                _identity_end_line(2),
+            ],
+            'count_mismatch': [
+                _identity_self_line(peer_count=2),
+                _identity_peer_line('esp32:1111ccddeeff'),
+                _identity_end_line(2),
+            ],
+            'missing_terminator': [
+                _identity_self_line(peer_count=1),
+                _identity_peer_line('esp32:1111ccddeeff'),
+            ],
+            'mismatched_terminator': [
+                _identity_self_line(peer_count=1),
+                _identity_peer_line('esp32:1111ccddeeff'),
+                _identity_end_line(2),
+            ],
+        }
+        self.assertEqual(set(cases), set(CROSS_LAYER_IDENTITY_REJECTION_CASES))
+        for label, lines in cases.items():
+            with self.subTest(label=label):
+                with self.assertRaises(ValueError):
+                    bridge.parse_identity_inventory(lines)
+
     def test_identity_records_reject_wrong_protocol_record_and_oversized_lines(self):
         valid = _identity_self_line()
         mutations = (
@@ -226,7 +284,11 @@ class IdentityHelperContractTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 bridge.validate_identify_request('blink-1', 'esp32:aabbccddeeff', duration)
 
-        for outcome in bridge.IDENTIFY_OUTCOMES:
+        self.assertEqual(
+            tuple(bridge.IDENTIFY_OUTCOMES),
+            CROSS_LAYER_IDENTIFY_OUTCOMES,
+        )
+        for outcome in CROSS_LAYER_IDENTIFY_OUTCOMES:
             parsed = bridge.parse_identify_reply(
                 _identify_reply(outcome),
                 expected_command_id='blink-1',
@@ -332,6 +394,7 @@ class BridgeIdentityAndIdentifyTests(unittest.TestCase):
 
         asyncio.run(incomplete())
         asyncio.run(expected_peer())
+        self.assertEqual(CROSS_LAYER_BINDING_ATTACKS, ('peer_matches_expected',))
 
     def test_same_self_refreshes_metadata_but_changed_self_is_rejected(self):
         node = _make_stub_node()
@@ -396,6 +459,14 @@ class BridgeIdentityAndIdentifyTests(unittest.TestCase):
         self.assertEqual(source.count('device_topic_token('), 1)
         self.assertNotIn('/esp32/mac_', source)
         self.assertNotIn('_canonical_publishers', source)
+        self.assertNotRegex(
+            source,
+            r'create_publisher\([^)]*(?:device_topic_token|mac_[0-9a-f])',
+        )
+        self.assertNotRegex(
+            source,
+            r'(?:destroy_publisher|publisher_cache|device_publishers|mac_publishers)',
+        )
 
     def test_identify_waits_for_correlated_terminal_confirmation(self):
         async def exercise():
@@ -441,6 +512,71 @@ class BridgeIdentityAndIdentifyTests(unittest.TestCase):
         node, result = asyncio.run(exercise('sent_unconfirmed'))
         self.assertEqual(result['outcome'], 'sent_unconfirmed')
         self.assertEqual(node._last_confirmed_identify, {'command_id': 'prior'})
+
+    def test_cross_layer_false_confirmation_matrix_preserves_unrelated_control(self):
+        async def unmatched_timeout(*replies):
+            node = _make_identify_stub()
+            node._identify_timeout_s = 0.002
+            node._last_confirmed_identify = {'command_id': 'prior'}
+            node._control_responses.put_nowait('OK FILTER OFF')
+            for reply in replies:
+                node._identify_responses.put_nowait(reply)
+            result = await node._send_identify_command(
+                'blink-1', 'esp32:aabbccddeeff', 3000)
+            return node, result
+
+        unmatched_cases = {
+            'wrong_command': (
+                _identify_reply('confirmed', command_id='other'),
+            ),
+            'wrong_target': (
+                _identify_reply('confirmed', target='esp32:1111ccddeeff'),
+            ),
+            'duplicate_unmatched': (
+                _identify_reply('confirmed', command_id='other'),
+                _identify_reply('confirmed', command_id='other'),
+            ),
+            'lost': (),
+        }
+        for label, replies in unmatched_cases.items():
+            with self.subTest(label=label):
+                node, result = asyncio.run(unmatched_timeout(*replies))
+                self.assertEqual(result['outcome'], 'timeout')
+                self.assertEqual(
+                    node._last_confirmed_identify,
+                    {'command_id': 'prior'},
+                )
+                self.assertEqual(
+                    node._control_responses.get_nowait(),
+                    'OK FILTER OFF',
+                )
+
+        async def late_reply():
+            node = _make_identify_stub()
+            node._identify_timeout_s = 0.002
+            first = await node._send_identify_command(
+                'blink-1', 'esp32:aabbccddeeff', 3000)
+            node._identify_responses.put_nowait(_identify_reply('confirmed'))
+            second = await node._send_identify_command(
+                'blink-2', 'esp32:aabbccddeeff', 3000)
+            return node, first, second
+
+        node, first, second = asyncio.run(late_reply())
+        self.assertEqual(first['outcome'], 'timeout')
+        self.assertEqual(second['outcome'], 'timeout')
+        self.assertIsNone(node._last_confirmed_identify)
+        self.assertEqual(len(node._unmatched_identify_replies), 1)
+
+        covered = set(unmatched_cases) | {
+            'late',
+            'sent_unconfirmed',
+            'timeout',
+            'offline',
+            'unsupported',
+            'rejected',
+            'invalid_target',
+        }
+        self.assertEqual(covered, set(CROSS_LAYER_FALSE_CONFIRM_CASES))
 
     def test_invalid_identify_input_and_unknown_target_perform_no_io(self):
         async def exercise():
