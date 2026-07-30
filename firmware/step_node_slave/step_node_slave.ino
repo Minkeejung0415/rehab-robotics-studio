@@ -65,6 +65,8 @@ extern "C" {
 }
 
 struct IdentityPacket;
+struct IdentifyRequestPacket;
+struct IdentifyAckPacket;
 
 #define FIRMWARE_VERSION "1.8.0"
 #define WIFI_HOSTNAME "step-esp32"
@@ -663,6 +665,23 @@ typedef struct {
 #define IDENTITY_ROLE_SLAVE 2
 #define IDENTITY_CAP_IDENTIFY 0x0001u
 #define IDENTITY_STATUS_INTERVAL_MS 1000UL
+#define IDENTIFY_PACKET_MAGIC 0xD8
+#define IDENTIFY_REQUEST_TYPE 0x01
+#define IDENTIFY_ACK_TYPE 0x02
+#define IDENTIFY_PACKET_VERSION 1
+#define IDENTIFY_COMMAND_ID_MAX 32
+#define IDENTIFY_DURATION_MIN_MS 1000UL
+#define IDENTIFY_DURATION_MAX_MS 5000UL
+#define IDENTIFY_DURATION_DEFAULT_MS 3000UL
+#define IDENTIFY_ACK_TIMEOUT_MS 1500UL
+#define IDENTIFY_BLINK_INTERVAL_MS 200UL
+#define IDENTIFY_OUTCOME_CONFIRMED 1
+#define IDENTIFY_OUTCOME_SENT_UNCONFIRMED 2
+#define IDENTIFY_OUTCOME_TIMEOUT 3
+#define IDENTIFY_OUTCOME_OFFLINE 4
+#define IDENTIFY_OUTCOME_UNSUPPORTED 5
+#define IDENTIFY_OUTCOME_REJECTED 6
+#define IDENTIFY_OUTCOME_INVALID_TARGET 7
 #define SLAVE_STATUS_INTERVAL_MS 10UL
 #define SLAVE_STATIC_IP_OCTET 0
 #define SLAVE_REC_STATE_IDLE 0u
@@ -713,6 +732,29 @@ struct IdentityPacket {
   uint8_t reserved;
 };
 
+struct IdentifyRequestPacket {
+  uint8_t magic;
+  uint8_t type;
+  uint8_t version;
+  uint16_t packet_size;
+  char command_id[IDENTIFY_COMMAND_ID_MAX + 1];
+  uint8_t target_mac[6];
+  uint32_t requested_duration_ms;
+};
+
+struct IdentifyAckPacket {
+  uint8_t magic;
+  uint8_t type;
+  uint8_t version;
+  uint16_t packet_size;
+  char command_id[IDENTIFY_COMMAND_ID_MAX + 1];
+  uint8_t target_mac[6];
+  uint32_t requested_duration_ms;
+  uint32_t applied_duration_ms;
+  uint8_t outcome;
+  uint8_t reserved[3];
+};
+
 struct SlaveStatusPacket {
   uint8_t magic;
   uint8_t version;
@@ -758,6 +800,20 @@ struct SlaveStatusPacket {
 static uint32_t g_last_identity_status_ms = 0;
 static IdentityPacket g_master_identity = {};
 static bool g_master_identity_verified = false;
+static volatile bool g_identify_request_pending = false;
+static IdentifyRequestPacket g_identify_pending_request = {};
+static volatile bool g_identify_pending_from_espnow = false;
+static volatile bool g_identify_ack_pending = false;
+static IdentifyAckPacket g_identify_pending_ack = {};
+static bool g_identify_active = false;
+static char g_identify_active_command_id[IDENTIFY_COMMAND_ID_MAX + 1] = {};
+static uint8_t g_identify_active_target[6] = {};
+static uint32_t g_identify_deadline_ms = 0;
+static uint32_t g_identify_last_toggle_ms = 0;
+static int g_identify_prior_led_level = HIGH;
+static int g_identify_led_level = HIGH;
+static IdentifyAckPacket g_identify_last_ack = {};
+static bool g_identify_last_ack_valid = false;
 
 static void efuseBaseMac(uint8_t out[6]) {
   const uint64_t raw = ESP.getEfuseMac();
@@ -838,6 +894,31 @@ static void maybeRegisterMasterPeer(const esp_now_recv_info_t *info) {
 
 void onEspNowRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (NODE_IS_MASTER) return;
+  if (len == (int)sizeof(IdentifyRequestPacket) &&
+      data[0] == IDENTIFY_PACKET_MAGIC) {
+    const IdentifyRequestPacket *request =
+        (const IdentifyRequestPacket *)data;
+    uint8_t self_base_mac[6] = {};
+    efuseBaseMac(self_base_mac);
+    const bool command_terminated =
+        memchr(request->command_id, '\0',
+               sizeof(request->command_id)) != nullptr;
+    if (request->type == IDENTIFY_REQUEST_TYPE &&
+        request->version == IDENTIFY_PACKET_VERSION &&
+        request->packet_size == sizeof(IdentifyRequestPacket) &&
+        command_terminated && request->command_id[0] != '\0' &&
+        request->requested_duration_ms >= IDENTIFY_DURATION_MIN_MS &&
+        request->requested_duration_ms <= IDENTIFY_DURATION_MAX_MS &&
+        memcmp(request->target_mac, self_base_mac, 6) == 0 &&
+        !g_identify_request_pending) {
+      maybeRegisterMasterPeer(info);
+      g_identify_pending_request = *request;
+      g_identify_pending_from_espnow = true;
+      g_identify_request_pending = true;
+      g_espnow_last_rx_ms = millis();
+    }
+    return;
+  }
   if (len == (int)sizeof(IdentityPacket) &&
       data[0] == IDENTITY_PACKET_MAGIC) {
     const IdentityPacket *identity = (const IdentityPacket *)data;
@@ -2056,6 +2137,293 @@ static void replyToHost(const char *text) {
 #endif
 }
 
+static const char *identifyOutcomeName(uint8_t outcome) {
+  switch (outcome) {
+    case IDENTIFY_OUTCOME_CONFIRMED: return "confirmed";
+    case IDENTIFY_OUTCOME_SENT_UNCONFIRMED: return "sent_unconfirmed";
+    case IDENTIFY_OUTCOME_TIMEOUT: return "timeout";
+    case IDENTIFY_OUTCOME_OFFLINE: return "offline";
+    case IDENTIFY_OUTCOME_UNSUPPORTED: return "unsupported";
+    case IDENTIFY_OUTCOME_REJECTED: return "rejected";
+    case IDENTIFY_OUTCOME_INVALID_TARGET: return "invalid_target";
+    default: return "rejected";
+  }
+}
+
+static IdentifyAckPacket makeIdentifyAck(const IdentifyRequestPacket &request,
+                                         uint8_t outcome,
+                                         uint32_t applied_duration_ms) {
+  IdentifyAckPacket ack = {};
+  ack.magic = IDENTIFY_PACKET_MAGIC;
+  ack.type = IDENTIFY_ACK_TYPE;
+  ack.version = IDENTIFY_PACKET_VERSION;
+  ack.packet_size = sizeof(IdentifyAckPacket);
+  strncpy(ack.command_id, request.command_id, sizeof(ack.command_id) - 1);
+  memcpy(ack.target_mac, request.target_mac, 6);
+  ack.requested_duration_ms = request.requested_duration_ms;
+  ack.applied_duration_ms = applied_duration_ms;
+  ack.outcome = outcome;
+  return ack;
+}
+
+static void emitIdentifyHostResult(const IdentifyAckPacket &ack,
+                                   const char *detail) {
+  char target[20], line[320];
+  formatCanonicalDeviceId(ack.target_mac, target, sizeof(target));
+  const char *format =
+      (ack.outcome == IDENTIFY_OUTCOME_CONFIRMED ||
+       ack.outcome == IDENTIFY_OUTCOME_SENT_UNCONFIRMED)
+          ? "IDENTIFY_ACK protocol=identify-v1 command_id=%s target=%s outcome=%s requested_duration_ms=%lu applied_duration_ms=%lu detail=%s\n"
+          : "IDENTIFY_ERR protocol=identify-v1 command_id=%s target=%s outcome=%s requested_duration_ms=%lu applied_duration_ms=%lu detail=%s\n";
+  snprintf(line, sizeof(line), format, ack.command_id, target,
+           identifyOutcomeName(ack.outcome),
+           (unsigned long)ack.requested_duration_ms,
+           (unsigned long)ack.applied_duration_ms, detail);
+  replyToHost(line);
+}
+
+static void sendIdentifyApplicationAck(const IdentifyAckPacket &ack) {
+#if ENABLE_ESPNOW
+  if (g_master_peer_registered) {
+    esp_now_send(g_master_mac, (const uint8_t *)&ack, sizeof(ack));
+  }
+#else
+  (void)ack;
+#endif
+}
+
+static void deliverIdentifyAck(const IdentifyAckPacket &ack,
+                               const char *detail,
+                               bool from_espnow) {
+  if (from_espnow) {
+    sendIdentifyApplicationAck(ack);
+  } else {
+    emitIdentifyHostResult(ack, detail);
+  }
+}
+
+static void emitImmediateIdentifyResult(const char *command_id,
+                                        const uint8_t target_mac[6],
+                                        uint32_t requested_duration_ms,
+                                        uint8_t outcome,
+                                        const char *detail) {
+  IdentifyRequestPacket request = {};
+  request.magic = IDENTIFY_PACKET_MAGIC;
+  request.type = IDENTIFY_REQUEST_TYPE;
+  request.version = IDENTIFY_PACKET_VERSION;
+  request.packet_size = sizeof(IdentifyRequestPacket);
+  strncpy(request.command_id, command_id, sizeof(request.command_id) - 1);
+  memcpy(request.target_mac, target_mac, 6);
+  request.requested_duration_ms = requested_duration_ms;
+  emitIdentifyHostResult(makeIdentifyAck(request, outcome, 0), detail);
+}
+
+static bool isSafeIdentifyCommandId(const String &value) {
+  if (value.length() < 1 || value.length() > IDENTIFY_COMMAND_ID_MAX) {
+    return false;
+  }
+  for (size_t i = 0; i < value.length(); i++) {
+    const char c = value.charAt(i);
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+          (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool readIdentifyToken(const String &line, const char *key,
+                              String *value) {
+  const String prefix = String(key) + "=";
+  int start = line.indexOf(prefix);
+  if (start < 0 || (start > 0 && line.charAt(start - 1) != ' ')) return false;
+  start += prefix.length();
+  int end = line.indexOf(' ', start);
+  if (end < 0) end = line.length();
+  if (end <= start || line.indexOf(prefix, end) >= 0) return false;
+  *value = line.substring(start, end);
+  return true;
+}
+
+static int identifyHexNibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+static bool parseCanonicalDeviceId(const String &value, uint8_t mac[6]) {
+  if (value.length() != 18 || !value.startsWith("esp32:")) return false;
+  for (int i = 0; i < 6; i++) {
+    const int hi = identifyHexNibble(value.charAt(6 + i * 2));
+    const int lo = identifyHexNibble(value.charAt(7 + i * 2));
+    if (hi < 0 || lo < 0) return false;
+    mac[i] = (uint8_t)((hi << 4) | lo);
+  }
+  return true;
+}
+
+static bool parseIdentifyDuration(const String &value, uint32_t *duration_ms) {
+  if (value.length() < 1 || value.length() > 5) return false;
+  uint32_t parsed = 0;
+  for (size_t i = 0; i < value.length(); i++) {
+    const char c = value.charAt(i);
+    if (c < '0' || c > '9') return false;
+    parsed = parsed * 10u + (uint32_t)(c - '0');
+  }
+  if (parsed < IDENTIFY_DURATION_MIN_MS ||
+      parsed > IDENTIFY_DURATION_MAX_MS) {
+    return false;
+  }
+  *duration_ms = parsed;
+  return true;
+}
+
+static void dispatchIdentifyRequest(const char *command_id,
+                                    const uint8_t target_mac[6],
+                                    uint32_t requested_duration_ms) {
+  IdentityPacket self = {};
+  readLocalIdentity(&self);
+  if (memcmp(self.base_mac, target_mac, 6) != 0) {
+    emitImmediateIdentifyResult(command_id, target_mac, requested_duration_ms,
+                                IDENTIFY_OUTCOME_INVALID_TARGET,
+                                "not_session_self");
+    return;
+  }
+
+  IdentifyRequestPacket request = {};
+  request.magic = IDENTIFY_PACKET_MAGIC;
+  request.type = IDENTIFY_REQUEST_TYPE;
+  request.version = IDENTIFY_PACKET_VERSION;
+  request.packet_size = sizeof(IdentifyRequestPacket);
+  strncpy(request.command_id, command_id, sizeof(request.command_id) - 1);
+  memcpy(request.target_mac, target_mac, 6);
+  request.requested_duration_ms = requested_duration_ms;
+  if (g_identify_request_pending) {
+    const bool duplicate_pending =
+        strcmp(request.command_id,
+               g_identify_pending_request.command_id) == 0 &&
+        memcmp(request.target_mac,
+               g_identify_pending_request.target_mac, 6) == 0;
+    emitImmediateIdentifyResult(
+        command_id, target_mac, requested_duration_ms,
+        duplicate_pending ? IDENTIFY_OUTCOME_SENT_UNCONFIRMED
+                          : IDENTIFY_OUTCOME_REJECTED,
+        duplicate_pending ? "queued_local" : "pending_busy");
+    return;
+  }
+  g_identify_pending_request = request;
+  g_identify_pending_from_espnow = false;
+  g_identify_request_pending = true;
+  emitImmediateIdentifyResult(command_id, target_mac, requested_duration_ms,
+                              IDENTIFY_OUTCOME_SENT_UNCONFIRMED,
+                              "queued_local");
+}
+
+static void handleIdentifyLine(const String &line) {
+  // Contract: IDENTIFY protocol=identify-v1 command_id=<token>
+  // target=esp32:<12hex> duration_ms=<1000-5000>.
+  String protocol, command_id, target, duration_text;
+  uint8_t target_mac[6] = {};
+  uint32_t duration_ms = IDENTIFY_DURATION_DEFAULT_MS;
+  const bool protocol_ok =
+      readIdentifyToken(line, "protocol", &protocol) &&
+      protocol == "identify-v1";
+  const bool command_ok =
+      readIdentifyToken(line, "command_id", &command_id) &&
+      isSafeIdentifyCommandId(command_id);
+  const bool target_ok =
+      readIdentifyToken(line, "target", &target) &&
+      parseCanonicalDeviceId(target, target_mac);
+  const bool duration_present = line.indexOf(" duration_ms=") >= 0;
+  const bool duration_token_ok =
+      readIdentifyToken(line, "duration_ms", &duration_text);
+  const bool duration_ok =
+      !duration_present ||
+      (duration_token_ok &&
+       parseIdentifyDuration(duration_text, &duration_ms));
+
+  if (!target_ok) {
+    emitImmediateIdentifyResult(command_ok ? command_id.c_str() : "invalid",
+                                target_mac, duration_ms,
+                                IDENTIFY_OUTCOME_INVALID_TARGET,
+                                "target_format");
+  } else if (!protocol_ok || !command_ok || !duration_ok) {
+    emitImmediateIdentifyResult(command_ok ? command_id.c_str() : "invalid",
+                                target_mac, duration_ms,
+                                IDENTIFY_OUTCOME_REJECTED,
+                                !protocol_ok ? "protocol" :
+                                (!command_ok ? "command_id" : "duration_ms"));
+  } else {
+    dispatchIdentifyRequest(command_id.c_str(), target_mac, duration_ms);
+  }
+}
+
+static void identifyTick() {
+  const uint32_t now_ms = millis();
+  if (g_identify_request_pending) {
+    const IdentifyRequestPacket request = g_identify_pending_request;
+    const bool from_espnow = g_identify_pending_from_espnow;
+    g_identify_request_pending = false;
+    if (g_identify_active &&
+        strcmp(request.command_id, g_identify_active_command_id) == 0 &&
+        memcmp(request.target_mac, g_identify_active_target, 6) == 0) {
+      deliverIdentifyAck(g_identify_last_ack, "duplicate_active", from_espnow);
+    } else if (g_identify_last_ack_valid &&
+               strcmp(request.command_id,
+                      g_identify_last_ack.command_id) == 0 &&
+               memcmp(request.target_mac,
+                      g_identify_last_ack.target_mac, 6) == 0) {
+      deliverIdentifyAck(g_identify_last_ack, "duplicate_replay", from_espnow);
+    } else {
+#if !STEPESP_IDENTIFY_LED_VERIFIED
+      const IdentifyAckPacket ack =
+          makeIdentifyAck(request, IDENTIFY_OUTCOME_UNSUPPORTED, 0);
+      g_identify_last_ack = ack;
+      g_identify_last_ack_valid = true;
+      deliverIdentifyAck(ack, "board_unverified", from_espnow);
+#else
+      if (!g_identify_active) {
+        g_identify_prior_led_level =
+            digitalRead(STEPESP_IDENTIFY_LED_PIN);
+        pinMode(STEPESP_IDENTIFY_LED_PIN, OUTPUT);
+      }
+      g_identify_active = true;
+      strncpy(g_identify_active_command_id, request.command_id,
+              sizeof(g_identify_active_command_id) - 1);
+      memcpy(g_identify_active_target, request.target_mac, 6);
+      g_identify_deadline_ms = now_ms + request.requested_duration_ms;
+      g_identify_last_toggle_ms = now_ms;
+      g_identify_led_level = STEPESP_IDENTIFY_LED_ACTIVE_LEVEL;
+      digitalWrite(STEPESP_IDENTIFY_LED_PIN, g_identify_led_level);
+      const IdentifyAckPacket ack =
+          makeIdentifyAck(request, IDENTIFY_OUTCOME_CONFIRMED,
+                          request.requested_duration_ms);
+      g_identify_last_ack = ack;
+      g_identify_last_ack_valid = true;
+      deliverIdentifyAck(ack, "started", from_espnow);
+#endif
+    }
+  }
+
+#if STEPESP_IDENTIFY_LED_VERIFIED
+  if (g_identify_active &&
+      (int32_t)(now_ms - g_identify_deadline_ms) >= 0) {
+    digitalWrite(STEPESP_IDENTIFY_LED_PIN, g_identify_prior_led_level);
+    g_identify_active = false;
+  } else if (g_identify_active &&
+             (uint32_t)(now_ms - g_identify_last_toggle_ms) >=
+                 IDENTIFY_BLINK_INTERVAL_MS) {
+    g_identify_last_toggle_ms = now_ms;
+    g_identify_led_level =
+        g_identify_led_level == STEPESP_IDENTIFY_LED_ACTIVE_LEVEL
+            ? !STEPESP_IDENTIFY_LED_ACTIVE_LEVEL
+            : STEPESP_IDENTIFY_LED_ACTIVE_LEVEL;
+    digitalWrite(STEPESP_IDENTIFY_LED_PIN, g_identify_led_level);
+  }
+#endif
+}
+
 static void printIdentityInventory() {
   IdentityPacket self = {};
   readLocalIdentity(&self);
@@ -2270,6 +2638,8 @@ static void handleRecLine(const String &line) {
 static void handleLine(const String &line) {
   if (line.equalsIgnoreCase("IDENTITY?")) {
     printIdentityInventory();
+  } else if (line.startsWith("IDENTIFY ")) {
+    handleIdentifyLine(line);
   } else if (line.startsWith("REC ")) {
     handleRecLine(line);
   } else if (line.startsWith("REDPITAYA")) {
@@ -2762,6 +3132,7 @@ void setup() {
 
 void loop() {
   pollSerialCommands();
+  identifyTick();
 #if ENABLE_ESPNOW
   if (g_espnow_rec_start_pending) {
     g_espnow_rec_start_pending = false;
