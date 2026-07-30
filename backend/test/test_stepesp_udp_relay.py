@@ -386,6 +386,23 @@ class StepEspUdpRelayTests(unittest.IsolatedAsyncioTestCase):
         await relay._forward_esp_control(_Socket([reply, b'']))
         self.assertEqual(bytes(writer.data), reply)
 
+    async def test_split_identity_change_after_binary_is_quarantined(self):
+        relay = relay_module.StepEspRelay('master', '192.168.4.1', 5000)
+        relay.session_identity = _complete_inventory().session
+        relay._downstream_writer = _Writer()
+        changed = _self_line('esp32:010203040506', peer_count=0)
+        with self.assertRaises(relay_module.IdentityChangedError):
+            await relay._forward_esp_control(
+                _Socket([
+                    b'\xa1' * 50 + changed[:9],
+                    changed[9:],
+                ])
+            )
+        self.assertEqual(
+            relay.session_identity.verification_state,
+            'quarantined',
+        )
+
     async def test_stalled_route_does_not_block_another_route(self):
         stalled = relay_module.StepEspRelay('master', '192.168.4.1', 5000)
         live = relay_module.StepEspRelay('slave', '192.168.4.3', 5000)

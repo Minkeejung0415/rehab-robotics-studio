@@ -506,6 +506,7 @@ class StepEspRelay:
         self._session_lock = asyncio.Lock()
         self._udp_enabled = asyncio.Event()
         self._stream_bytes = 0
+        self._identity_scan_tail = b''
 
     def _log(self, message: str) -> None:
         print(f'[relay:{self.name}] {message}', flush=True)
@@ -618,6 +619,30 @@ class StepEspRelay:
             self._log(f'WSL -> ESP control: {data!r}')
             await asyncio.to_thread(esp_sock.sendall, data)
 
+    def _validate_identity_control_bytes(self, data: bytes) -> None:
+        prefix = b'IDENTITY_OK '
+        scan = self._identity_scan_tail + data
+        position = 0
+        while True:
+            start = scan.find(prefix, position)
+            if start < 0:
+                self._identity_scan_tail = scan[-(len(prefix) - 1):]
+                return
+            end = scan.find(b'\n', start)
+            if end < 0:
+                pending = scan[start:]
+                if len(pending) > MAX_IDENTITY_LINE_BYTES:
+                    self.session_identity.verification_state = 'quarantined'
+                    raise IdentityChangedError(
+                        'session identity line exceeds the bounded limit')
+                self._identity_scan_tail = pending
+                return
+            validate_session_identity_line(
+                self.session_identity,
+                scan[start:end],
+            )
+            position = end + 1
+
     async def _forward_esp_control(self, esp_sock: socket.socket) -> None:
         while True:
             try:
@@ -626,9 +651,7 @@ class StepEspRelay:
                 continue
             if not data:
                 return
-            for line in data.splitlines():
-                if line.startswith(b'IDENTITY_OK '):
-                    validate_session_identity_line(self.session_identity, line)
+            self._validate_identity_control_bytes(data)
             if not self._udp_enabled.is_set():
                 bounded = data[:MAX_IDENTITY_LINE_BYTES]
                 self._log(f'ESP -> WSL handshake: {bounded!r}')
