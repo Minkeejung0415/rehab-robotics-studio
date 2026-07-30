@@ -15,7 +15,7 @@ Milestone v1.6 generalizes the existing fixed Master/Slave acquisition and OpenS
 
 ## Phases
 
-- [ ] **Phase 20: Full Identity and Confirmed Identify** - Every Master and Slave has a verified stable identity and a safely acknowledged physical Identify action.
+- [x] **Phase 20: Full Identity and Confirmed Identify** - Every Master and Slave has a verified stable identity and a safely acknowledged physical Identify action. (completed 2026-07-30)
 - [ ] **Phase 21: N-Route Relay and Canonical ROS Fleet** - All devices remain independently discoverable, routed, observable, and compatible with explicit legacy aliases.
 - [ ] **Phase 22: Model Catalog, Mapping Store, and Transactional Contracts** - Model-derived assignments are validated, revisioned, persisted, and applied atomically.
 - [ ] **Phase 23: N-Sensor Calibration and Official OpenSim IK** - Applied mappings drive provenance-bound calibration and valid synchronized N-sensor OpenSim solves.
@@ -57,7 +57,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 20-06-PLAN.md — Final local and Master-plus-two-Slave acceptance
+- [x] 20-06-PLAN.md — Final local and Master-plus-two-Slave acceptance
 
 ### Phase 21: N-Route Relay and Canonical ROS Fleet
 
@@ -136,7 +136,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 20. Full Identity and Confirmed Identify | 5/6 | In Progress | - |
+| 20. Full Identity and Confirmed Identify | 6/6 | Complete   | 2026-07-30 |
 | 21. N-Route Relay and Canonical ROS Fleet | 0/TBD | Not started | - |
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 0/TBD | Not started | - |
 | 23. N-Sensor Calibration and Official OpenSim IK | 0/TBD | Not started | - |

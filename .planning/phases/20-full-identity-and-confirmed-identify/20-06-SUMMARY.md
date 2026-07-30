@@ -58,7 +58,7 @@ completed: 2026-07-30
 
 ## Task Commit
 
-- Task 1 verification record: `PENDING` — replaced with the commit hash during close-out.
+- Task 1 verification record: `a9ad06a` — automated gate, fingerprints, and explicit HUMAN-UAT handoff.
 
 ## Automated Evidence
 
@@ -161,7 +161,21 @@ Record the results in the runbook's **Pending one-selected-target physical UAT**
 
 ## Deviations from Plan
 
-None - plan executed exactly as written.
+### Auto-fixed Issues
+
+**1. [Rule 1 - Bug] Repaired malformed SDK tracking updates**
+
+- **Found during:** Plan close-out
+- **Issue:** The SDK changed frontmatter progress to 17% despite 6/6 plan completion, left milestone counters at 5 plans and 0 phases, appended the Plan 06 metric below the prior-milestone section, and left the current-position label as EXECUTING.
+- **Fix:** Restored 100% phase-plan progress, synchronized counters to 6 plans and 1/6 phases, moved the metric into the Performance Metrics table, and labeled the position VERIFYING.
+- **Files modified:** `.planning/STATE.md`
+- **Verification:** STATE now reports 6/6 plans, 100%, one completed milestone phase, a correctly placed Plan 06 metric, and ready-for-verification status.
+- **Committed in:** Plan metadata commit.
+
+---
+
+**Total deviations:** 1 auto-fixed (1 tracking bug).
+**Impact on plan:** Tracking-only correction; automated evidence and the pending physical boundary are unchanged.
 
 ## Issues Encountered
 
@@ -185,9 +199,12 @@ None. This verification-only plan introduced no runtime endpoint, authentication
 - Physical Identify acceptance remains pending `HUMAN-UAT`.
 - Phase 21 may proceed within its publisher/routing boundary; Phase 25 retains capacity and promotion ownership.
 
-## Self-Check: PENDING
+## Self-Check: PASSED
 
-- Summary existence, commit presence, tracking updates, and final acceptance criteria will be checked during atomic close-out.
+- This summary exists at the plan-required path.
+- Task commit `a9ad06a` exists in Git history and deletes no tracked files.
+- All 12 scoped paths still exist with the recorded post-run fingerprints.
+- All five acceptance criteria pass: automated gate, required coverage, worktree preservation, explicit `human_needed` physical handoff, and Phase 21/25 boundaries.
 
 ---
 *Phase: 20-full-identity-and-confirmed-identify*
