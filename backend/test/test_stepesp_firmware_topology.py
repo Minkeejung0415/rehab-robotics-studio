@@ -252,6 +252,193 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
                 source,
             )
 
+    def test_identify_packet_schemas_match_and_require_exact_validation(self):
+        request_fields = (
+            'uint8_t magic;',
+            'uint8_t type;',
+            'uint8_t version;',
+            'uint16_t packet_size;',
+            'char command_id[IDENTIFY_COMMAND_ID_MAX + 1];',
+            'uint8_t target_mac[6];',
+            'uint32_t requested_duration_ms;',
+        )
+        ack_fields = (
+            'uint8_t magic;',
+            'uint8_t type;',
+            'uint8_t version;',
+            'uint16_t packet_size;',
+            'char command_id[IDENTIFY_COMMAND_ID_MAX + 1];',
+            'uint8_t target_mac[6];',
+            'uint32_t requested_duration_ms;',
+            'uint32_t applied_duration_ms;',
+            'uint8_t outcome;',
+        )
+        for struct_name, expected_fields in (
+            ('IdentifyRequestPacket', request_fields),
+            ('IdentifyAckPacket', ack_fields),
+        ):
+            master_body = struct_body(self.master, struct_name)
+            slave_body = struct_body(self.slave, struct_name)
+            self.assertEqual(
+                re.sub(r'\s+', ' ', master_body).strip(),
+                re.sub(r'\s+', ' ', slave_body).strip(),
+            )
+            for field in expected_fields:
+                self.assertIn(field, master_body)
+
+        for name in (
+            'IDENTIFY_PACKET_MAGIC',
+            'IDENTIFY_REQUEST_TYPE',
+            'IDENTIFY_ACK_TYPE',
+            'IDENTIFY_PACKET_VERSION',
+            'IDENTIFY_COMMAND_ID_MAX',
+            'IDENTIFY_DURATION_MIN_MS',
+            'IDENTIFY_DURATION_MAX_MS',
+            'IDENTIFY_DURATION_DEFAULT_MS',
+        ):
+            self.assertEqual(define(self.master, name), define(self.slave, name))
+
+        master_receive = function_body(self.master, 'onEspNowRecv')
+        slave_receive = function_body(self.slave, 'onEspNowRecv')
+        self.assertIn(
+            'len == (int)sizeof(IdentifyAckPacket)',
+            master_receive,
+        )
+        self.assertIn(
+            'ack->packet_size == sizeof(IdentifyAckPacket)',
+            master_receive,
+        )
+        self.assertIn(
+            'ack->version == IDENTIFY_PACKET_VERSION',
+            master_receive,
+        )
+        self.assertIn(
+            'len == (int)sizeof(IdentifyRequestPacket)',
+            slave_receive,
+        )
+        self.assertIn(
+            'request->packet_size == sizeof(IdentifyRequestPacket)',
+            slave_receive,
+        )
+        self.assertIn(
+            'request->version == IDENTIFY_PACKET_VERSION',
+            slave_receive,
+        )
+
+    def test_identify_outcomes_and_duration_contract_match(self):
+        outcome_names = (
+            'IDENTIFY_OUTCOME_CONFIRMED',
+            'IDENTIFY_OUTCOME_SENT_UNCONFIRMED',
+            'IDENTIFY_OUTCOME_TIMEOUT',
+            'IDENTIFY_OUTCOME_OFFLINE',
+            'IDENTIFY_OUTCOME_UNSUPPORTED',
+            'IDENTIFY_OUTCOME_REJECTED',
+            'IDENTIFY_OUTCOME_INVALID_TARGET',
+        )
+        for name in outcome_names:
+            self.assertEqual(define(self.master, name), define(self.slave, name))
+        self.assertEqual(define(self.master, 'IDENTIFY_DURATION_MIN_MS'), '1000UL')
+        self.assertEqual(define(self.master, 'IDENTIFY_DURATION_MAX_MS'), '5000UL')
+        self.assertEqual(define(self.master, 'IDENTIFY_DURATION_DEFAULT_MS'), '3000UL')
+
+        host_output = function_body(self.master, 'emitIdentifyHostResult')
+        self.assertIn('IDENTIFY_ACK protocol=identify-v1', host_output)
+        self.assertIn('IDENTIFY_ERR protocol=identify-v1', host_output)
+        self.assertIn('command_id=%s target=%s outcome=%s', host_output)
+        self.assertIn('applied_duration_ms=%lu detail=%s', host_output)
+        for outcome in (
+            'confirmed',
+            'sent_unconfirmed',
+            'timeout',
+            'offline',
+            'unsupported',
+            'rejected',
+            'invalid_target',
+        ):
+            self.assertIn(f'"{outcome}"', self.master)
+
+    def test_master_identify_parser_targets_self_or_one_full_mac_peer(self):
+        parser = function_body(self.master, 'handleIdentifyLine')
+        dispatch = function_body(self.master, 'dispatchIdentifyRequest')
+        self.assertIn('protocol=identify-v1', parser)
+        self.assertIn('command_id=', parser)
+        self.assertIn('target=esp32:', parser)
+        self.assertIn('duration_ms=', parser)
+        self.assertIn('IDENTIFY_DURATION_DEFAULT_MS', parser)
+        self.assertIn('parseCanonicalDeviceId', parser)
+        self.assertIn('isSafeIdentifyCommandId', parser)
+        self.assertIn('memcmp(self.base_mac, target_mac, 6)', dispatch)
+        self.assertRegex(
+            dispatch,
+            r'memcmp\(slot\.identity\.base_mac,\s*target_mac,\s*6\)',
+        )
+        self.assertIn(
+            'esp_now_send(slot.mac, (uint8_t *)&request, sizeof(request))',
+            dispatch,
+        )
+        self.assertNotIn('espNowSendToSlaves', dispatch)
+        self.assertNotIn('slave_id', dispatch)
+
+    def test_identify_callbacks_defer_application_work_to_loop(self):
+        master_receive = function_body(self.master, 'onEspNowRecv')
+        slave_receive = function_body(self.slave, 'onEspNowRecv')
+        self.assertIn('g_identify_ack_pending = true;', master_receive)
+        self.assertIn(
+            'g_identify_pending_ack = *ack;',
+            master_receive,
+        )
+        self.assertIn('g_identify_request_pending = true;', slave_receive)
+        self.assertIn(
+            'g_identify_pending_request = *request;',
+            slave_receive,
+        )
+        for callback in (master_receive, slave_receive):
+            self.assertNotIn('digitalWrite(', callback)
+            self.assertNotIn('pinMode(', callback)
+            self.assertNotIn('delay(', callback)
+
+        for source in (self.master, self.slave):
+            send_callback = function_body(source, 'onEspNowSent')
+            self.assertNotIn('IDENTIFY_OUTCOME_CONFIRMED', send_callback)
+            self.assertNotIn('confirmed', send_callback)
+
+    def test_identify_tick_is_non_blocking_idempotent_and_restores_led(self):
+        forbidden_assignment = re.compile(
+            r'\b(?:streaming|g_sd_recording|g_sample_hz|g_sample_last_us|'
+            r'g_filter_on|g_rec_state|g_rec_armed|g_rec_start_at_us|'
+            r'g_rec_stop_at_us|g_sd_ready)\s*=(?!=)'
+        )
+        for source in (self.master, self.slave):
+            tick = function_body(source, 'identifyTick')
+            self.assertNotIn('delay(', tick)
+            self.assertIsNone(forbidden_assignment.search(tick))
+            self.assertIn('g_identify_request_pending', tick)
+            self.assertIn('g_identify_last_ack_valid', tick)
+            self.assertIn('g_identify_active_command_id', tick)
+            self.assertIn('g_identify_deadline_ms', tick)
+            self.assertIn('g_identify_prior_led_level', tick)
+            self.assertIn(
+                'digitalWrite(STEPESP_IDENTIFY_LED_PIN, '
+                'g_identify_prior_led_level)',
+                tick,
+            )
+            self.assertIn(
+                'strcmp(request.command_id, g_identify_active_command_id) == 0',
+                tick,
+            )
+            self.assertIn('identifyTick();', function_body(source, 'loop'))
+
+    def test_identify_unsupported_path_never_touches_unknown_pin(self):
+        for source in (self.master, self.slave):
+            tick = function_body(source, 'identifyTick')
+            unsupported = tick[
+                tick.index('#if !STEPESP_IDENTIFY_LED_VERIFIED'):
+                tick.index('#else', tick.index('#if !STEPESP_IDENTIFY_LED_VERIFIED'))
+            ]
+            self.assertIn('IDENTIFY_OUTCOME_UNSUPPORTED', unsupported)
+            self.assertNotIn('digitalWrite(', unsupported)
+            self.assertNotIn('pinMode(', unsupported)
+
 
 if __name__ == '__main__':
     unittest.main()
