@@ -73,7 +73,7 @@ Each task was committed atomically:
 3. **Task 2 RED:** `ad25a71` — test(21-01): add failing N-slave launcher contracts
 4. **Task 2 GREEN:** `f53ce42` — feat(21-01): route all verified slaves in wireless launcher
 
-**Plan metadata:** (pending docs commit)
+**Plan metadata:** `f732024` (docs: complete plan)
 
 ## Files Created/Modified
 
