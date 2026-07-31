@@ -407,5 +407,288 @@ class Phase21ControlsGuardUpdateTest(unittest.TestCase):
         self.assertNotIn('/esp32/mac_', fleet_source)
 
 
+class FleetAliasBindingTest(unittest.TestCase):
+    """D-21-06/07/16: identity-bound Master/Slave aliases + pair health."""
+
+    def _routes(self, entries):
+        return fleet.parse_routes_json(json.dumps(entries))
+
+    def _string_type(self):
+        return type('String', (), {'__init__': lambda self: setattr(self, 'data', '')})
+
+    def _manager(self, routes, *, alias_master='', alias_slave='', published=None):
+        published = published if published is not None else []
+
+        class StubPublisher:
+            def __init__(self, topic: str) -> None:
+                self.topic = topic
+
+            def publish(self, message) -> None:
+                published.append((self.topic, getattr(message, 'data', message)))
+
+        def create_publisher(msg_type, topic, qos):
+            return StubPublisher(topic)
+
+        return fleet.FleetSessionManager(
+            routes,
+            create_publisher=create_publisher,
+            string_message_type=self._string_type(),
+            alias_master_device_id=alias_master,
+            alias_slave_device_id=alias_slave,
+        ), published
+
+    def test_alias_master_mirrors_canonical_raw_and_status_payloads(self):
+        routes = self._routes([
+            {
+                'host': '192.168.4.1',
+                'port': 5002,
+                'expected_device_id': 'esp32:aabbccddeeff',
+                'role': 'master',
+            },
+            {
+                'host': '192.168.4.3',
+                'port': 5003,
+                'expected_device_id': 'esp32:1111ccddeeff',
+                'role': 'slave',
+            },
+        ])
+        manager, published = self._manager(
+            routes,
+            alias_master='esp32:aabbccddeeff',
+            alias_slave='esp32:1111ccddeeff',
+        )
+        manager.on_session_bound(manager.sessions[0], 'esp32:aabbccddeeff', last_seen_us=1)
+        manager.on_session_bound(manager.sessions[1], 'esp32:1111ccddeeff', last_seen_us=2)
+        manager.publish_session_raw(manager.sessions[0], '{"sample":42}')
+        manager.publish_session_health(
+            manager.sessions[0],
+            '{"connection_state":"connected"}',
+        )
+        by_topic = {topic: payload for topic, payload in published}
+        self.assertEqual(by_topic['/esp/raw/mac_aabbccddeeff'], '{"sample":42}')
+        self.assertEqual(by_topic['/esp/raw/master'], '{"sample":42}')
+        self.assertEqual(
+            by_topic['/esp/status/mac_aabbccddeeff'],
+            '{"connection_state":"connected"}',
+        )
+        self.assertEqual(
+            by_topic['/esp/status/master'],
+            '{"connection_state":"connected"}',
+        )
+
+    def test_alias_slave_mirrors_canonical_payloads(self):
+        routes = self._routes([
+            {
+                'host': '192.168.4.1',
+                'port': 5002,
+                'expected_device_id': 'esp32:aabbccddeeff',
+                'role': 'master',
+            },
+            {
+                'host': '192.168.4.3',
+                'port': 5003,
+                'expected_device_id': 'esp32:1111ccddeeff',
+                'role': 'slave',
+            },
+        ])
+        manager, published = self._manager(
+            routes,
+            alias_master='esp32:aabbccddeeff',
+            alias_slave='esp32:1111ccddeeff',
+        )
+        manager.on_session_bound(manager.sessions[0], 'esp32:aabbccddeeff', last_seen_us=1)
+        manager.on_session_bound(manager.sessions[1], 'esp32:1111ccddeeff', last_seen_us=2)
+        manager.publish_session_raw(manager.sessions[1], '{"slave":1}')
+        manager.publish_session_health(
+            manager.sessions[1],
+            '{"connection_state":"connected"}',
+        )
+        by_topic = {topic: payload for topic, payload in published}
+        self.assertEqual(by_topic['/esp/raw/mac_1111ccddeeff'], '{"slave":1}')
+        self.assertEqual(by_topic['/esp/raw/slave'], '{"slave":1}')
+        self.assertEqual(by_topic['/esp/status/slave'], '{"connection_state":"connected"}')
+
+    def test_empty_alias_params_bind_first_verified_role_not_connect_order(self):
+        # Slave route listed first so TCP connect order alone would pick wrong alias.
+        routes = self._routes([
+            {
+                'host': '192.168.4.5',
+                'port': 5004,
+                'expected_device_id': 'esp32:2222ccddeeff',
+                'role': 'slave',
+            },
+            {
+                'host': '192.168.4.4',
+                'port': 5003,
+                'expected_device_id': 'esp32:3333ccddeeff',
+                'role': 'slave',
+            },
+            {
+                'host': '192.168.4.1',
+                'port': 5002,
+                'expected_device_id': 'esp32:aabbccddeeff',
+                'role': 'master',
+            },
+        ])
+        manager, published = self._manager(routes)
+        manager.on_session_bound(manager.sessions[0], 'esp32:2222ccddeeff', last_seen_us=1)
+        manager.on_session_bound(manager.sessions[1], 'esp32:3333ccddeeff', last_seen_us=2)
+        manager.on_session_bound(manager.sessions[2], 'esp32:aabbccddeeff', last_seen_us=3)
+        doc = manager.build_registry()
+        self.assertEqual(doc['alias_master_device_id'], 'esp32:aabbccddeeff')
+        self.assertEqual(doc['alias_slave_device_id'], 'esp32:2222ccddeeff')
+        manager.publish_session_raw(manager.sessions[2], '{"m":1}')
+        manager.publish_session_raw(manager.sessions[0], '{"s":1}')
+        by_topic = {topic: payload for topic, payload in published}
+        self.assertEqual(by_topic['/esp/raw/master'], '{"m":1}')
+        self.assertEqual(by_topic['/esp/raw/slave'], '{"s":1}')
+
+    def test_offline_alias_target_leaves_other_devices_publishing(self):
+        routes = self._routes([
+            {
+                'host': '192.168.4.1',
+                'port': 5002,
+                'expected_device_id': 'esp32:aabbccddeeff',
+                'role': 'master',
+            },
+            {
+                'host': '192.168.4.3',
+                'port': 5003,
+                'expected_device_id': 'esp32:1111ccddeeff',
+                'role': 'slave',
+            },
+            {
+                'host': '192.168.4.4',
+                'port': 5004,
+                'expected_device_id': 'esp32:4444ccddeeff',
+                'role': 'slave',
+            },
+        ])
+        manager, published = self._manager(
+            routes,
+            alias_master='esp32:aabbccddeeff',
+            alias_slave='esp32:1111ccddeeff',
+        )
+        for session, device_id, ts in (
+            (manager.sessions[0], 'esp32:aabbccddeeff', 1),
+            (manager.sessions[1], 'esp32:1111ccddeeff', 2),
+            (manager.sessions[2], 'esp32:4444ccddeeff', 3),
+        ):
+            manager.on_session_bound(session, device_id, last_seen_us=ts)
+        manager.on_session_offline(manager.sessions[1], last_seen_us=4)
+        published.clear()
+        manager.publish_session_raw(manager.sessions[0], '{"master_alive":1}')
+        manager.publish_session_raw(manager.sessions[2], '{"other_slave":1}')
+        by_topic = {topic: payload for topic, payload in published}
+        self.assertEqual(by_topic['/esp/raw/master'], '{"master_alive":1}')
+        self.assertEqual(by_topic['/esp/raw/mac_4444ccddeeff'], '{"other_slave":1}')
+        self.assertNotIn('/esp/raw/slave', by_topic)
+
+    def test_pair_health_publishes_when_both_aliases_bound(self):
+        routes = self._routes([
+            {
+                'host': '192.168.4.1',
+                'port': 5002,
+                'expected_device_id': 'esp32:aabbccddeeff',
+                'role': 'master',
+            },
+            {
+                'host': '192.168.4.3',
+                'port': 5003,
+                'expected_device_id': 'esp32:1111ccddeeff',
+                'role': 'slave',
+            },
+        ])
+        manager, published = self._manager(
+            routes,
+            alias_master='esp32:aabbccddeeff',
+            alias_slave='esp32:1111ccddeeff',
+        )
+        manager.on_session_bound(manager.sessions[0], 'esp32:aabbccddeeff', last_seen_us=1)
+        manager.on_session_bound(manager.sessions[1], 'esp32:1111ccddeeff', last_seen_us=2)
+        master_health = {
+            'schema': 'oe_esp32.health.v1',
+            'node_id': 'master',
+            'connection_state': 'connected',
+            'timestamp_us': 99,
+        }
+        slave_health = {
+            'schema': 'oe_esp32.health.v1',
+            'node_id': 'slave',
+            'connection_state': 'connected',
+            'timestamp_us': 100,
+        }
+        pair = manager.publish_pair_health(master_health, slave_health)
+        self.assertIsNotNone(pair)
+        self.assertEqual(pair['schema'], 'oe_esp32.pair_health.v1')
+        self.assertTrue(pair['pair_available'])
+        pair_payloads = [payload for topic, payload in published if topic == '/esp/status/pair']
+        self.assertEqual(len(pair_payloads), 1)
+        decoded = json.loads(pair_payloads[0])
+        self.assertEqual(decoded['schema'], 'oe_esp32.pair_health.v1')
+        self.assertEqual(decoded['master']['connection_state'], 'connected')
+        self.assertEqual(decoded['slave']['connection_state'], 'connected')
+
+    def test_pair_health_omitted_until_both_aliases_bound(self):
+        routes = self._routes([
+            {
+                'host': '192.168.4.1',
+                'port': 5002,
+                'expected_device_id': 'esp32:aabbccddeeff',
+                'role': 'master',
+            },
+        ])
+        manager, published = self._manager(routes, alias_master='esp32:aabbccddeeff')
+        manager.on_session_bound(manager.sessions[0], 'esp32:aabbccddeeff', last_seen_us=1)
+        pair = manager.publish_pair_health(
+            {'schema': 'oe_esp32.health.v1', 'connection_state': 'connected'},
+            None,
+        )
+        self.assertIsNone(pair)
+        self.assertFalse(any(topic == '/esp/status/pair' for topic, _ in published))
+
+    def test_registry_includes_resolved_alias_device_ids(self):
+        routes = self._routes([
+            {
+                'host': '192.168.4.1',
+                'port': 5002,
+                'expected_device_id': 'esp32:aabbccddeeff',
+                'role': 'master',
+            },
+            {
+                'host': '192.168.4.3',
+                'port': 5003,
+                'expected_device_id': 'esp32:1111ccddeeff',
+                'role': 'slave',
+            },
+        ])
+        manager, _published = self._manager(
+            routes,
+            alias_master='esp32:aabbccddeeff',
+            alias_slave='esp32:1111ccddeeff',
+        )
+        manager.on_session_bound(manager.sessions[0], 'esp32:aabbccddeeff', last_seen_us=1)
+        manager.on_session_bound(manager.sessions[1], 'esp32:1111ccddeeff', last_seen_us=2)
+        doc = manager.build_registry()
+        self.assertEqual(doc['alias_master_device_id'], 'esp32:aabbccddeeff')
+        self.assertEqual(doc['alias_slave_device_id'], 'esp32:1111ccddeeff')
+
+    def test_alias_topic_constants_and_no_typed_imu_mirror_in_fleet(self):
+        self.assertEqual(fleet.ALIAS_RAW_MASTER_TOPIC, '/esp/raw/master')
+        self.assertEqual(fleet.ALIAS_RAW_SLAVE_TOPIC, '/esp/raw/slave')
+        self.assertEqual(fleet.ALIAS_STATUS_MASTER_TOPIC, '/esp/status/master')
+        self.assertEqual(fleet.ALIAS_STATUS_SLAVE_TOPIC, '/esp/status/slave')
+        self.assertEqual(fleet.PAIR_HEALTH_TOPIC, '/esp/status/pair')
+        source = (
+            Path(__file__).parents[1]
+            / 'rehab_robotics_bridge'
+            / 'fleet_bridge_node.py'
+        ).read_text(encoding='utf-8')
+        # Typed OpenSim IMU topics remain /esp32/{master,slave}/imu consumers;
+        # fleet String aliases do not invent /esp32/mac_ or mirror IMU frames here.
+        self.assertNotIn('/esp32/mac_', source)
+        self.assertIn('ALIAS_RAW_MASTER_TOPIC', source)
+
+
 if __name__ == '__main__':
     unittest.main()
