@@ -83,7 +83,7 @@ Each task was committed atomically:
 3. **Task 2 RED:** `22aca15` — test(21-04): add failing multi-route isolation suite
 4. **Task 2 GREEN:** `34e606f` — feat(21-04): isolate session failures and document fleet diagnostics
 
-**Plan metadata:** (see final docs commit)
+**Plan metadata:** `35baa67` (docs: complete isolation diagnostics plan)
 
 ## Files Created/Modified
 
