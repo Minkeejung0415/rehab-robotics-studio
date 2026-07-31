@@ -9,14 +9,14 @@
 ### Device Identity and Identify
 
 - [x] **ID-01**: Operator can see a verified, normalized full 48-bit hardware identity for the Master and every discovered Slave.
-- [ ] **ID-02**: A device keeps the same canonical identity and data topic across DHCP changes, reconnects, and discovery-order changes; role, IP, and transport MAC remain separate metadata.
+- [x] **ID-02**: A device keeps the same canonical identity and data topic across DHCP changes, reconnects, and discovery-order changes; role, IP, and transport MAC remain separate metadata.
 - [x] **ID-03**: Operator can target one device with a bounded, non-blocking LED Identify action whose result is application-acknowledged and distinguishes confirmed, timeout, offline, unsupported, and rejected outcomes.
 
 ### Fleet Discovery and Routing
 
 - [ ] **FLEET-01**: Operator can see the Master and every currently or previously known Slave in one MAC-keyed fleet registry with separate discovery, command, route, orientation freshness, synchronization, and rate states.
 - [ ] **FLEET-02**: Each routed device publishes canonical per-MAC IMU and health data while the existing fixed Master/Slave topics remain compatible aliases bound to explicit device identities.
-- [ ] **FLEET-03**: A failed, stale, or reconnecting device route does not stop acquisition, health, Identify, or recording for other devices, and queue/drop/reconnect diagnostics remain bounded and visible.
+- [x] **FLEET-03**: A failed, stale, or reconnecting device route does not stop acquisition, health, Identify, or recording for other devices, and queue/drop/reconnect diagnostics remain bounded and visible.
 
 ### OpenSim Model Catalog
 
@@ -78,11 +78,11 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | ID-01 | Phase 20 | Complete |
-| ID-02 | Phase 21 | Pending |
+| ID-02 | Phase 21 | Complete |
 | ID-03 | Phase 20 | Complete |
 | FLEET-01 | Phase 21 | Pending |
 | FLEET-02 | Phase 21 | Pending |
-| FLEET-03 | Phase 21 | Pending |
+| FLEET-03 | Phase 21 | Complete |
 | MODEL-01 | Phase 22 | Pending |
 | MODEL-02 | Phase 22 | Pending |
 | MODEL-03 | Phase 22 | Pending |

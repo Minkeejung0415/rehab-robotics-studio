@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Multi-Sensor Bone Mapping
-status: verifying
-stopped_at: Completed 20-06-PLAN.md
-last_updated: "2026-07-30T21:30:22.032Z"
-last_activity: 2026-07-30
+status: executing
+stopped_at: Completed 21-01-PLAN.md
+last_updated: "2026-07-31T18:40:00.000Z"
+last_activity: 2026-07-31
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 6
-  completed_plans: 6
-  percent: 100
+  total_plans: 10
+  completed_plans: 7
+  percent: 70
 ---
 
 # Project State
@@ -21,22 +21,22 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-07-30)
 
 **Core value:** Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline into usable filtered, biomechanical, and recorded outputs.
-**Current focus:** Phase 20 — Full Identity and Confirmed Identify
+**Current focus:** Phase 21 — N-Route Relay and Canonical ROS Fleet
 
 ## Current Position
 
-Phase: 20 (Full Identity and Confirmed Identify) — VERIFYING
-Plan: 6 of 6
-Status: Phase complete — ready for verification
-Last activity: 2026-07-30
+Phase: 21 (N-Route Relay and Canonical ROS Fleet) — EXECUTING
+Plan: 2 of 4
+Status: 21-01 complete — ready for 21-02
+Last activity: 2026-07-31
 
-Progress: [██████████] 100%
+Progress: [███████░░░] 70%
 
 ## Performance Metrics
 
 **Current milestone:**
 
-  - Plans completed: 6
+  - Plans completed: 7
 - Phases completed: 1/6
 
 | Plan | Duration | Tasks | Files |
@@ -46,6 +46,7 @@ Progress: [██████████] 100%
 | Phase 20 P03 | 35 min | 2 tasks | 4 files |
 | Phase 20 P05 | 8 min | 2 tasks | 4 files |
 | Phase 20 P06 | 2 min | 1 tasks | 1 files |
+| Phase 21 P01 | 25 min | 2 tasks | 4 files |
 
 **Prior milestone reference:**
 
@@ -73,6 +74,9 @@ Decisions are logged in `PROJECT.md`. Current milestone decisions:
 - [Phase 20]: Cross-layer identity regression shares one named adversarial matrix across firmware, relay, and bridge.
 - [Phase 20]: Phase 20 permits only the pure mac_<12hex> token helper; per-MAC publisher lifecycle remains Phase 21.
 - [Phase 20]: Physical Identify evidence remains pending HUMAN-UAT, while Phase 25 owns capacity and promotion.
+- [Phase 21]: Chose repeatable `--slave-route HOST:LISTEN_PORT:EXPECTED_DEVICE_ID` over parallel host/port/id lists for unambiguous N-route CLI.
+- [Phase 21]: Left dual ROS bridge spawn on first slave transitional; relay already receives all N routes (fleet consolidation in 21-02/03).
+- [Phase 21]: Contiguous listen ports = SlaveRelayPort + index (default 5003..).
 
 ### Pending Todos
 
@@ -97,6 +101,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-07-30T21:30:22.023Z
-Stopped at: Completed 20-06-PLAN.md
+Last session: 2026-07-31T18:40:00.000Z
+Stopped at: Completed 21-01-PLAN.md
 Resume file: None
