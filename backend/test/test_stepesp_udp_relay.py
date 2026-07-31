@@ -333,6 +333,7 @@ class LauncherIdentityContractTests(unittest.TestCase):
     def test_expected_master_and_slave_ids_are_strict_canonical_parameters(self):
         self.assertIn('[string]$ExpectedMasterDeviceId', self.launcher)
         self.assertIn('[string]$ExpectedSlaveDeviceId', self.launcher)
+        self.assertIn('[string[]]$ExpectedSlaveDeviceIds', self.launcher)
         self.assertRegex(
             self.launcher,
             r"\^esp32:\[0-9a-fA-F\]\{12\}\$",
@@ -362,8 +363,10 @@ class LauncherIdentityContractTests(unittest.TestCase):
             '$verifiedSlaveCandidates = @($slaveIdentityProbes',
             self.launcher,
         )
-        self.assertIn(
-            '$_.DeviceId -eq $expectedSlaveCanonical',
+        self.assertIn('MAX_SLAVE_ROUTES = 6', self.launcher)
+        self.assertIn('firmware peer slot limit', self.launcher)
+        self.assertNotIn(
+            'Slave route selection is ambiguous',
             self.launcher,
         )
         self.assertIn(
@@ -371,12 +374,22 @@ class LauncherIdentityContractTests(unittest.TestCase):
             self.launcher,
         )
 
+    def test_launcher_routes_all_verified_slaves_with_contiguous_ports(self):
+        for contract in (
+            '--slave-route',
+            '$SlaveRelayPort + $index',
+            'ExpectedSlaveDeviceIds',
+            'duplicate slave identity',
+            'exceeds the firmware peer slot limit',
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, self.launcher)
+
     def test_role_alias_endpoint_and_verified_identity_are_separate_launch_values(self):
         for contract in (
             '--esp-host $MasterHost',
             '--expected-device-id $verifiedMasterDeviceId',
-            '--slave-host $resolvedSlaveHost',
-            '--slave-expected-device-id $verifiedSlaveDeviceId',
+            '--slave-route',
             'node_id:=master',
             'node_id:=slave',
             'expected_device_id:=$verifiedMasterDeviceId',
