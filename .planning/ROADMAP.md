@@ -70,7 +70,13 @@ Plans:
   2. Each device publishes canonical per-MAC IMU and health data on the same topics after DHCP, reconnect, or ordering changes, while fixed Master/Slave aliases remain explicitly bound to identities and carry matching data.
   3. A failed, stale, or reconnecting route does not stop acquisition, health, Identify, or recording for other devices, and its bounded queue, drop, and reconnect diagnostics remain visible.
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 21-01-PLAN.md — Multi-slave relay + launcher discovery (route all verified ≤6)
+- [ ] 21-02-PLAN.md — Fleet manager: canonical mac_ topics + layered registry
+- [ ] 21-03-PLAN.md — Legacy aliases + pair health + single-process launch params
+- [ ] 21-04-PLAN.md — Isolation diagnostics (drop_count, reconnect) + deterministic tests
 
 ### Phase 22: Model Catalog, Mapping Store, and Transactional Contracts
 
