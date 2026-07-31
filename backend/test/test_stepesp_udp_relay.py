@@ -763,6 +763,53 @@ class StepEspUdpRelayTests(unittest.IsolatedAsyncioTestCase):
                 worker.cancel()
             await asyncio.gather(*workers, return_exceptions=True)
 
+    def test_full_queue_drop_oldest_increments_drop_count_for_that_route_only(self):
+        """D-21-10: overflow drops increment per-host drop_count only."""
+        host_a = '192.168.4.1'
+        host_b = '192.168.4.3'
+        relays = {
+            host_a: relay_module.StepEspRelay('master', host_a, 5000),
+            host_b: relay_module.StepEspRelay('slave', host_b, 5000),
+        }
+        router = relay_module.UdpRouter(55001, relays)
+        self.assertEqual(router.drop_count(host_a), 0)
+        self.assertEqual(router.drop_count(host_b), 0)
+
+        # Fill A to maxsize without consuming.
+        for index in range(256):
+            self.assertTrue(router.route_datagram(host_a, bytes([index % 256])))
+        self.assertEqual(router.drop_count(host_a), 0)
+        self.assertEqual(router.queues[host_a].qsize(), 256)
+
+        # One overflow on A drops oldest and increments A's counter only.
+        self.assertTrue(router.route_datagram(host_a, b'overflow-a'))
+        self.assertEqual(router.drop_count(host_a), 1)
+        self.assertEqual(router.drop_count(host_b), 0)
+        self.assertEqual(router.queues[host_a].qsize(), 256)
+
+        # B traffic must not change A's drop_count.
+        self.assertTrue(router.route_datagram(host_b, b'b-frame'))
+        self.assertEqual(router.drop_count(host_a), 1)
+        self.assertEqual(router.drop_count(host_b), 0)
+
+        # Second overflow on A only.
+        self.assertTrue(router.route_datagram(host_a, b'overflow-a-2'))
+        self.assertEqual(router.drop_count(host_a), 2)
+        self.assertEqual(router.drop_count(host_b), 0)
+
+    def test_remap_host_preserves_drop_count_with_queue(self):
+        host_old = '192.168.4.3'
+        host_new = '192.168.4.9'
+        relay = relay_module.StepEspRelay('slave', host_old, 5000)
+        router = relay_module.UdpRouter(55001, {host_old: relay})
+        for index in range(256):
+            router.route_datagram(host_old, bytes([index % 256]))
+        router.route_datagram(host_old, b'drop')
+        self.assertEqual(router.drop_count(host_old), 1)
+        router.remap_host(host_old, host_new, relay)
+        self.assertEqual(router.drop_count(host_new), 1)
+        self.assertEqual(router.drop_count(host_old), 0)
+
 
 if __name__ == '__main__':
     unittest.main()

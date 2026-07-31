@@ -690,5 +690,103 @@ class FleetAliasBindingTest(unittest.TestCase):
         self.assertIn('ALIAS_RAW_MASTER_TOPIC', source)
 
 
+class FleetDropReconnectDiagnosticsTest(unittest.TestCase):
+    """D-21-10/11/14: drop_count + reconnect diagnostics on registry/health."""
+
+    def test_registry_rows_include_drop_and_reconnect_fields(self):
+        store = fleet.FleetRegistryStore()
+        store.upsert_connected(
+            device_id='esp32:aabbccddeeff',
+            role='master',
+            host='192.168.4.1',
+            esp_port=5000,
+            listen_port=5002,
+            configured_hz=100,
+            observed_hz=99.0,
+            last_seen_us=1,
+        )
+        doc = store.build(revision=1, timestamp_us=2)
+        row = doc['devices'][0]
+        self.assertIn('drops', row)
+        self.assertEqual(row['drops']['udp_drop_count'], 0)
+        self.assertEqual(row['drops']['queue_maxsize'], 256)
+        self.assertIn('reconnects', row)
+        self.assertEqual(row['reconnects']['count'], 0)
+        self.assertGreaterEqual(row['reconnects']['generation'], 1)
+
+    def test_record_udp_drops_affects_only_target_device(self):
+        store = fleet.FleetRegistryStore()
+        for device_id, host, port in (
+            ('esp32:aabbccddeeff', '192.168.4.1', 5002),
+            ('esp32:1111ccddeeff', '192.168.4.3', 5003),
+        ):
+            store.upsert_connected(
+                device_id=device_id,
+                role='master' if 'aa' in device_id else 'slave',
+                host=host,
+                esp_port=5000,
+                listen_port=port,
+                configured_hz=100,
+                observed_hz=100.0,
+                last_seen_us=1,
+            )
+        store.record_udp_drops('esp32:1111ccddeeff', 7)
+        doc = store.build(revision=2, timestamp_us=3)
+        by_id = {row['device_id']: row for row in doc['devices']}
+        self.assertEqual(by_id['esp32:1111ccddeeff']['drops']['udp_drop_count'], 7)
+        self.assertEqual(by_id['esp32:aabbccddeeff']['drops']['udp_drop_count'], 0)
+
+    def test_mark_reconnecting_retains_row_and_increments_on_reconnect(self):
+        store = fleet.FleetRegistryStore()
+        store.upsert_connected(
+            device_id='esp32:1111ccddeeff',
+            role='slave',
+            host='192.168.4.3',
+            esp_port=5000,
+            listen_port=5003,
+            configured_hz=100,
+            observed_hz=50.0,
+            last_seen_us=10,
+        )
+        store.mark_reconnecting('esp32:1111ccddeeff', last_seen_us=11)
+        mid = store.build(revision=2, timestamp_us=12)
+        row = mid['devices'][0]
+        self.assertEqual(row['device_id'], 'esp32:1111ccddeeff')
+        self.assertEqual(row['route'], 'reconnecting')
+        self.assertEqual(row['last_seen_us'], 11)
+        self.assertEqual(row['reconnects']['count'], 0)
+
+        store.note_reconnect('esp32:1111ccddeeff')
+        store.upsert_connected(
+            device_id='esp32:1111ccddeeff',
+            role='slave',
+            host='192.168.4.9',
+            esp_port=5000,
+            listen_port=5003,
+            configured_hz=100,
+            observed_hz=50.0,
+            last_seen_us=20,
+        )
+        after = store.build(revision=3, timestamp_us=21)
+        row = after['devices'][0]
+        self.assertEqual(row['route'], 'connected')
+        self.assertEqual(row['endpoint']['host'], '192.168.4.9')
+        self.assertEqual(row['reconnects']['count'], 1)
+        self.assertGreaterEqual(row['reconnects']['generation'], 2)
+
+    def test_health_snapshot_includes_drop_count_and_reconnect_count(self):
+        from backend.test import test_esp32_controls as controls
+
+        node = controls._make_health_stub()
+        node._drop_count = 3
+        node._reconnect_count = 2
+        snapshot = bridge.Esp32BridgeNode._health_snapshot(node)
+        self.assertEqual(snapshot['schema'], 'oe_esp32.health.v1')
+        self.assertEqual(snapshot['drop_count'], 3)
+        self.assertEqual(snapshot['reconnect_count'], 2)
+        self.assertEqual(snapshot['drops']['udp_drop_count'], 3)
+        self.assertEqual(snapshot['drops']['queue_maxsize'], 256)
+
+
 if __name__ == '__main__':
     unittest.main()
