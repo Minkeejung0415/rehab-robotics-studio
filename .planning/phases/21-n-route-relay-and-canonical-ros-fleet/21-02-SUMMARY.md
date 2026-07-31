@@ -74,7 +74,7 @@ Each task was committed atomically:
 1. **Task 1 RED:** `5c580c8` — test(21-02): add failing fleet registry and canonical topic contracts
 2. **Task 1+2 GREEN:** `cbfb48e` — feat(21-02): implement fleet registry and multi-session canonical publishers
 
-**Plan metadata:** (pending docs commit)
+**Plan metadata:** `f95f429` (docs: complete plan)
 
 ## Files Created/Modified
 
