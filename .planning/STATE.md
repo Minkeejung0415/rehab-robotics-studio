@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Multi-Sensor Bone Mapping
-status: verifying
-stopped_at: Completed 21-04-PLAN.md
-last_updated: "2026-07-31T18:58:23.679Z"
+status: verification_gaps
+stopped_at: Phase 21 verification gaps_found — live fleet TCP placeholder
+last_updated: "2026-07-31T19:05:00Z"
 last_activity: 2026-07-31
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 1
   total_plans: 10
   completed_plans: 10
-  percent: 33
+  percent: 17
 ---
 
 # Project State
@@ -25,12 +25,13 @@ See: `.planning/PROJECT.md` (updated 2026-07-30)
 
 ## Current Position
 
-Phase: 21 (N-Route Relay and Canonical ROS Fleet) — EXECUTING
-Plan: 4 of 4
-Status: Phase complete — ready for verification
+Phase: 21 (N-Route Relay and Canonical ROS Fleet) — VERIFICATION GAPS
+Plan: 4 of 4 executed; verification 2/5
+Status: gaps_found — fleet_bridge_node live TCP sessions are a sleep placeholder; wireless path does not publish IMU/health/Identify
 Last activity: 2026-07-31
 
-Progress: [██████████] 100%
+Progress: [██░░░░░░░░] 17% (Phase 20 complete; Phase 21 blocked on gap closure)
+Verification: `.planning/phases/21-n-route-relay-and-canonical-ros-fleet/21-VERIFICATION.md`
 
 ## Performance Metrics
 
@@ -96,8 +97,9 @@ None recorded.
 
 ### Blockers/Concerns
 
-- Phase 20 must verify board-revision LED pin/active level and base/AP/STA/ESP-NOW MAC relationships.
-- Phase 21 must select the multi-peer high-rate transport from measured throughput and failure-isolation evidence.
+- Phase 21 verification BLOCKER: `FleetBridgeNode._run_sessions` is an explicit TCP placeholder; wireless launcher no longer starts `esp32_bridge_node`, so canonical/alias IMU, registry live states, Identify, and `/esp32/*/imu` are disconnected. Close via `/gsd:plan-phase 21 --gaps` before Phase 22.
+- Phase 20 must verify board-revision LED pin/active level and base/AP/STA/ESP-NOW MAC relationships (HUMAN-UAT pending).
+- Phase 21 must select the multi-peer high-rate transport from measured throughput and failure-isolation evidence (after live fleet sessions exist).
 - Phase 22 must prove pinned OpenSim 4.5.2 runtime Frame behavior or require model-authored Frames.
 - Phase 25 must establish the supported fleet size/rate and default-mode decision from physical hardware evidence.
 
