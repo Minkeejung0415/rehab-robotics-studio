@@ -1,187 +1,467 @@
-# Phase 21 Research: N-Route Relay and Canonical ROS Fleet
+# Phase 21: N-Route Relay and Canonical ROS Fleet - Research
 
-**Researched:** 2026-07-31  
-**Status:** Complete  
-**Domain:** STEP_ESP32 wireless relay, Windows launcher, ROS 2 bridge fleet publishing  
-**Constraint:** Agent work stays offline from STEP_ESP32 Wi-Fi; hardware acquisition remains operator-run.
+**Researched:** 2026-07-31
+**Domain:** Multi-device Windows TCP/UDP relay + ROS 2 fleet publishers/registry
+**Confidence:** HIGH
 
-## Executive Summary
+<user_constraints>
+## User Constraints (from CONTEXT.md)
 
-Phase 20 already binds verified full-MAC self identity, keeps role/IP/transport as metadata, and ships a pure `device_topic_token()` helper without creating per-MAC publishers. Phase 21 must turn that foundation into N verified slave routes (≤6 peer slots), one identity-keyed fleet manager publishing `/esp/raw|status/mac_<12hex>` plus `/esp/fleet/registry`, and explicit Master/Slave aliases that never mean “whoever connected first.” The relay already isolates UDP per source IP with Queue(maxsize=256) drop-oldest, but only accepts one `--slave-host`. The launcher currently fails closed when more than one verified slave is discovered. Extending both, then replacing the dual `esp32_bridge_node` process model with one multi-session fleet owner, is the critical path.
+### Locked Decisions
 
-## Current System Seams
+#### Multi-slave discovery & route binding
+- Route all verified slave self-identities discovered on the STEP_ESP32 AP, capped at the firmware peer slot limit (6).
+- Fail closed on duplicate MAC; if a known route later reports a different stable identity, retain the original as offline and register the new identity as a distinct device (Phase 20 rule).
+- Master at 192.168.4.1 and the Windows STA remain required; slaves are N additional TCP/UDP routes.
+- Bind each relay session to canonical `esp32:aabbccddeeff` identity and refresh IP without changing the canonical topic token.
 
-### Relay — `scripts/stepesp_tcp_udp_relay.py`
+#### Canonical topics & legacy aliases
+- Canonical topics use Phase 20 `device_topic_token`: `/esp/raw/mac_<12hex>` and `/esp/status/mac_<12hex>`.
+- Keep `/esp/raw/master`, `/esp/raw/slave`, `/esp/status/master`, `/esp/status/slave` as explicit aliases bound to configured identities, carrying the same payload as the canonical topics (FLEET-02 / COMP-01).
+- Alias binding is owned by launch/bridge parameters (`alias_master_device_id` / `alias_slave_device_id`, or first verified role identities) — never “whoever connected first.”
+- Publish one aggregate `/esp/fleet/registry` (String/JSON) listing all known MACs and layered states (FLEET-01).
 
-| Seam | Current behavior | Phase 21 gap |
-|------|------------------|--------------|
-| `StepEspRelay` | One TCP control + UDP forward session per ESP host; binds only verified `record=self` | Needs N slave sessions, each with expected device_id |
-| `SessionIdentityRegistry` | MAC-keyed; IP refresh updates `current_endpoint` without changing device_id; displaced endpoint clears old route | Preserve; expose offline retention when endpoint dies |
-| `UdpRouter` | `dict[host → Queue(maxsize=256)]`, drop-oldest on full, demux by source IP | Add per-route `drop_count`; support dynamic host remapping on DHCP |
-| CLI | `--slave-host` singular + `--slave-listen-port` | Multi-slave args (repeatable hosts / JSON / paired lists) |
-| Isolation | Malformed inventory on one route must not poison another (tested) | Prove N-route reconnect and drop counters independently |
+#### Failure isolation & diagnostics
+- Isolate failures per identity: a failed/stale/reconnecting route must not stop acquisition, health, Identify, or recording for other devices (FLEET-03).
+- Keep per-route bounded UDP queues (maxsize=256, drop-oldest) and expose drop_count (and reconnect diagnostics) in health/registry.
+- Auto-reconnect only the affected route; registry marks reconnecting/stale without a global relay restart.
+- Retain offline/stale MAC rows with last-seen; do not drop from registry solely because TCP died (explicit forget is later-phase).
 
-### Launcher — `scripts/start_stepesp_wireless.ps1`
+#### Fleet process model & registry visibility
+- Prefer one fleet manager / multi-session bridge owning all identity routes and the registry; avoid N+1 independent bridge processes as the primary model.
+- Each registry row exposes distinct layered fields: discovery, command, route, orientation freshness, synchronization, rate, plus drops/reconnects — not a single collapsed connection_state.
+- Phase 21 is backend/ROS contracts first; full multi-row mapping UI is Phase 24. A minimal HealthPanel/debug surface for registry JSON is allowed if cheap.
+- Keep `/esp/status/pair` publishing when aliases are bound for COMP-01; registry is authoritative for N>2.
 
-| Seam | Current behavior | Phase 21 gap |
-|------|------------------|--------------|
-| Discovery | Ping candidates → identity probe → verified slave self only | Collect **all** verified slaves ≤6 |
-| Ambiguity | `Count -gt 1` throws unless `-ExpectedSlaveDeviceId` | Route all verified; fail closed only on duplicate MAC / master collision |
-| Relay spawn | One master + one slave CLI pair | Pass N slave hosts, expected IDs, listen ports |
-| ROS bridges | Two WSL `esp32_bridge_node` processes (`node_id:=master|slave`) | Prefer one fleet manager process (CONTEXT) |
-| Ports | Master listen 5002, slave 5003, UDP 55001 | Contiguous slave listen ports from 5003 (discretion) |
+### Claude's Discretion
+- Exact JSON schema field names and schema version string for registry/health extensions, provided layered states and drop/reconnect diagnostics remain visible.
+- Exact listen-port allocation scheme for N slave TCP relays (contiguous ports vs dynamic map), provided each device has an isolated route.
+- Whether legacy single-role bridge entrypoints remain thin wrappers or are folded into the fleet manager, provided aliases and isolation semantics hold.
 
-### Bridge — `backend/rehab_robotics_bridge/esp32_bridge_node.py`
+### Deferred Ideas (OUT OF SCOPE)
+- Model catalog, mapping store, Apply transactions — Phase 22.
+- N-sensor calibration and official OpenSim IK — Phase 23.
+- Dedicated Studio mapping workspace (segment selectors, Draft/Saved/Applied) — Phase 24.
+- Hardware capacity promotion gate / default dynamic mode — Phase 25.
+- Explicit “forget device” UX — later than Phase 21 registry retention rule.
+</user_constraints>
 
-| Seam | Current behavior | Phase 21 gap |
-|------|------------------|--------------|
-| Publishers | `/esp/raw/{node_id}`, `/esp/status/{node_id}`, `/esp32/{node_id}/imu|raw`, Identify service | Add `/esp/raw|status/mac_<12hex>` via `device_topic_token` |
-| Identity bind | Complete verified self only; different self at same route raises and retains prior | Multi-session: offline old MAC, register new MAC as distinct |
-| Pair health | Master node publishes `/esp/status/pair` from slave health subscription | Keep when aliases bound; registry authoritative for N>2 |
-| `device_topic_token` | Pure helper `mac_<12hex>`; Phase 20 tests forbid publisher lifecycle | Create/cache/publish/destroy lifecycle owned here |
-| Process model | One session per process; launcher starts two | Fleet manager owns all sessions + registry |
+<phase_requirements>
+## Phase Requirements
 
-### Aggregator — `imu_aggregator_node.py`
+| ID | Description | Research Support |
+|----|-------------|------------------|
+| ID-02 | Same canonical identity and data topic across DHCP, reconnect, discovery-order; role/IP/transport MAC remain metadata | `SessionIdentityRegistry` already rebinds endpoints by `device_id`; Phase 21 must instantiate publishers via `device_topic_token` and remap `UdpRouter` IP keys without changing topic tokens |
+| FLEET-01 | MAC-keyed fleet registry with layered discovery/command/route/orientation/sync/rate states | Publish `/esp/fleet/registry` from one fleet manager; extend health with layered fields + drops/reconnects |
+| FLEET-02 | Canonical per-MAC IMU/health + explicit Master/Slave aliases | Canonical `/esp/raw|status/mac_*` (+ recommended `/esp32/mac_*/{imu,raw}`); aliases bound by `alias_*_device_id` params, same payload |
+| FLEET-03 | Per-route failure isolation; bounded queue/drop/reconnect diagnostics visible | Per-route supervised tasks (not one fatal `gather`); expose `drop_count` on existing maxsize=256 drop-oldest queues |
+</phase_requirements>
 
-Legacy YAML spawner that partially constructs `Esp32BridgeNode` without Phase 20 identity/health contracts. **Do not** use as the Phase 21 primary model. Prefer a purpose-built fleet manager; leave aggregator alone or document as obsolete.
+## Summary
 
-### Firmware constraint
+Phase 20 delivered verified full-MAC identity, Identify, and a pure `device_topic_token()` helper, but left data publishers on fixed role topics and kept the wireless launcher fail-closed when more than one verified slave is discovered. Phase 21 turns that foundation into an N-route system: discover up to six verified slaves, bind each TCP/UDP session to `esp32:<12hex>`, publish canonical per-MAC streams, keep explicit Master/Slave aliases, and expose a single MAC-keyed `/esp/fleet/registry` with layered readiness and drop/reconnect diagnostics.
 
-Master `MAX_SLAVE_STATUS_SLOTS = 6` caps verified peer inventory. Host must not invent routes beyond verified self-identity TCP endpoints; inventory peers are not session identity (Phase 20 rule).
+The largest implementation gaps are not identity parsing (already solid) but lifecycle ownership: the relay CLI still takes one optional `--slave-host`; `UdpRouter` drops silently without counters and keys queues only by construction-time IP; the launcher starts two independent `esp32_bridge_node` processes; and Phase 20 tests intentionally assert that no `/esp/.../mac_*` publishers exist yet. Do not extend `imu_aggregator_node` — it partially constructs bridges without Phase 20 identity contracts. Milestone architecture research names the target shape (`esp32_fleet_bridge`); locked CONTEXT overrides the fleet topic to `/esp/fleet/registry` (not `/esp/status/fleet`) and defers mapping/OpenSim dynamic mode.
 
-## Extension Design: N Verified Slaves
+**Primary recommendation:** Extend the Windows relay for N identity-bound slave routes with contiguous WSL listen ports and per-queue `drop_count`; add one `esp32_fleet_node` that owns sessions keyed by `device_id`, publishes canonical + alias + registry topics from the same accepted streams; keep `esp32_bridge_node` as a thin single-session wrapper for USB/legacy rollback.
 
-### Relay CLI (recommended)
+## Architectural Responsibility Map
 
+| Capability | Primary Tier | Secondary Tier | Rationale |
+|------------|-------------|----------------|-----------|
+| Multi-slave Soft-AP discovery | Host tooling (Windows PowerShell) | Firmware peer inventory | Launcher probes TCP `IDENTITY?` on candidate IPs; firmware peer rows are inventory only, never session identity |
+| Identity-bound TCP/UDP relay | Host process (`stepesp_tcp_udp_relay.py`) | — | Soft AP cannot route UDP into WSL NAT; Windows owns ESP sockets and demux by source IP |
+| Canonical/alias ROS publishers | API / Backend (ROS 2 fleet node) | Host relay | Relay routes bytes; ROS owns topic namespaces, health JSON, Identify/recording services |
+| Fleet registry snapshot | API / Backend | Host relay diagnostics | Registry is operator-facing ROS contract; relay supplies route/drop/reconnect facts |
+| Legacy pair health | API / Backend | — | COMP-01 alias view derived from bound master+slave identities |
+| Failure isolation | Host relay + Backend sessions | — | Per-route asyncio tasks/queues and per-session reconnect loops; no shared cancel |
+| Mapping / OpenSim N-IK / Studio rows | Deferred | — | Phases 22–24; Phase 21 must not invent mapping services |
+
+## Standard Stack
+
+### Core
+
+| Library | Version | Purpose | Why Standard |
+|---------|---------|---------|--------------|
+| Python asyncio + stdlib `socket` | 3.10 (WSL / existing bridge) | N-route relay supervision, per-route queues | Already owns `StepEspRelay` / `UdpRouter` [VERIFIED: codebase `scripts/stepesp_tcp_udp_relay.py`] |
+| ROS 2 Humble + `rclpy` | project install | Publishers, timers, services | Existing bridge/entry points [VERIFIED: `backend/setup.py`, launch files] |
+| `std_msgs/String`, `sensor_msgs/Imu`, `std_msgs/Float32MultiArray` | ROS distro | Canonical raw/status JSON, typed IMU/raw | Existing publisher types; no new msg packages required for Phase 21 [VERIFIED: `esp32_bridge_node.py`] |
+| `rehab_robotics_interfaces/IdentifyDevice` | local package | Targeted Identify | Phase 20 service; fleet node forwards, does not redesign [VERIFIED: bridge imports] |
+
+### Supporting
+
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| `unittest` / `IsolatedAsyncioTestCase` | stdlib | Relay/router isolation tests | Extend `test_stepesp_udp_relay.py` |
+| pytest (existing backend tests) | project | Bridge/fleet unit tests | Extend `test_esp32_controls.py`; add fleet node tests |
+| PowerShell 5.1+/7 | Windows host | Wireless launcher discovery | Extend `start_stepesp_wireless.ps1` |
+
+### Alternatives Considered
+
+| Instead of | Could Use | Tradeoff |
+|------------|-----------|----------|
+| One `esp32_fleet_node` | N× `esp32_bridge_node` processes | Violates locked “prefer one fleet manager”; harder registry aggregation and alias binding |
+| Contiguous listen ports 5003..5008 | Dynamic OS-assigned ports + side channel | Dynamic needs a registry API from relay→WSL; contiguous matches today’s 5002/5003 contract |
+| `/esp/fleet/registry` (locked) | `/esp/status/fleet` from older architecture notes | CONTEXT locks `/esp/fleet/registry` |
+| Phase 21 mapping services | ARCHITECTURE draft `SetSensorMapping` etc. | Deferred to Phase 22 |
+| Extending `imu_aggregator_node` | New fleet node | Aggregator lacks Phase 20 identity/health construction — do not use as primary model |
+
+**Installation:** No new third-party packages. Register a new console script only:
+
+```text
+# backend/setup.py entry_points addition
+esp32_fleet_node = rehab_robotics_bridge.esp32_fleet_node:main
+```
+
+**Version verification:** Existing stack only — no registry package installs. [ASSUMED] operator WSL image remains ROS 2 Humble + Python 3.10 as documented in `docs/stepesp-wireless-setup.md`.
+
+## Package Legitimacy Audit
+
+> No external packages are recommended for install in Phase 21.
+
+| Package | Registry | Age | Downloads | Source Repo | slopcheck | Disposition |
+|---------|----------|-----|-----------|-------------|-----------|-------------|
+| — | — | — | — | — | — | N/A — reuse in-repo Python/ROS stack |
+
+**Packages removed due to slopcheck [SLOP] verdict:** none
+**Packages flagged as suspicious [SUS]:** none
+
+## Architecture Patterns
+
+### System Architecture Diagram
+
+```text
+STEP_ESP32 Soft AP
+  Master 192.168.4.1 ──TCP:5000──┐
+  Slave_1 .. Slave_N (DHCP) ─────┼──► Windows stepesp_tcp_udp_relay
+  Windows STA (excluded)         │      - SessionIdentityRegistry (device_id → endpoint)
+                                 │      - UdpRouter :55001 (IP → Queue(256), drop_count)
+                                 │      - listen :5002 (master), :5003..:5008 (slaves)
+                                 ▼
+                         WSL ROS 2 esp32_fleet_node (ONE process)
+                           - sessions[device_id]
+                           - publish /esp32/mac_*/{imu,raw}
+                           - publish /esp/raw|status/mac_*
+                           - alias → /esp/raw|status/{master,slave} + /esp32/{master,slave}/*
+                           - /esp/fleet/registry (layered JSON)
+                           - /esp/status/pair when aliases bound
+                           - Identify/recording on master session
+                                 │
+                    ┌────────────┼────────────┐
+                    ▼            ▼            ▼
+              rosbridge     opensim_bridge   rosbag
+              (aliases)     (still alias     (canonical OK)
+                             IMU topics)
+```
+
+### Recommended Project Structure
+
+```text
+scripts/
+  stepesp_tcp_udp_relay.py      # N slave hosts, IP remap, drop_count
+  start_stepesp_wireless.ps1    # discover ≤6 verified slaves; launch one fleet node
+backend/rehab_robotics_bridge/
+  esp32_bridge_node.py          # thin single-session wrapper (USB/legacy)
+  esp32_device_session.py       # extracted handshake/stream/publish helpers (recommended)
+  esp32_fleet_node.py           # NEW multi-session owner + registry + aliases
+backend/test/
+  test_stepesp_udp_relay.py     # N-route, drop_count, IP remap, isolation
+  test_esp32_controls.py        # update Phase-20 “no mac publishers” guards
+  test_esp32_fleet_node.py      # NEW registry/alias/isolation contracts
+backend/setup.py                # add esp32_fleet_node entry point
+```
+
+### Pattern 1: Identity-keyed session, IP as mutable metadata
+**What:** Bind publishers and registry rows to `device_id` / `device_topic_token`; treat DHCP IP and listen port as `route` metadata that can refresh.
+**When to use:** Every reconnect, discovery reorder, or Soft-AP DHCP churn.
+**Example:**
+```python
+# Source: backend/rehab_robotics_bridge/esp32_bridge_node.py (Phase 20 helpers)
+token = device_topic_token('esp32:aabbccddeeff')  # -> mac_aabbccddeeff
+raw_topic = f'/esp/raw/{token}'
+status_topic = f'/esp/status/{token}'
+imu_topic = f'/esp32/{token}/imu'  # recommended companion to locked JSON topics
+```
+
+### Pattern 2: Alias republish from one accepted stream
+**What:** Publish once to canonical topics; if `device_id` matches `alias_master_device_id` / `alias_slave_device_id`, also publish identical payloads to role topics.
+**When to use:** Always for COMP-01 / FLEET-02 — never a second parser.
+
+### Pattern 3: Supervised per-route tasks
+**What:** Each relay session and each ROS device session runs in its own reconnect loop; top-level supervisor must not cancel siblings on one failure.
+**When to use:** FLEET-03 isolation.
+**Anti-pattern today:** `await asyncio.gather(router.serve(), *tasks)` in `run_relays` — one hard failure cancels remaining tasks. [VERIFIED: `scripts/stepesp_tcp_udp_relay.py` `run_relays`]
+
+### Pattern 4: Multi-slave CLI (recommended)
 ```text
 --esp-host / --expected-device-id / --listen-port          # master
 --slave-route HOST:LISTEN_PORT:EXPECTED_DEVICE_ID         # repeatable, ≤6
 ```
+Fail closed if duplicate hosts/ports/device_ids, or slave count > 6.
 
-Alternative equivalent: parallel lists `--slave-host` (repeatable) + `--slave-listen-port` + `--slave-expected-device-id` with equal lengths. Fail closed if lengths mismatch, duplicate hosts, duplicate listen ports, duplicate device_ids, or slave count > 6.
+### Anti-Patterns to Avoid
+- **N+1 bridge processes as primary model:** Locked preference is one fleet manager.
+- **First-connected alias binding:** Use parameters or first *verified role* identities only as explicit fallback — never discovery order alone without recording chosen IDs.
+- **Collapsing layered readiness into `connection_state`:** Keep discovery/command/route/freshness/sync/rate distinct.
+- **Importing Phase 22 mapping services or OpenSim `mapping_mode:=dynamic`:** Out of scope; keep OpenSim on alias IMU topics for now.
+- **Using peer inventory as session identity:** Peer rows inform discovery hints only; each slave route must verify `record=self`.
+- **Extending `imu_aggregator_node`:** Incomplete Phase 20 construction — leave alone.
 
-### Launcher discovery
+## Don't Hand-Roll
 
-1. Probe all STEP_ESP32 STA candidates (exclude Windows STA and master `192.168.4.1`).
-2. Keep every probe whose verified self `role=slave` and device_id ≠ master.
-3. Fail closed on duplicate MAC across candidates.
-4. Cap at 6; if more verified slaves appear, fail closed with explicit reason (firmware slot limit).
-5. Optional `-ExpectedSlaveDeviceIds` filter remains for operator pin-down; absence means “route all verified.”
-6. Allocate listen ports: `SlaveRelayPort + index` (5003, 5004, …).
-7. Start one relay with all routes; start one fleet bridge with route table + alias params.
+| Problem | Don't Build | Use Instead | Why |
+|---------|-------------|-------------|-----|
+| MAC normalization / topic tokens | New ad-hoc hex parsers | `normalize_device_id`, `display_mac`, `device_topic_token` | Already tested collision-safe helpers |
+| Identity inventory parsing | Parallel id-v1 grammar | Existing relay + bridge parsers | Dual grammars diverge (Phase 20 pitfall) |
+| Bounded UDP demux | Unbounded buffers / global queue | `UdpRouter` Queue(maxsize=256) drop-oldest + new `drop_count` | Isolation already proven in tests |
+| Identify protocol | New service redesign | Existing `IdentifyDevice` + master session forward | Phase 20 outcomes matrix must stay |
+| Fleet JSON over rosbridge | Custom ROS msg package for registry | `std_msgs/String` JSON (like health/pair) | Matches Studio/rosbridge; mapping msgs wait for Phase 22 |
 
-### Identity / DHCP
+**Key insight:** Phase 21 is composition and lifecycle — reuse Phase 20 identity contracts; do not reinvent parsers or Identify.
 
-- Canonical topic token = `device_topic_token(device_id)` → never derived from IP or discovery order.
-- When DHCP changes IP: update relay route host map and session `current_endpoint`; publishers stay on `mac_<12hex>`.
-- When a known route reports a different verified self: mark previous MAC offline (endpoint cleared), bind new MAC as distinct device (CONTEXT / Phase 20).
+## Common Pitfalls
 
-## Fleet Registry Schema Proposal
+### Pitfall 1: Silent UDP drops without counters
+**What goes wrong:** Queues already drop-oldest at 256 but operators cannot see loss. [VERIFIED: `UdpRouter.route_datagram`]
+**Why it happens:** Drop path calls `get_nowait()` with no counter.
+**How to avoid:** Increment per-host `drop_count` on drop; surface in registry and per-device health.
+**Warning signs:** High rate with `last_frame_age_ms` spikes but `reconnect_count` flat.
 
-**Topic:** `/esp/fleet/registry` (`std_msgs/String` JSON)  
-**Schema:** `oe_esp32.fleet_registry.v1` (discretion)
+### Pitfall 2: IP refresh without remapping `UdpRouter` keys
+**What goes wrong:** Registry updates `current_endpoint` but datagrams arrive on a new IP and are ignored as “unknown source.”
+**Why it happens:** `UdpRouter.queues` is built once from construction-time hosts. [VERIFIED: `UdpRouter.__init__`]
+**How to avoid:** Add `remap_host(old_ip, new_ip)` atomically with `StepEspRelay.esp_host` update after verified same `device_id`.
+**Warning signs:** Identity connected, TCP healthy, UDP frames discarded with unknown-source logs.
 
+### Pitfall 3: One failed `gather` cancels the fleet
+**What goes wrong:** One slave TCP error stops master acquisition.
+**Why it happens:** Shared `asyncio.gather` without supervision/isolation.
+**How to avoid:** Per-route `while True: try connect/serve except log/backoff`; gather only long-lived supervisors that never exit on child errors.
+**Warning signs:** Single `connection error` log followed by all WSL bridges idle.
+
+### Pitfall 4: Ambiguous multi-slave launcher still fail-closed
+**What goes wrong:** Second verified slave aborts the stack. [VERIFIED: `start_stepesp_wireless.ps1` “Slave route selection is ambiguous”]
+**Why it happens:** Phase 20 intentionally required `-ExpectedSlaveDeviceId` for >1 slave.
+**How to avoid:** Accept all verified slave self-identities up to 6; fail only on duplicate MAC, master/Windows collision, or capacity exceeded.
+**Warning signs:** Operator with two slaves cannot start without picking one ID.
+
+### Pitfall 5: Dual publish pipelines for aliases
+**What goes wrong:** Canonical and `/esp/raw/slave` diverge.
+**Why it happens:** Separate parse/publish paths per topic family.
+**How to avoid:** Single accept → fan-out publish (Pattern 2).
+**Warning signs:** Pair graph and MAC topic disagree after reconnect.
+
+### Pitfall 6: Updating Phase 20 negative tests late
+**What goes wrong:** CI still asserts `device_topic_token` is unused / no mac publishers. [VERIFIED: `test_esp32_controls.py::test_phase20_preserves_fixed_publishers...`]
+**How to avoid:** Wave 0 / first implementation wave rewrites those guards into positive fleet publisher tests.
+
+### Pitfall 7: Pulling mapping/OpenSim dynamic mode into this phase
+**What goes wrong:** Scope explodes into Phases 22–23.
+**How to avoid:** Launcher may start `esp32_fleet_node` but OpenSim continues `master_imu_topic`/`slave_imu_topic` aliases until mapping phases.
+
+## Code Examples
+
+### Canonical token (existing)
+```python
+# Source: backend/rehab_robotics_bridge/esp32_bridge_node.py
+def device_topic_token(value: str) -> str:
+    """Return the collision-safe topic token reserved for Phase 21 lifecycle use."""
+    return f'mac_{normalize_device_id(value)[6:]}'
+```
+
+### Current drop-oldest without counter (gap)
+```python
+# Source: scripts/stepesp_tcp_udp_relay.py UdpRouter.route_datagram
+if queue.full():
+    queue.get_nowait()  # Phase 21: count this drop
+queue.put_nowait(data)
+```
+
+### Recommended registry envelope (discretion)
 ```json
 {
   "schema": "oe_esp32.fleet_registry.v1",
-  "updated_at_us": 0,
+  "revision": 1,
+  "timestamp_us": 0,
   "alias_master_device_id": "esp32:aabbccddeeff",
-  "alias_slave_device_id": "esp32:112233445566",
+  "alias_slave_device_id": "esp32:1111ccddeeff",
   "devices": [
     {
-      "device_id": "esp32:aabbccddeeff",
-      "display_mac": "AA:BB:CC:DD:EE:FF",
-      "topic_token": "mac_aabbccddeeff",
-      "role": "master",
+      "device_id": "esp32:1111ccddeeff",
+      "display_mac": "11:11:CC:DD:EE:FF",
+      "topic_token": "mac_1111ccddeeff",
+      "role": "slave",
+      "endpoint": {"host": "192.168.4.3", "esp_port": 5000, "listen_port": 5004},
       "discovery": "present",
       "command": "ready",
-      "route": "up",
+      "route": "connected",
       "orientation_freshness": "fresh",
-      "synchronization": "in_skew",
-      "rate": "nominal",
-      "endpoint": {"host": "192.168.4.1", "esp_port": 5000, "listen_port": 5002},
-      "drop_count": 0,
-      "reconnect_count": 0,
-      "last_seen_us": 0,
-      "last_frame_age_ms": 0.0
+      "synchronization": "unknown",
+      "rate": {"configured_hz": 100, "observed_hz": 99.8},
+      "drops": {"udp_drop_count": 0, "queue_maxsize": 256},
+      "reconnects": {"count": 0, "generation": 1},
+      "last_seen_us": 0
     }
   ]
 }
 ```
+[ASSUMED] exact enum strings; planner may refine names as long as the six layered dimensions + drops/reconnects remain distinct.
 
-**Layered states (FLEET-01 — not a single `connection_state`):**
+### Contiguous listen-port allocation (discretion recommendation)
+```text
+master listen: 5002
+slave[i] listen: 5003 + i   # i in 0..5  → 5003..5008
+esp TCP: always 5000
+udp: shared 55001
+```
 
-| Field | Example values |
-|-------|----------------|
-| `discovery` | `present`, `missing`, `unverified` |
-| `command` | `ready`, `handshake`, `degraded`, `unavailable` |
-| `route` | `up`, `reconnecting`, `stale`, `offline` |
-| `orientation_freshness` | `fresh`, `stale`, `none` |
-| `synchronization` | `in_skew`, `out_of_skew`, `unknown` |
-| `rate` | `nominal`, `low`, `none` |
+### Legacy entrypoint stance (discretion recommendation)
+Keep `esp32_bridge_node` as a thin single-session wrapper around extracted `Esp32DeviceSession`. Add `esp32_fleet_node` as primary wireless path. Optional `-LegacyPairMode` is useful for COMP-01 rollback but not required if fleet node still publishes aliases.
 
-Health topic `/esp/status/mac_<12hex>` should extend `oe_esp32.health.v1` (or `.v2` if additive break needed) with `drop_count`, `reconnect_count`, and the same layered fields so registry and per-device health stay aligned.
+## State of the Art
 
-## Failure Isolation / Queue Drop Patterns
+| Old Approach | Current Approach (Phase 21 target) | When Changed | Impact |
+|--------------|-------------------------------------|--------------|--------|
+| One optional `--slave-host` | N verified slave hosts (≤6) | Phase 21 | True multi-IMU Soft AP fleets |
+| Two `esp32_bridge_node` processes | One `esp32_fleet_node` | Phase 21 | Unified registry + alias binding |
+| Role topics only | Canonical `mac_*` + role aliases | Phase 21 | ID-02 topic stability |
+| Ambiguous slave → hard fail | Accept all verified ≤6 | Phase 21 | Removes Phase 20 launcher gate |
+| Silent UDP drops | Visible `drop_count` | Phase 21 | FLEET-03 diagnostics |
 
-1. **Per-route UDP queue:** Keep maxsize=256 drop-oldest; increment `drop_count` on each discarded datagram.
-2. **Per-route TCP reconnect:** Only the failed session reconnects; other sessions continue acquisition, Identify, health, recording.
-3. **No global relay restart** on single-route failure; registry marks `route=reconnecting|stale|offline`.
-4. **Offline retention:** Keep MAC rows with `last_seen_*`; do not delete solely because TCP died.
-5. **Identify / control:** Target by full MAC; failure of one target must not cancel other sessions’ control loops.
-6. **Alias pair health:** If alias slave is offline, pair health reports unavailable without stopping master stream.
+**Deprecated/outdated:**
+- Treating “>1 verified slave” as an error in wireless startup (Phase 20 temporary gate).
+- Using `node_id` role as the only publisher key for wireless fleets.
+- Architecture draft topic `/esp/status/fleet` — superseded by locked `/esp/fleet/registry`.
 
-## Test Seams
+## Assumptions Log
 
-| File | Extend for |
-|------|------------|
-| `backend/test/test_stepesp_udp_relay.py` | N-route CLI parsing; 3+ host demux; drop_count on full queue; DHCP host remap keeps device_id; launcher routes all verified ≤6; duplicate MAC fail-closed |
-| `backend/test/test_esp32_controls.py` | Lift Phase 20 “no mac_ publishers” bans; assert canonical + alias publish same payload; registry layered fields; alias params; isolation (kill one session, others publish) |
-| New `backend/test/test_fleet_bridge.py` (if split helps) | Pure unit tests for registry builder, topic token wiring, reconnect isolation without ROS spin |
-| Source-contract launcher asserts | Fleet entrypoint, alias params, contiguous ports, no dual-bridge default |
+| # | Claim | Section | Risk if Wrong |
+|---|-------|---------|---------------|
+| A1 | Canonical typed IMU/raw topics should be `/esp32/mac_<12hex>/{imu,raw}` alongside locked `/esp/raw|status/mac_*` | Architecture Patterns | If planners only ship JSON topics, OpenSim/typed consumers lack canonical IMU until later |
+| A2 | Registry schema id `oe_esp32.fleet_registry.v1` and layered enum strings | Code Examples | Naming only — low risk if fields remain layered |
+| A3 | Contiguous listen ports 5003..5008 | Discretion recommendation | Port conflicts on busy hosts |
+| A4 | WSL/runtime remains ROS 2 Humble + Python 3.10 | Standard Stack | Wrong version may change asyncio/`rclpy` APIs |
+| A5 | No new pip/ROS interface packages required for Phase 21 | Package Audit | Typed FleetRegistry.msg would add build scope |
+| A6 | Drop counts can reach ROS via a minimal stats signal (e.g. `RELAY_STATS` line) or equivalent | Open Questions | If omitted, FLEET-03 drop visibility may be logs-only |
 
-**Nyquist:** Every plan task must have an automated verify command under these suites. Hardware STEP_ESP32 is out of scope for agent verification.
+## Open Questions
 
-## Risks
+1. **Should `/esp32/mac_*/{imu,raw}` ship in the same wave as `/esp/raw|status/mac_*`?**
+   - What we know: CONTEXT explicitly locks JSON raw/status; FLEET-02 also requires IMU; architecture research includes typed IMU topics.
+   - What's unclear: Whether OpenSim must subscribe to canonical IMU in Phase 21 or may keep aliases until Phase 23.
+   - Recommendation: Publish both canonical typed and JSON topics now; leave OpenSim on aliases for COMP-01 until mapping phases.
 
-| Risk | Mitigation |
-|------|------------|
-| Windows path with `#` and apostrophe breaks naive shell/`cd` | Use LiteralPath / Python `os.listdir` root discovery; never unquoted paths in PowerShell |
-| WSL dual-bridge → single fleet process | Update launcher + docs together; keep thin `esp32_bridge_node` for one-device debug |
-| Source-IP UDP demux after DHCP | Relay must remape `UdpRouter.routes`/`queues` under MAC key or update host key atomically |
-| drop_count currently missing | Add counter beside drop-oldest path; expose in health/registry |
-| Agent cannot join STEP_ESP32 | Deterministic fixtures only; operator docs note live stack path |
-| `imu_aggregator_node` incomplete construction | Do not extend; avoid regressing callers |
-| Port exhaustion / collisions | Contiguous allocation from 5003; fail closed on collision |
-| COMP-01 consumers | Keep `/esp/raw|status/master|slave` and `/esp/status/pair` when aliases bound |
+2. **How should relay expose drop/reconnect stats to the fleet node without a new IPC API?**
+   - What we know: Today WSL only sees TCP streams; drop counts live in the Windows process.
+   - What's unclear: Side-channel vs injecting periodic stats on the relayed control stream.
+   - Recommendation: Prefer a minimal `RELAY_STATS` text line (or shared local stats port). CONTEXT requires drop visibility — plan for a signal, not logs alone.
 
-## Architectural Responsibility Map
+3. **Synchronization layered field source**
+   - What we know: Firmware has ESP-NOW sync; health today lacks an explicit sync dimension.
+   - What's unclear: Exact signal for `synchronization` (master sync packets vs frame timestamp skew).
+   - Recommendation: Publish `unknown` until a concrete firmware field is wired; do not block registry on inventing sync math.
 
-| Concern | Owner | Tier |
-|---------|-------|------|
-| Multi-slave discovery | `start_stepesp_wireless.ps1` | Host launcher |
-| TCP/UDP N-route forward + drop queues | `stepesp_tcp_udp_relay.py` | Windows relay |
-| Canonical + alias + registry publish | Fleet manager (new/extended bridge) | ROS 2 backend |
-| Identity token | `device_topic_token` in bridge | Shared helper |
-| Pair health compatibility | Fleet manager when aliases set | ROS 2 backend |
-| Mapping UI / IK / model store | Phases 22–24 | Out of scope |
+## Environment Availability
 
-## Package Legitimacy Audit
+| Dependency | Required By | Available | Version | Fallback |
+|------------|------------|-----------|---------|----------|
+| Python 3 (Windows relay) | N-route relay | ✓ (project scripts) | 3.x host | — |
+| ROS 2 + `rclpy` in WSL | Fleet node | ✓ (documented Ubuntu-22.04 install) | Humble [ASSUMED] | Legacy dual bridge only |
+| STEP_ESP32 Soft AP hardware | Multi-slave acceptance | Operator-run | firmware `MAX_SLAVE_STATUS_SLOTS=6` | Deterministic unit/fixtures without radio |
+| PowerShell launcher | Discovery/start | ✓ | existing script | Manual relay/ROS args |
 
-No new npm/pip/cargo packages required. Reuse stdlib asyncio, existing rclpy/std_msgs, and PowerShell already in the stack.
+**Missing dependencies with no fallback:**
+- None for code/contract work; physical N-slave radio acceptance remains operator-run (CONTEXT: stay on ubcvisitor for agent work).
 
-## Out of Scope (explicit)
+**Missing dependencies with fallback:**
+- Live Soft AP during agent implementation → use fixtures/unit tests; hardware UAT separate.
 
-- Model catalog / mapping store / Apply (Phase 22)
-- N-sensor calibration / official IK (Phase 23)
-- Studio multi-row mapping workspace (Phase 24)
-- Hardware capacity promotion / dynamic mode default (Phase 25)
-- Explicit “forget device” UX
-- Live STEP_ESP32 Wi-Fi acquisition during agent runs
+## Validation Architecture
 
-## Discretion Choices Locked for Planning
+> `workflow.nyquist_validation` is absent in `.planning/config.json` → treat as enabled.
 
-1. Registry schema name: `oe_esp32.fleet_registry.v1`
-2. Slave listen ports: contiguous from configured `SlaveRelayPort` (default 5003)
-3. Primary process: one `fleet_bridge_node` entry point; retain `esp32_bridge_node` as thin single-session wrapper
-4. Minimal registry JSON debug surface allowed only if cheap; full HealthPanel multi-row UI deferred to Phase 24
+### Test Framework
+
+| Property | Value |
+|----------|-------|
+| Framework | Python `unittest` (+ pytest-compatible collection under `backend/test`) |
+| Config file | none dedicated — tests live under `backend/test/` |
+| Quick run command | `python -m unittest backend.test.test_stepesp_udp_relay backend.test.test_esp32_controls -q` |
+| Full suite command | `python -m unittest discover -s backend/test -q` |
+
+### Phase Requirements → Test Map
+
+| Req ID | Behavior | Test Type | Automated Command | File Exists? |
+|--------|----------|-----------|-------------------|-------------|
+| ID-02 | Same MAC keeps topic token after endpoint change | unit | existing reconnect registry test; extend with publisher token assert | ✅ (extend) |
+| ID-02 | New MAC at old IP is distinct offline+new | unit | `test_new_full_mac_at_an_old_endpoint_is_a_distinct_identity` | ✅ |
+| FLEET-01 | Registry JSON has layered fields + retained offline rows | unit | `test_esp32_fleet_node.py` | ❌ Wave 0 |
+| FLEET-02 | Canonical publish + alias fan-out identical payload | unit | `test_esp32_fleet_node.py` | ❌ Wave 0 |
+| FLEET-02 | `device_topic_token` used by publishers | unit | update `test_esp32_controls.py` negative → positive | ✅ file, ❌ assertions outdated |
+| FLEET-03 | Stalled route does not block sibling UDP | unit | existing `test_stalled_route_does_not_block_another_route` | ✅ |
+| FLEET-03 | Drop-oldest increments `drop_count` | unit | new relay test | ❌ Wave 0 |
+| FLEET-03 | N-route launcher accepts ≤6 slaves; fails duplicate MAC | unit/static | extend launcher contract tests | ⚠️ partial (still expects ambiguous fail) |
+| COMP-01 seam | `/esp/status/pair` still published when aliases bound | unit | fleet node test | ❌ Wave 0 |
+
+### Sampling Rate
+- **Per task commit:** quick unittest modules touched
+- **Per wave merge:** full `backend/test` discover
+- **Phase gate:** full suite green + operator Master+≥2 Slave wireless smoke (ROADMAP success criteria)
+
+### Wave 0 Gaps
+- [ ] `backend/test/test_esp32_fleet_node.py` — covers FLEET-01/02/03 registry, aliases, isolation
+- [ ] Extend `test_stepesp_udp_relay.py` — N hosts CLI, `drop_count`, IP remap, remove “ambiguous must fail” as the only multi-slave contract
+- [ ] Rewrite `test_esp32_controls.py::test_phase20_preserves_fixed_publishers...` for Phase 21 publisher lifecycle
+- [ ] Optional static launcher checks: ≤6 cap, duplicate MAC fail-closed, single fleet executable launch
+
+## Security Domain
+
+### Applicable ASVS Categories
+
+| ASVS Category | Applies | Standard Control |
+|---------------|---------|-----------------|
+| V2 Authentication | no | Soft-AP lab network; no new auth |
+| V3 Session Management | no | — |
+| V4 Access Control | no | Localhost/WSL trust boundary unchanged |
+| V5 Input Validation | yes | Existing id-v1 / MAC normalization; bound JSON registry size; reject duplicate/malformed device_id |
+| V6 Cryptography | no | — |
+
+### Known Threat Patterns for ESP Soft-AP + ROS bridge
+
+| Pattern | STRIDE | Standard Mitigation |
+|---------|--------|---------------------|
+| Malformed identity / topic injection | Tampering | Fail closed on inventory parse; only verified `record=self` binds routes |
+| Duplicate MAC spoof / collision | Spoofing | Fail closed on duplicate; quarantine identity-change on known route |
+| Unbounded registry / health JSON | Denial of Service | Cap device rows at 1+6; bound strings; existing line byte limits |
+| Cross-route cancellation | Denial of Service | Per-route supervision (FLEET-03) |
+
+## Sources
+
+### Primary (HIGH confidence)
+- `.planning/phases/21-n-route-relay-and-canonical-ros-fleet/21-CONTEXT.md` — locked decisions
+- `.planning/ROADMAP.md` Phase 21 — success criteria / requirements IDs
+- `.planning/REQUIREMENTS.md` — ID-02, FLEET-01..03
+- `scripts/stepesp_tcp_udp_relay.py` — relay, registry, UdpRouter
+- `scripts/start_stepesp_wireless.ps1` — discovery + ambiguous fail
+- `backend/rehab_robotics_bridge/esp32_bridge_node.py` — publishers, pair health, `device_topic_token`
+- `backend/test/test_stepesp_udp_relay.py`, `test_esp32_controls.py` — contracts/isolation
+- `firmware/step_node/step_node.ino` — `MAX_SLAVE_STATUS_SLOTS 6`
+- `.planning/phases/20-full-identity-and-confirmed-identify/20-VERIFICATION.md` — Phase 21 publisher boundary
+
+### Secondary (MEDIUM confidence)
+- `.planning/research/ARCHITECTURE.md` — fleet node structure (topic name partially superseded by CONTEXT)
+- `.planning/research/PITFALLS.md` / `SUMMARY.md` — alias/isolation pitfalls
+- `docs/stepesp-wireless-setup.md` — operator stack topology
+
+### Tertiary (LOW confidence)
+- Exact `RELAY_STATS` IPC mechanism for drop_count export — design judgment [ASSUMED]
+
+## Metadata
+
+**Confidence breakdown:**
+- Standard stack: HIGH — reuse verified in-repo ROS/Python stack; no new packages
+- Architecture: HIGH — CONTEXT + codebase gaps + architecture research align; deferred mapping scoped out
+- Pitfalls: HIGH — several failure modes already encoded as Phase 20 tests or explicit launcher throws
+
+**Research date:** 2026-07-31
+**Valid until:** 2026-08-30 (stable internal contracts; revisit if firmware peer capacity changes)
