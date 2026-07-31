@@ -64,6 +64,7 @@ def _load_fleet_module():
     spec = importlib.util.spec_from_file_location('fleet_bridge_node_test', path)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -285,6 +286,79 @@ class FleetRoutesAndEntryPointTest(unittest.TestCase):
             {'/esp/raw/mac_aabbccddeeff', '/esp/status/mac_aabbccddeeff'},
         )
 
+    def test_session_manager_owns_multiple_routes_and_emits_registry_on_bind(self):
+        emitted: list[dict] = []
+        created_topics: list[str] = []
+
+        class StubPublisher:
+            def __init__(self, topic: str) -> None:
+                self.topic = topic
+
+            def publish(self, message) -> None:
+                return None
+
+        routes = fleet.parse_routes_json(json.dumps([
+            {
+                'host': '192.168.4.1',
+                'port': 5002,
+                'expected_device_id': 'esp32:aabbccddeeff',
+                'role': 'master',
+            },
+            {
+                'host': '192.168.4.3',
+                'port': 5003,
+                'expected_device_id': 'esp32:1111ccddeeff',
+                'role': 'slave',
+            },
+        ]))
+
+        def create_publisher(msg_type, topic, qos):
+            created_topics.append(topic)
+            return StubPublisher(topic)
+
+        manager = fleet.FleetSessionManager(
+            routes,
+            create_publisher=create_publisher,
+            string_message_type=type('String', (), {'__init__': lambda self: setattr(self, 'data', '')}),
+            on_registry_change=emitted.append,
+        )
+        self.assertEqual(len(manager.sessions), 2)
+        seed = manager.build_registry()
+        self.assertEqual(len(seed['devices']), 2)
+        self.assertTrue(all(row['route'] in ('offline', 'stale') for row in seed['devices']))
+
+        doc = manager.on_session_bound(
+            manager.sessions[0],
+            'esp32:aabbccddeeff',
+            configured_hz=100,
+            observed_hz=99.0,
+            last_seen_us=11,
+        )
+        self.assertEqual(doc['revision'], 1)
+        self.assertEqual(len(emitted), 1)
+        by_id = {row['device_id']: row for row in doc['devices']}
+        self.assertEqual(by_id['esp32:aabbccddeeff']['route'], 'connected')
+        self.assertIn(by_id['esp32:1111ccddeeff']['route'], ('offline', 'stale'))
+        self.assertIn('/esp/raw/mac_aabbccddeeff', created_topics)
+        self.assertIn('/esp/status/mac_aabbccddeeff', created_topics)
+
+        # Different self on the same session retains prior MAC offline.
+        manager.on_session_bound(
+            manager.sessions[1],
+            'esp32:1111ccddeeff',
+            last_seen_us=12,
+        )
+        doc2 = manager.on_session_bound(
+            manager.sessions[1],
+            'esp32:2222ccddeeff',
+            last_seen_us=13,
+        )
+        by_id = {row['device_id']: row for row in doc2['devices']}
+        self.assertIn('esp32:1111ccddeeff', by_id)
+        self.assertIn('esp32:2222ccddeeff', by_id)
+        self.assertIn(by_id['esp32:1111ccddeeff']['route'], ('offline', 'stale'))
+        self.assertEqual(by_id['esp32:2222ccddeeff']['route'], 'connected')
+        self.assertIn('/esp/raw/mac_2222ccddeeff', created_topics)
     def test_setup_py_registers_fleet_bridge_console_script(self):
         setup_text = (
             Path(__file__).parents[1] / 'setup.py'

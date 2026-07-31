@@ -28,6 +28,7 @@ setup(
     entry_points={
         'console_scripts': [
             'esp32_bridge_node = rehab_robotics_bridge.esp32_bridge_node:main',
+            'fleet_bridge_node = rehab_robotics_bridge.fleet_bridge_node:main',
             'esp_filter = rehab_robotics_bridge.filter_node:main',
             'opensim_bridge = rehab_robotics_bridge.opensim_node:main',
             'esp_record = rehab_robotics_bridge.recorder_node:main',

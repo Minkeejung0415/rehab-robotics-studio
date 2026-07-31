@@ -456,17 +456,21 @@ class BridgeIdentityAndIdentifyTests(unittest.TestCase):
         self.assertIn("f'/esp/raw/{self._node_id}'", source)
         self.assertIn("f'/esp/status/{self._node_id}'", source)
         self.assertIn("f'/esp32/{self._node_id}/identify'", source)
-        self.assertEqual(source.count('device_topic_token('), 1)
+        # Role bridge keeps the pure helper; Phase 21 mac_ lifecycle lives in fleet.
+        self.assertGreaterEqual(source.count('def device_topic_token('), 1)
         self.assertNotIn('/esp32/mac_', source)
-        self.assertNotIn('_canonical_publishers', source)
-        self.assertNotRegex(
-            source,
-            r'create_publisher\([^)]*(?:device_topic_token|mac_[0-9a-f])',
+        fleet_path = (
+            Path(__file__).parents[1]
+            / 'rehab_robotics_bridge'
+            / 'fleet_bridge_node.py'
         )
-        self.assertNotRegex(
-            source,
-            r'(?:destroy_publisher|publisher_cache|device_publishers|mac_publishers)',
-        )
+        self.assertTrue(fleet_path.is_file())
+        fleet_source = fleet_path.read_text(encoding='utf-8')
+        self.assertIn('device_topic_token', fleet_source)
+        self.assertIn('/esp/raw/', fleet_source)
+        self.assertIn('/esp/status/', fleet_source)
+        self.assertIn('/esp/fleet/registry', fleet_source)
+        self.assertNotIn('/esp32/mac_', fleet_source)
 
     def test_identify_waits_for_correlated_terminal_confirmation(self):
         async def exercise():
