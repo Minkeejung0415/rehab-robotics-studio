@@ -408,8 +408,14 @@ class LauncherIdentityContractTests(unittest.TestCase):
         self.assertIn('alias_master_device_id:=$verifiedMasterDeviceId', self.launcher)
         self.assertIn('alias_slave_device_id:=$verifiedSlaveDeviceId', self.launcher)
         self.assertIn('routes_json:=', self.launcher)
-        self.assertEqual(self.launcher.count('fleet_bridge_node'), 1)
-        self.assertNotIn('esp32_bridge_node', self.launcher)
+        self.assertEqual(
+            self.launcher.count('ros2 run rehab_robotics_bridge fleet_bridge_node'),
+            1,
+        )
+        self.assertNotIn(
+            'ros2 run rehab_robotics_bridge esp32_bridge_node',
+            self.launcher,
+        )
         self.assertIn('/esp/raw/master', self.launcher)
         self.assertIn('/esp/raw/slave', self.launcher)
         self.assertIn('/esp/fleet/registry', self.launcher)

@@ -243,8 +243,7 @@ function Get-StepEspIdentity {
 $workspace = Split-Path -Parent $PSScriptRoot
 $relayScript = Join-Path $workspace 'scripts\stepesp_tcp_udp_relay.py'
 $serialDrainScript = Join-Path $workspace 'scripts\stepesp_serial_drain.py'
-$bridgeLog = '/home/justi/stepesp_master_bridge.log'
-$slaveBridgeLog = '/home/justi/stepesp_slave_bridge.log'
+$bridgeLog = '/home/justi/stepesp_fleet_bridge.log'
 $rosbridgeLog = '/home/justi/stepesp_rosbridge.log'
 $observerLog = '/home/justi/stepesp_processing_observer.log'
 $openSimLog = '/home/justi/stepesp_opensim_bridge.log'
@@ -385,7 +384,7 @@ if ($candidateSlaveHosts -contains $wifiAddress) {
 New-Item -ItemType Directory -Path (Split-Path -Parent $relayLog) -Force | Out-Null
 
 # Stop prior USB-backed or Wi-Fi ROS processes before launching this complete stack.
-wsl -d $Distro -- bash -lc "pkill -f '[e]sp32_bridge_node' || true; pkill -f '[r]osbridge_websocket' || true; pkill -f '[p]rocessing_block_observer' || true; pkill -f '[o]pensim_live_link.launch.py' || true; pkill -f '[o]pensim_bridge' || true"
+wsl -d $Distro -- bash -lc "pkill -f '[f]leet_bridge_node' || true; pkill -f '[e]sp32_bridge_node' || true; pkill -f '[r]osbridge_websocket' || true; pkill -f '[p]rocessing_block_observer' || true; pkill -f '[o]pensim_live_link.launch.py' || true; pkill -f '[o]pensim_bridge' || true"
 Get-CimInstance Win32_Process |
   Where-Object {
     $_.ProcessId -ne $PID -and $_.CommandLine -match 'serial_tcp_bridge.py|stepesp_tcp_udp_relay.py|stepesp_serial_drain.py'
@@ -519,14 +518,35 @@ Start-Process -FilePath python.exe -ArgumentList $relayArgs -RedirectStandardOut
 Start-Sleep -Milliseconds 750
 
 $rosEnvironment = "export ROS_DOMAIN_ID=$RosDomainId; source /opt/ros/humble/setup.bash; source $RosInstall/setup.bash; source $OpenSimInstall/setup.bash"
-$master = "$rosEnvironment; exec ros2 run rehab_robotics_bridge esp32_bridge_node --ros-args -r __node:=esp_bridge_master -p node_id:=master -p expected_device_id:=$verifiedMasterDeviceId -p host:=$wslGateway -p port:=$RelayPort -p transport:=tcp -p body_segment:=femur_r_imu -p recording_control_mode:=active > $bridgeLog 2>&1"
-$slave = "$rosEnvironment; exec ros2 run rehab_robotics_bridge esp32_bridge_node --ros-args -r __node:=esp_bridge_slave -p node_id:=slave -p expected_device_id:=$verifiedSlaveDeviceId -p host:=$wslGateway -p port:=$SlaveRelayPort -p transport:=tcp -p body_segment:=tibia_r_imu -p recording_control_mode:=active > $slaveBridgeLog 2>&1"
+$fleetRouteObjects = [System.Collections.Generic.List[object]]::new()
+[void]$fleetRouteObjects.Add([ordered]@{
+  host = $wslGateway
+  port = $RelayPort
+  expected_device_id = $verifiedMasterDeviceId
+  role = 'master'
+  body_segment = 'femur_r_imu'
+})
+for ($index = 0; $index -lt $selectedSlaves.Count; $index++) {
+  $route = $selectedSlaves[$index]
+  $listenPort = $SlaveRelayPort + $index
+  $bodySegment = if ($index -eq 0) { 'tibia_r_imu' } else { '' }
+  [void]$fleetRouteObjects.Add([ordered]@{
+    host = $wslGateway
+    port = $listenPort
+    expected_device_id = $route.DeviceId
+    role = 'slave'
+    body_segment = $bodySegment
+  })
+}
+$routesJson = ConvertTo-Json -InputObject @($fleetRouteObjects.ToArray()) -Compress -Depth 6
+# Bash single-quotes wrap the JSON; only apostrophes need escaping.
+$routesJsonBash = $routesJson.Replace("'", "'\''")
+$fleet = "$rosEnvironment; exec ros2 run rehab_robotics_bridge fleet_bridge_node --ros-args -r __node:=esp_fleet_bridge -p routes_json:='$routesJsonBash' -p alias_master_device_id:=$verifiedMasterDeviceId -p alias_slave_device_id:=$verifiedSlaveDeviceId > $bridgeLog 2>&1"
 $rosbridge = "$rosEnvironment; exec ros2 run rosbridge_server rosbridge_websocket --ros-args -p port:=9090 -p address:=0.0.0.0 > $rosbridgeLog 2>&1"
 $observer = "$rosEnvironment; exec ros2 run rehab_robotics_bridge processing_block_observer > $observerLog 2>&1"
 $openSim = "export ROS_DOMAIN_ID=$RosDomainId; exec bash $openSimRunner $OpenSimModel false master_imu_topic:=/esp32/master/imu slave_imu_topic:=/esp32/slave/imu > $openSimLog 2>&1"
 
-Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $master -WindowStyle Hidden
-Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $slave -WindowStyle Hidden
+Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $fleet -WindowStyle Hidden
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $rosbridge -WindowStyle Hidden
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $observer -WindowStyle Hidden
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $openSim -WindowStyle Hidden
@@ -568,14 +588,14 @@ if (-not $SkipGui) {
   }
 }
 
-Write-Host "Started the complete STEP_ESP32 stack: dual-device Windows relay, master/slave ROS bridges, OpenSim live link, rosbridge, processing observer$(if (-not $SkipGui) { ', and GUI' })."
+Write-Host "Started the complete STEP_ESP32 stack: N-route Windows relay, one fleet_bridge_node (aliases + registry), OpenSim live link, rosbridge, processing observer$(if (-not $SkipGui) { ', and GUI' })."
 Write-Host "ROS domain: $RosDomainId"
 Write-Host "GUI: http://127.0.0.1:5173"
 Write-Host "rosbridge: ws://127.0.0.1:9090"
 Write-Host "Verify pair: source $RosInstall/setup.bash; ROS_DOMAIN_ID=$RosDomainId ros2 topic echo /esp/status/pair --once --field data"
+Write-Host "Verify registry: source $RosInstall/setup.bash; ROS_DOMAIN_ID=$RosDomainId ros2 topic echo /esp/fleet/registry --once --field data"
 Write-Host "Verify deployment topics: source $RosInstall/setup.bash; ROS_DOMAIN_ID=$RosDomainId ros2 topic list | grep processing_blocks"
-Write-Host "Bridge log: $bridgeLog (kept after you return to ubcvisitor)"
-Write-Host "Slave bridge log: $slaveBridgeLog"
+Write-Host "Fleet bridge log: $bridgeLog (kept after you return to ubcvisitor)"
 Write-Host "rosbridge log: $rosbridgeLog"
 Write-Host "observer log: $observerLog"
 Write-Host "OpenSim status: source $OpenSimInstall/setup.bash; ROS_DOMAIN_ID=$RosDomainId ros2 topic echo /opensim/status --once --full-length"

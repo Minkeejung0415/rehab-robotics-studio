@@ -2,14 +2,15 @@
 
 This mode replaces the USB serial bridge with a direct connection to the
 ESP32 master. One PowerShell command starts the complete local application:
-the Windows relay, WSL master and slave ROS bridges, rosbridge on port `9090`,
-processing block observer, OpenSim quaternion subscriber, and Vite GUI on port
-`5173`. The Windows relay owns the master ESP TCP control connection plus every
-verified slave route (up to the firmware peer slot limit of 6) and shared UDP
-port `55001`. It separates master (`192.168.4.1`) and slave datagrams by source
-IP and forwards them to WSL listen ports `5002`, `5003`, `5004`, … Contiguous
-slave listen ports start at `SlaveRelayPort` (default `5003`). This is required
-because the ESP Soft AP cannot route UDP packets to WSL's private NAT address.
+the Windows relay, one WSL `fleet_bridge_node` (canonical mac_ topics, Master/Slave
+aliases, and `/esp/fleet/registry`), rosbridge on port `9090`, processing block
+observer, OpenSim quaternion subscriber, and Vite GUI on port `5173`. The Windows
+relay owns the master ESP TCP control connection plus every verified slave route
+(up to the firmware peer slot limit of 6) and shared UDP port `55001`. It separates
+master (`192.168.4.1`) and slave datagrams by source IP and forwards them to WSL
+listen ports `5002`, `5003`, `5004`, … Contiguous slave listen ports start at
+`SlaveRelayPort` (default `5003`). This is required because the ESP Soft AP cannot
+route UDP packets to WSL's private NAT address.
 
 1. Power the master first, then the slave(s). Confirm the master has created the
    `STEP_ESP32` access point.
@@ -47,9 +48,15 @@ because the ESP Soft AP cannot route UDP packets to WSL's private NAT address.
    ```
 
    Duplicate MAC discovery or more than six verified slaves fails closed.
-   Transitional ROS still launches one master bridge and one slave bridge for
-   the first selected identity; the relay itself receives every selected slave
-   via repeatable `--slave-route HOST:LISTEN_PORT:EXPECTED_DEVICE_ID` args.
+   The ROS fleet path launches **one** `fleet_bridge_node` with a full
+   `routes_json` table for master + every selected slave, plus explicit
+   `alias_master_device_id` / `alias_slave_device_id` (first selected verified
+   slave by default). Compatibility topics `/esp/raw|status/master|slave` mirror
+   those identities; `/esp/fleet/registry` lists all known MACs. The relay itself
+   receives every selected slave via repeatable
+   `--slave-route HOST:LISTEN_PORT:EXPECTED_DEVICE_ID` args. Typed OpenSim IMU
+   topics remain `/esp32/master/imu` and `/esp32/slave/imu` for the live-link
+   consumer; fleet String aliases do not invent `/esp32/mac_*` publishers.
 3. Verify the master/slave pair connection:
 
    ```powershell
@@ -75,8 +82,7 @@ because the ESP Soft AP cannot route UDP packets to WSL's private NAT address.
 The logs remain available after returning:
 
 ```powershell
-wsl -d Ubuntu-22.04 -- bash -lc "tail -80 /home/justi/stepesp_master_bridge.log"
-wsl -d Ubuntu-22.04 -- bash -lc "tail -80 /home/justi/stepesp_slave_bridge.log"
+wsl -d Ubuntu-22.04 -- bash -lc "tail -80 /home/justi/stepesp_fleet_bridge.log"
 wsl -d Ubuntu-22.04 -- bash -lc "tail -80 /home/justi/stepesp_rosbridge.log"
 wsl -d Ubuntu-22.04 -- bash -lc "tail -80 /home/justi/stepesp_processing_observer.log"
 wsl -d Ubuntu-22.04 -- bash -lc "tail -80 /home/justi/stepesp_opensim_bridge.log"

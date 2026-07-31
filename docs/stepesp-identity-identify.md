@@ -151,19 +151,25 @@ role, IP, peer row, route MAC, or `slave_id_deprecated`.
 
 ## Existing Phase 20 ROS inspection
 
-Phase 20 retains the compatibility role publishers and role Identify services:
+Phase 20 retains the compatibility role publishers and role Identify services on
+the single-session `esp32_bridge_node` (USB/legacy). Phase 21 wireless fleet mode
+binds the same compatibility topics as **explicit aliases** on `fleet_bridge_node`
+via `alias_master_device_id` / `alias_slave_device_id` (or first verified
+master/slave roles when those params are empty). Canonical streams use
+`/esp/raw|status/mac_<12hex>`; `/esp/fleet/registry` is authoritative for N>2.
+`/esp/status/pair` publishes when both aliases are bound (COMP-01).
 
 ```powershell
 wsl -d Ubuntu-22.04 -- bash -lc "source /opt/ros/humble/setup.bash; source /home/justi/.rehab-install-v12/setup.bash; ros2 topic echo /esp/status/master --once --field data"
 wsl -d Ubuntu-22.04 -- bash -lc "source /opt/ros/humble/setup.bash; source /home/justi/.rehab-install-v12/setup.bash; ros2 topic echo /esp/status/slave --once --field data"
+wsl -d Ubuntu-22.04 -- bash -lc "source /opt/ros/humble/setup.bash; source /home/justi/.rehab-install-v12/setup.bash; ros2 topic echo /esp/fleet/registry --once --field data"
 wsl -d Ubuntu-22.04 -- bash -lc "source /opt/ros/humble/setup.bash; source /home/justi/.rehab-install-v12/setup.bash; ros2 service list | grep -E '^/esp32/(master|slave)/identify$'"
 ```
 
 Inspect `identity.self` for the bound session and `identity.peers` only as
 inventory. Phase 20 defines and tests the pure `mac_<12hex>` normalization
-contract, but it does not create, cache, publish through, or destroy canonical
-per-MAC ROS publishers. Phase 21 owns that publisher lifecycle and N-route
-fleet routing.
+contract. Phase 21 owns canonical per-MAC publisher lifecycle, identity-bound
+aliases, N-route fleet routing, and the registry snapshot.
 
 ## Evidence boundary
 

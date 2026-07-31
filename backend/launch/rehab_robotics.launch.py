@@ -2,18 +2,42 @@
 Launch file: Rehab Robotics full stack.
 
 Starts:
-  - imu_aggregator_node  (reads nodes.yaml → spawns per-ESP32 bridge nodes)
+  - fleet_bridge_node (preferred wireless/N-route path) OR dual esp32_bridge_node (legacy)
   - rosbridge_websocket  (port 9090, GUI connects here)
 
 Usage:
   ros2 launch rehab_robotics_bridge rehab_robotics.launch.py
-  ros2 launch rehab_robotics_bridge rehab_robotics.launch.py config_file:=/path/to/nodes.yaml
+  ros2 launch rehab_robotics_bridge rehab_robotics.launch.py use_fleet_bridge:=true routes_json:='[...]'
 """
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+
+def _fleet_bridge(context, *args, **kwargs):
+    enabled = LaunchConfiguration('use_fleet_bridge').perform(context).lower()
+    if enabled not in ('true', '1', 'yes'):
+        return []
+    return [Node(
+        package='rehab_robotics_bridge',
+        executable='fleet_bridge_node',
+        name='esp_fleet_bridge',
+        output='screen',
+        parameters=[{
+            'routes_json': LaunchConfiguration('routes_json').perform(context),
+            'alias_master_device_id': LaunchConfiguration(
+                'alias_master_device_id'
+            ).perform(context),
+            'alias_slave_device_id': LaunchConfiguration(
+                'alias_slave_device_id'
+            ).perform(context),
+            'registry_period_s': float(
+                LaunchConfiguration('registry_period_s').perform(context) or '0.5'
+            ),
+        }],
+    )]
 
 
 def generate_launch_description():
@@ -43,15 +67,38 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_recorder', default_value='true'),
         DeclareLaunchArgument('enable_rosbridge', default_value='true'),
         DeclareLaunchArgument('enable_processing_observer', default_value='true'),
+        DeclareLaunchArgument(
+            'use_fleet_bridge',
+            default_value='false',
+            description='When true, start one fleet_bridge_node instead of dual esp32_bridge_node',
+        ),
+        DeclareLaunchArgument(
+            'routes_json',
+            default_value='[]',
+            description='Fleet route table JSON (host/port/expected_device_id/role)',
+        ),
+        DeclareLaunchArgument('alias_master_device_id', default_value=''),
+        DeclareLaunchArgument('alias_slave_device_id', default_value=''),
+        DeclareLaunchArgument('registry_period_s', default_value='0.5'),
     ]
 
     def bridge(role, host, tcp_port, transport, udp_port, segment):
-        return Node(package='rehab_robotics_bridge', executable='esp32_bridge_node', name=f'esp_bridge_{role}', output='screen', parameters=[{
-            'node_id': role, 'host': LaunchConfiguration(host), 'port': LaunchConfiguration(tcp_port),
-            'udp_port': LaunchConfiguration(udp_port),
-            'transport': LaunchConfiguration(transport), 'body_segment': LaunchConfiguration(segment),
-            'publish_native_topics': True,
-        }])
+        return Node(
+            package='rehab_robotics_bridge',
+            executable='esp32_bridge_node',
+            name=f'esp_bridge_{role}',
+            output='screen',
+            parameters=[{
+                'node_id': role,
+                'host': LaunchConfiguration(host),
+                'port': LaunchConfiguration(tcp_port),
+                'udp_port': LaunchConfiguration(udp_port),
+                'transport': LaunchConfiguration(transport),
+                'body_segment': LaunchConfiguration(segment),
+                'publish_native_topics': True,
+            }],
+            condition=UnlessCondition(LaunchConfiguration('use_fleet_bridge')),
+        )
 
     def filter_node(role):
         return Node(package='rehab_robotics_bridge', executable='esp_filter', name=f'esp_filter_{role}', output='screen', parameters=[{
@@ -100,8 +147,10 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('enable_processing_observer')),
     )
     return LaunchDescription(args + [
+        OpaqueFunction(function=_fleet_bridge),
         bridge('master', 'master_host', 'master_port', 'master_transport', 'master_udp_port', 'master_segment'),
-        bridge('slave', 'slave_host', 'slave_port', 'slave_transport', 'slave_udp_port', 'slave_segment'), filter_node('master'),
+        bridge('slave', 'slave_host', 'slave_port', 'slave_transport', 'slave_udp_port', 'slave_segment'),
+        filter_node('master'),
         filter_node('slave'), opensim, opensim_test_publisher, recorder, status,
         processing_observer, rosbridge,
     ])
