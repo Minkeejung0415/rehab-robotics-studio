@@ -399,7 +399,185 @@ class LauncherIdentityContractTests(unittest.TestCase):
                 self.assertIn(preserved, self.launcher)
 
 
+class MultiSlaveRouteContractTests(unittest.TestCase):
+    def test_slave_route_cli_accepts_up_to_six_distinct_routes(self):
+        parser = relay_module.build_arg_parser()
+        route_args = []
+        for index in range(6):
+            route_args.extend([
+                '--slave-route',
+                f'192.168.4.{index + 3}:{5003 + index}:esp32:{index:012x}',
+            ])
+        args = parser.parse_args([
+            '--esp-host', '192.168.4.1',
+            '--listen-port', '5002',
+            *route_args,
+        ])
+        routes = relay_module.parse_slave_routes(args)
+        self.assertEqual(len(routes), 6)
+        self.assertEqual(routes[0].host, '192.168.4.3')
+        self.assertEqual(routes[0].listen_port, 5003)
+        self.assertEqual(routes[0].expected_device_id, 'esp32:000000000000')
+        self.assertEqual(routes[5].listen_port, 5008)
+
+    def test_slave_route_cli_rejects_overflow_duplicates_and_bad_shapes(self):
+        parser = relay_module.build_arg_parser()
+        seven = [
+            item
+            for index in range(7)
+            for item in (
+                '--slave-route',
+                f'192.168.4.{index + 3}:{5003 + index}:esp32:{index:012x}',
+            )
+        ]
+        with self.assertRaises(ValueError):
+            relay_module.parse_slave_routes(parser.parse_args(seven))
+
+        duplicate_host = parser.parse_args([
+            '--slave-route', '192.168.4.3:5003:esp32:aaaaaaaaaaaa',
+            '--slave-route', '192.168.4.3:5004:esp32:bbbbbbbbbbbb',
+        ])
+        with self.assertRaises(ValueError):
+            relay_module.parse_slave_routes(duplicate_host)
+
+        duplicate_port = parser.parse_args([
+            '--slave-route', '192.168.4.3:5003:esp32:aaaaaaaaaaaa',
+            '--slave-route', '192.168.4.4:5003:esp32:bbbbbbbbbbbb',
+        ])
+        with self.assertRaises(ValueError):
+            relay_module.parse_slave_routes(duplicate_port)
+
+        duplicate_id = parser.parse_args([
+            '--slave-route', '192.168.4.3:5003:esp32:aaaaaaaaaaaa',
+            '--slave-route', '192.168.4.4:5004:esp32:aaaaaaaaaaaa',
+        ])
+        with self.assertRaises(ValueError):
+            relay_module.parse_slave_routes(duplicate_id)
+
+        clashes_master = parser.parse_args([
+            '--esp-host', '192.168.4.1',
+            '--listen-port', '5002',
+            '--slave-route', '192.168.4.1:5003:esp32:aaaaaaaaaaaa',
+        ])
+        with self.assertRaises(ValueError):
+            relay_module.parse_slave_routes(clashes_master)
+
+    def test_singular_slave_host_compatibility_still_parses_one_route(self):
+        parser = relay_module.build_arg_parser()
+        args = parser.parse_args([
+            '--slave-host', '192.168.4.3',
+            '--slave-listen-port', '5003',
+            '--slave-expected-device-id', 'esp32:112233445566',
+        ])
+        routes = relay_module.parse_slave_routes(args)
+        self.assertEqual(len(routes), 1)
+        self.assertEqual(routes[0].host, '192.168.4.3')
+        self.assertEqual(routes[0].listen_port, 5003)
+        self.assertEqual(routes[0].expected_device_id, PEER_ONE_ID)
+
+    def test_endpoint_refresh_keeps_device_id_and_remaps_udp_host(self):
+        registry = relay_module.SessionIdentityRegistry()
+        relay = relay_module.StepEspRelay(
+            'slave',
+            '192.168.4.3',
+            5000,
+            expected_device_id=SELF_ID,
+            identity_registry=registry,
+        )
+        session = registry.bind(_complete_inventory(endpoint='192.168.4.3').session)
+        relay.session_identity = session
+        router = relay_module.UdpRouter(
+            55001,
+            {'192.168.4.3': relay},
+        )
+        remapped = relay_module.remap_relay_endpoint(
+            router,
+            relay,
+            registry,
+            new_endpoint='192.168.4.9',
+        )
+        self.assertIs(remapped, session)
+        self.assertEqual(session.device_id, SELF_ID)
+        self.assertEqual(session.current_endpoint, '192.168.4.9')
+        self.assertEqual(relay.esp_host, '192.168.4.9')
+        self.assertIn('192.168.4.9', router.routes)
+        self.assertNotIn('192.168.4.3', router.routes)
+        self.assertIn('192.168.4.9', router.queues)
+        self.assertNotIn('192.168.4.3', router.queues)
+        self.assertTrue(router.route_datagram('192.168.4.9', b'ok'))
+        self.assertFalse(router.route_datagram('192.168.4.3', b'stale'))
+
+    def test_new_identity_at_old_endpoint_marks_prior_mac_offline(self):
+        registry = relay_module.SessionIdentityRegistry()
+        old_relay = relay_module.StepEspRelay(
+            'slave',
+            '192.168.4.3',
+            5000,
+            expected_device_id=SELF_ID,
+            identity_registry=registry,
+        )
+        old = registry.bind(_complete_inventory(endpoint='192.168.4.3').session)
+        old_relay.session_identity = old
+        router = relay_module.UdpRouter(55001, {'192.168.4.3': old_relay})
+        new_id = 'esp32:010203040506'
+        new_relay = relay_module.StepEspRelay(
+            'slave',
+            '192.168.4.3',
+            5000,
+            expected_device_id=new_id,
+            identity_registry=registry,
+        )
+        new = registry.bind(
+            _complete_inventory(new_id, endpoint='192.168.4.3').session
+        )
+        new_relay.session_identity = new
+        relay_module.remap_relay_endpoint(
+            router,
+            new_relay,
+            registry,
+            new_endpoint='192.168.4.3',
+        )
+        self.assertIsNone(old.current_endpoint)
+        self.assertEqual(new.current_endpoint, '192.168.4.3')
+        self.assertEqual(router.routes['192.168.4.3'], new_relay)
+        self.assertEqual(set(registry.identities), {SELF_ID, new_id})
+
+
 class StepEspUdpRelayTests(unittest.IsolatedAsyncioTestCase):
+    async def test_three_source_ips_demux_independently(self):
+        hosts = ('192.168.4.1', '192.168.4.3', '192.168.4.5')
+        relays = {
+            hosts[0]: relay_module.StepEspRelay('master', hosts[0], 5000),
+            hosts[1]: relay_module.StepEspRelay('slave', hosts[1], 5000),
+            hosts[2]: relay_module.StepEspRelay('slave', hosts[2], 5000),
+        }
+        writers = {host: _Writer() for host in hosts}
+        for host, relay in relays.items():
+            relay._downstream_writer = writers[host]
+            relay._udp_enabled.set()
+        router = relay_module.UdpRouter(55001, relays)
+        workers = [
+            asyncio.create_task(router._forward_route(host)) for host in hosts
+        ]
+        frames = {
+            hosts[0]: bytes([0xA1]) * 40,
+            hosts[1]: bytes([0xB2]) * 40,
+            hosts[2]: bytes([0xC3]) * 40,
+        }
+        try:
+            for host, frame in frames.items():
+                self.assertTrue(router.route_datagram(host, frame))
+            await asyncio.wait_for(
+                asyncio.gather(*(router.queues[host].join() for host in hosts)),
+                timeout=0.5,
+            )
+        finally:
+            for worker in workers:
+                worker.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+        for host, frame in frames.items():
+            self.assertEqual(bytes(writers[host].data), frame)
+
     async def test_source_ip_routes_master_and_slave_frames_independently(self):
         master = relay_module.StepEspRelay('master', '192.168.4.1', 5000)
         slave = relay_module.StepEspRelay('slave', '192.168.4.3', 5000)
