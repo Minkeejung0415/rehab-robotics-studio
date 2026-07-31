@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Multi-Sensor Bone Mapping
-status: executing
-stopped_at: Completed 21-03-PLAN.md
-last_updated: "2026-07-31T19:15:00.000Z"
+status: verifying
+stopped_at: Completed 21-04-PLAN.md
+last_updated: "2026-07-31T18:58:23.679Z"
 last_activity: 2026-07-31
 progress:
   total_phases: 6
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 10
-  completed_plans: 9
-  percent: 90
+  completed_plans: 10
+  percent: 33
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: `.planning/PROJECT.md` (updated 2026-07-30)
 
 Phase: 21 (N-Route Relay and Canonical ROS Fleet) — EXECUTING
 Plan: 4 of 4
-Status: 21-03 complete — ready for 21-04
+Status: Phase complete — ready for verification
 Last activity: 2026-07-31
 
-Progress: [█████████░] 90%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -54,6 +54,8 @@ Progress: [█████████░] 90%
 
 - v1.5 Phases 16-19 complete
 - Existing phase artifacts remain preserved
+
+| Phase 21 P04 | 35min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -85,6 +87,8 @@ Decisions are logged in `PROJECT.md`. Current milestone decisions:
 - [Phase 21]: Fleet String aliases mirror /esp/raw|status only; typed /esp32/{master,slave}/imu stay OpenSim consumers (no /esp32/mac_ invent).
 - [Phase 21]: Empty alias params resolve from first verified master/slave role — never TCP connect order.
 - [Phase 21]: Wireless launcher starts one fleet_bridge_node with routes_json + alias_* params.
+- [Phase 21]: Relay drop_count is per-host; fleet registry/health expose drops+reconnects without counting initial configure bind as reconnect.
+- [Phase 21]: run_isolated_session_tasks is the cancel boundary so sibling session failures never stop acquisition/health/Identify/recording peers.
 
 ### Pending Todos
 
@@ -109,6 +113,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-07-31T19:15:00.000Z
-Stopped at: Completed 21-03-PLAN.md
+Last session: 2026-07-31T18:58:23.666Z
+Stopped at: Completed 21-04-PLAN.md
 Resume file: None
