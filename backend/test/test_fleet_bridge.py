@@ -788,5 +788,154 @@ class FleetDropReconnectDiagnosticsTest(unittest.TestCase):
         self.assertEqual(snapshot['drops']['queue_maxsize'], 256)
 
 
+class FleetFailureIsolationTest(unittest.TestCase):
+    """D-21-09/11/12: sibling failure must not stop healthy routes (no STEP_ESP32)."""
+
+    def _routes(self):
+        return fleet.parse_routes_json(json.dumps([
+            {
+                'host': '192.168.4.1',
+                'port': 5002,
+                'expected_device_id': 'esp32:aabbccddeeff',
+                'role': 'master',
+            },
+            {
+                'host': '192.168.4.3',
+                'port': 5003,
+                'expected_device_id': 'esp32:1111ccddeeff',
+                'role': 'slave',
+            },
+            {
+                'host': '192.168.4.5',
+                'port': 5004,
+                'expected_device_id': 'esp32:2222ccddeeff',
+                'role': 'slave',
+            },
+        ]))
+
+    def _manager(self, published=None):
+        published = published if published is not None else []
+
+        class StubPublisher:
+            def __init__(self, topic: str) -> None:
+                self.topic = topic
+
+            def publish(self, message) -> None:
+                published.append((self.topic, getattr(message, 'data', message)))
+
+        def create_publisher(msg_type, topic, qos):
+            return StubPublisher(topic)
+
+        string_type = type('String', (), {'__init__': lambda self: setattr(self, 'data', '')})
+        return fleet.FleetSessionManager(
+            self._routes(),
+            create_publisher=create_publisher,
+            string_message_type=string_type,
+            alias_master_device_id='esp32:aabbccddeeff',
+            alias_slave_device_id='esp32:1111ccddeeff',
+        ), published
+
+    def test_slave_b_reconnect_does_not_stop_master_or_slave_a_publish(self):
+        manager, published = self._manager()
+        master, slave_a, slave_b = manager.sessions
+        manager.on_session_bound(master, 'esp32:aabbccddeeff', last_seen_us=1)
+        manager.on_session_bound(slave_a, 'esp32:1111ccddeeff', last_seen_us=2)
+        manager.on_session_bound(slave_b, 'esp32:2222ccddeeff', last_seen_us=3)
+
+        manager.publish_session_raw(master, '{"frame":"m1"}')
+        manager.publish_session_health(master, '{"connection_state":"connected"}')
+        manager.publish_session_raw(slave_a, '{"frame":"a1"}')
+
+        manager.on_session_reconnecting(slave_b, last_seen_us=4)
+        doc = manager.build_registry()
+        by_id = {row['device_id']: row for row in doc['devices']}
+        self.assertEqual(by_id['esp32:2222ccddeeff']['route'], 'reconnecting')
+        self.assertEqual(by_id['esp32:aabbccddeeff']['route'], 'connected')
+        self.assertEqual(by_id['esp32:1111ccddeeff']['route'], 'connected')
+
+        published.clear()
+        manager.publish_session_raw(master, '{"frame":"m2"}')
+        manager.publish_session_health(master, '{"connection_state":"connected","ok":1}')
+        manager.publish_session_raw(slave_a, '{"frame":"a2"}')
+        manager.publish_session_health(slave_a, '{"connection_state":"connected","ok":1}')
+        by_topic = {topic: payload for topic, payload in published}
+        self.assertEqual(by_topic['/esp/raw/mac_aabbccddeeff'], '{"frame":"m2"}')
+        self.assertEqual(by_topic['/esp/raw/master'], '{"frame":"m2"}')
+        self.assertEqual(by_topic['/esp/raw/mac_1111ccddeeff'], '{"frame":"a2"}')
+        self.assertEqual(by_topic['/esp/status/mac_aabbccddeeff'], '{"connection_state":"connected","ok":1}')
+        self.assertEqual(by_topic['/esp/status/mac_1111ccddeeff'], '{"connection_state":"connected","ok":1}')
+        # Failed slave B must not appear in post-failure publishes.
+        self.assertNotIn('/esp/raw/mac_2222ccddeeff', by_topic)
+
+    def test_dhcp_ip_remap_keeps_canonical_mac_topic_names(self):
+        manager, published = self._manager()
+        master = manager.sessions[0]
+        manager.on_session_bound(master, 'esp32:aabbccddeeff', last_seen_us=1)
+        before = list(master.canonical_topics())
+        self.assertEqual(before, [
+            '/esp/raw/mac_aabbccddeeff',
+            '/esp/status/mac_aabbccddeeff',
+        ])
+        # DHCP refresh: endpoint host changes, identity/topic token stay.
+        master.host = '192.168.4.17'
+        manager.registry._devices['esp32:aabbccddeeff'].host = '192.168.4.17'
+        manager.publish_session_raw(master, '{"after_dhcp":1}')
+        self.assertEqual(master.canonical_topics(), before)
+        by_topic = {topic: payload for topic, payload in published}
+        self.assertEqual(by_topic['/esp/raw/mac_aabbccddeeff'], '{"after_dhcp":1}')
+        self.assertEqual(by_topic['/esp/raw/master'], '{"after_dhcp":1}')
+        by_id = {row['device_id']: row for row in manager.build_registry()['devices']}
+        row = by_id['esp32:aabbccddeeff']
+        self.assertEqual(row['topic_token'], 'mac_aabbccddeeff')
+        self.assertEqual(row['endpoint']['host'], '192.168.4.17')
+
+    def test_tcp_death_retains_offline_mac_with_last_seen(self):
+        manager, _published = self._manager()
+        slave_b = manager.sessions[2]
+        manager.on_session_bound(slave_b, 'esp32:2222ccddeeff', last_seen_us=10)
+        manager.on_session_offline(slave_b, last_seen_us=99)
+        doc = manager.build_registry()
+        by_id = {row['device_id']: row for row in doc['devices']}
+        self.assertIn('esp32:2222ccddeeff', by_id)
+        self.assertIn(by_id['esp32:2222ccddeeff']['route'], ('offline', 'stale'))
+        self.assertEqual(by_id['esp32:2222ccddeeff']['last_seen_us'], 99)
+        # Configured siblings remain present even if never bound this cycle.
+        self.assertIn('esp32:aabbccddeeff', by_id)
+        self.assertIn('esp32:1111ccddeeff', by_id)
+
+    def test_isolated_supervisor_keeps_healthy_task_after_sibling_error(self):
+        import asyncio
+
+        events: list[str] = []
+
+        async def healthy() -> None:
+            events.append('healthy-start')
+            await asyncio.sleep(0.05)
+            events.append('healthy-done')
+
+        async def failing() -> None:
+            events.append('fail-start')
+            raise RuntimeError('simulated slave B TCP death')
+
+        async def run() -> None:
+            await fleet.run_isolated_session_tasks([failing, healthy])
+
+        asyncio.run(run())
+        self.assertIn('fail-start', events)
+        self.assertIn('healthy-start', events)
+        self.assertIn('healthy-done', events)
+
+    def test_supervisor_source_avoids_global_gather_cancel(self):
+        source = (
+            Path(__file__).parents[1]
+            / 'rehab_robotics_bridge'
+            / 'fleet_bridge_node.py'
+        ).read_text(encoding='utf-8')
+        self.assertIn('run_isolated_session_tasks', source)
+        self.assertIn('return_exceptions=True', source)
+        # Recording/acquisition must not share a fatal sibling cancel path.
+        self.assertIn('CancelledError', source)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -810,6 +810,36 @@ class StepEspUdpRelayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(router.drop_count(host_new), 1)
         self.assertEqual(router.drop_count(host_old), 0)
 
+    async def test_failed_route_overflow_does_not_stop_sibling_forwarding(self):
+        """D-21-09: one route's queue pressure must not starve another."""
+        host_a = '192.168.4.1'
+        host_b = '192.168.4.3'
+        live = relay_module.StepEspRelay('slave', host_b, 5000)
+        stalled = relay_module.StepEspRelay('master', host_a, 5000)
+        live_writer = _Writer()
+        live._downstream_writer = live_writer
+        live._udp_enabled.set()
+        stalled._downstream_writer = _Writer()
+        router = relay_module.UdpRouter(
+            55001,
+            {host_a: stalled, host_b: live},
+        )
+        worker = asyncio.create_task(router._forward_route(host_b))
+        try:
+            for index in range(256):
+                router.route_datagram(host_a, bytes([index % 256]))
+            router.route_datagram(host_a, b'overflow')
+            self.assertEqual(router.drop_count(host_a), 1)
+            self.assertEqual(router.drop_count(host_b), 0)
+            self.assertTrue(router.route_datagram(host_b, b'sibling-live'))
+            await asyncio.wait_for(router.queues[host_b].join(), timeout=0.5)
+        finally:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+        self.assertEqual(bytes(live_writer.data), b'sibling-live')
+        self.assertEqual(router.drop_count(host_a), 1)
+        self.assertEqual(router.drop_count(host_b), 0)
+
 
 if __name__ == '__main__':
     unittest.main()

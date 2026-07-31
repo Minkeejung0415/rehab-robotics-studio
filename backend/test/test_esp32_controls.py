@@ -498,6 +498,46 @@ class BridgeIdentityAndIdentifyTests(unittest.TestCase):
             ],
         )
 
+    def test_identify_completes_while_unrelated_fleet_session_is_reconnecting(self):
+        """D-21-09 / T-21-15: Identify stays MAC-targeted on healthy sessions."""
+        from backend.test.test_fleet_bridge import _load_fleet_module
+
+        fleet_mod = _load_fleet_module()
+
+        async def exercise():
+            routes = fleet_mod.parse_routes_json(json.dumps([
+                {
+                    'host': '192.168.4.1',
+                    'port': 5002,
+                    'expected_device_id': 'esp32:aabbccddeeff',
+                    'role': 'master',
+                },
+                {
+                    'host': '192.168.4.3',
+                    'port': 5003,
+                    'expected_device_id': 'esp32:1111ccddeeff',
+                    'role': 'slave',
+                },
+            ]))
+            manager = fleet_mod.FleetSessionManager(routes)
+            manager.on_session_bound(manager.sessions[0], 'esp32:aabbccddeeff', last_seen_us=1)
+            manager.on_session_bound(manager.sessions[1], 'esp32:1111ccddeeff', last_seen_us=2)
+            manager.on_session_reconnecting(manager.sessions[1], last_seen_us=3)
+
+            node = _make_identify_stub()
+            await node._identify_responses.put(_identify_reply('confirmed'))
+            result = await node._send_identify_command(
+                'blink-1', 'esp32:aabbccddeeff', 3000)
+            doc = manager.build_registry()
+            by_id = {row['device_id']: row for row in doc['devices']}
+            return node, result, by_id
+
+        node, result, by_id = asyncio.run(exercise())
+        self.assertEqual(result['outcome'], 'confirmed')
+        self.assertEqual(node._last_confirmed_identify['command_id'], 'blink-1')
+        self.assertEqual(by_id['esp32:1111ccddeeff']['route'], 'reconnecting')
+        self.assertEqual(by_id['esp32:aabbccddeeff']['route'], 'connected')
+
     def test_identify_maps_every_nonconfirmed_outcome_without_confirmed_mutation(self):
         async def exercise(outcome):
             node = _make_identify_stub()
