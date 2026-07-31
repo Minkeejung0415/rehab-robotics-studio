@@ -75,7 +75,7 @@ Plans:
 Plans:
 - [x] 21-01-PLAN.md — Multi-slave relay + launcher discovery (route all verified ≤6)
 - [x] 21-02-PLAN.md — Fleet manager: canonical mac_ topics + layered registry
-- [ ] 21-03-PLAN.md — Legacy aliases + pair health + single-process launch params
+- [x] 21-03-PLAN.md — Legacy aliases + pair health + single-process launch params
 - [ ] 21-04-PLAN.md — Isolation diagnostics (drop_count, reconnect) + deterministic tests
 
 ### Phase 22: Model Catalog, Mapping Store, and Transactional Contracts
