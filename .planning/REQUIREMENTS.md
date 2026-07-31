@@ -14,8 +14,8 @@
 
 ### Fleet Discovery and Routing
 
-- [ ] **FLEET-01**: Operator can see the Master and every currently or previously known Slave in one MAC-keyed fleet registry with separate discovery, command, route, orientation freshness, synchronization, and rate states.
-- [ ] **FLEET-02**: Each routed device publishes canonical per-MAC IMU and health data while the existing fixed Master/Slave topics remain compatible aliases bound to explicit device identities.
+- [x] **FLEET-01**: Operator can see the Master and every currently or previously known Slave in one MAC-keyed fleet registry with separate discovery, command, route, orientation freshness, synchronization, and rate states.
+- [x] **FLEET-02**: Each routed device publishes canonical per-MAC IMU and health data while the existing fixed Master/Slave topics remain compatible aliases bound to explicit device identities.
 - [x] **FLEET-03**: A failed, stale, or reconnecting device route does not stop acquisition, health, Identify, or recording for other devices, and queue/drop/reconnect diagnostics remain bounded and visible.
 
 ### OpenSim Model Catalog
@@ -80,8 +80,8 @@
 | ID-01 | Phase 20 | Complete |
 | ID-02 | Phase 21 | Complete |
 | ID-03 | Phase 20 | Complete |
-| FLEET-01 | Phase 21 | Pending |
-| FLEET-02 | Phase 21 | Pending |
+| FLEET-01 | Phase 21 | Complete |
+| FLEET-02 | Phase 21 | Complete |
 | FLEET-03 | Phase 21 | Complete |
 | MODEL-01 | Phase 22 | Pending |
 | MODEL-02 | Phase 22 | Pending |

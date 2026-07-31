@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Multi-Sensor Bone Mapping
 status: executing
-stopped_at: Completed 21-01-PLAN.md
-last_updated: "2026-07-31T18:40:00.000Z"
+stopped_at: Completed 21-02-PLAN.md
+last_updated: "2026-07-31T18:57:00.000Z"
 last_activity: 2026-07-31
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 10
-  completed_plans: 7
-  percent: 70
+  completed_plans: 8
+  percent: 80
 ---
 
 # Project State
@@ -26,17 +26,17 @@ See: `.planning/PROJECT.md` (updated 2026-07-30)
 ## Current Position
 
 Phase: 21 (N-Route Relay and Canonical ROS Fleet) — EXECUTING
-Plan: 2 of 4
-Status: 21-01 complete — ready for 21-02
+Plan: 3 of 4
+Status: 21-02 complete — ready for 21-03
 Last activity: 2026-07-31
 
-Progress: [███████░░░] 70%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
 **Current milestone:**
 
-  - Plans completed: 7
+  - Plans completed: 8
 - Phases completed: 1/6
 
 | Plan | Duration | Tasks | Files |
@@ -47,6 +47,7 @@ Progress: [███████░░░] 70%
 | Phase 20 P05 | 8 min | 2 tasks | 4 files |
 | Phase 20 P06 | 2 min | 1 tasks | 1 files |
 | Phase 21 P01 | 25 min | 2 tasks | 4 files |
+| Phase 21 P02 | 35 min | 2 tasks | 4 files |
 
 **Prior milestone reference:**
 
@@ -77,6 +78,9 @@ Decisions are logged in `PROJECT.md`. Current milestone decisions:
 - [Phase 21]: Chose repeatable `--slave-route HOST:LISTEN_PORT:EXPECTED_DEVICE_ID` over parallel host/port/id lists for unambiguous N-route CLI.
 - [Phase 21]: Left dual ROS bridge spawn on first slave transitional; relay already receives all N routes (fleet consolidation in 21-02/03).
 - [Phase 21]: Contiguous listen ports = SlaveRelayPort + index (default 5003..).
+- [Phase 21]: Primary entry is fleet_bridge_node; esp32_bridge_node remains thin single-session wrapper.
+- [Phase 21]: Registry schema oe_esp32.fleet_registry.v1 with layered discovery/command/route/freshness/sync/rate.
+- [Phase 21]: Alias republish and pair health deferred to plan 21-03.
 
 ### Pending Todos
 
@@ -101,6 +105,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-07-31T18:40:00.000Z
-Stopped at: Completed 21-01-PLAN.md
+Last session: 2026-07-31T18:57:00.000Z
+Stopped at: Completed 21-02-PLAN.md
 Resume file: None
