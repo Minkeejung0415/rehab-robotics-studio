@@ -15,13 +15,14 @@ from dataclasses import dataclass, field
 import re
 import socket
 import time
-from typing import Iterable
+from typing import Iterable, Sequence
 
 
 IDENTITY_PROTOCOL = 'id-v1'
 MAX_IDENTITY_LINE_BYTES = 768
 MAX_IDENTITY_HANDSHAKE_BYTES = 16_384
 MAX_IDENTITY_PEERS = 64
+MAX_SLAVE_ROUTES = 6
 CONTROL_LOG_PREFIXES = (
     b'REC ', b'SLAVE_STATUS ', b'SD_STATUS ', b'SD_FINAL ',
     b'STOPPED', b'OK FREQ:', b'ERROR FREQ:',
@@ -695,11 +696,29 @@ class UdpRouter:
 
     def __init__(self, udp_port: int, routes: dict[str, StepEspRelay]) -> None:
         self.udp_port = udp_port
-        self.routes = routes
+        self.routes = dict(routes)
         self.queues = {
             host: asyncio.Queue[bytes](maxsize=256) for host in routes
         }
         self._unknown_sources: set[str] = set()
+
+    def remap_host(self, old_host: str, new_host: str, relay: StepEspRelay) -> None:
+        """Move one route/queue to a refreshed ESP source IP without dropping identity."""
+        if old_host == new_host:
+            self.routes[new_host] = relay
+            if new_host not in self.queues:
+                self.queues[new_host] = asyncio.Queue[bytes](maxsize=256)
+            return
+        if new_host in self.routes and self.routes[new_host] is not relay:
+            raise ValueError(
+                f'cannot remap {old_host} onto occupied UDP host {new_host}'
+            )
+        queue = self.queues.pop(old_host, None)
+        self.routes.pop(old_host, None)
+        if queue is None:
+            queue = asyncio.Queue[bytes](maxsize=256)
+        self.routes[new_host] = relay
+        self.queues[new_host] = queue
 
     async def _forward_route(self, host: str) -> None:
         relay = self.routes[host]
@@ -707,6 +726,17 @@ class UdpRouter:
         while True:
             data = await queue.get()
             try:
+                active_host = next(
+                    (
+                        candidate
+                        for candidate, mapped in self.routes.items()
+                        if mapped is relay
+                    ),
+                    host,
+                )
+                if active_host != host:
+                    queue = self.queues[active_host]
+                    host = active_host
                 await relay.forward_udp(data)
             finally:
                 queue.task_done()
@@ -732,7 +762,7 @@ class UdpRouter:
         )
         loop = asyncio.get_running_loop()
         workers = [
-            asyncio.create_task(self._forward_route(host)) for host in self.routes
+            asyncio.create_task(self._forward_route(host)) for host in list(self.routes)
         ]
         try:
             while True:
@@ -751,6 +781,109 @@ class UdpRouter:
             udp_sock.close()
 
 
+@dataclass(frozen=True)
+class SlaveRouteConfig:
+    host: str
+    listen_port: int
+    expected_device_id: str | None
+    esp_port: int = 5000
+
+
+def _parse_slave_route_spec(spec: str, *, esp_port: int) -> SlaveRouteConfig:
+    parts = spec.split(':')
+    if len(parts) < 3:
+        raise ValueError(
+            'slave route must be HOST:LISTEN_PORT:EXPECTED_DEVICE_ID'
+        )
+    host = parts[0]
+    listen_port_text = parts[1]
+    device_raw = ':'.join(parts[2:])
+    if not host:
+        raise ValueError('slave route host must not be empty')
+    if not listen_port_text.isascii() or not listen_port_text.isdecimal():
+        raise ValueError('slave route listen port must be an integer')
+    listen_port = int(listen_port_text)
+    if listen_port <= 0 or listen_port > 65535:
+        raise ValueError('slave route listen port is out of range')
+    expected = normalize_device_id(device_raw) if device_raw else None
+    return SlaveRouteConfig(
+        host=host,
+        listen_port=listen_port,
+        expected_device_id=expected,
+        esp_port=esp_port,
+    )
+
+
+def parse_slave_routes(args: argparse.Namespace) -> list[SlaveRouteConfig]:
+    """Normalize repeatable --slave-route and singular --slave-host forms."""
+    routes: list[SlaveRouteConfig] = []
+    route_specs: Sequence[str] = getattr(args, 'slave_route', None) or []
+    for spec in route_specs:
+        routes.append(
+            _parse_slave_route_spec(spec, esp_port=args.slave_esp_port)
+        )
+    if args.slave_host:
+        routes.append(
+            SlaveRouteConfig(
+                host=args.slave_host,
+                listen_port=args.slave_listen_port,
+                expected_device_id=(
+                    normalize_device_id(args.slave_expected_device_id)
+                    if args.slave_expected_device_id
+                    else None
+                ),
+                esp_port=args.slave_esp_port,
+            )
+        )
+    if len(routes) > MAX_SLAVE_ROUTES:
+        raise ValueError(
+            f'slave route count {len(routes)} exceeds firmware peer slot cap '
+            f'{MAX_SLAVE_ROUTES}'
+        )
+    hosts = [route.host for route in routes]
+    ports = [route.listen_port for route in routes]
+    device_ids = [
+        route.expected_device_id
+        for route in routes
+        if route.expected_device_id is not None
+    ]
+    if len(set(hosts)) != len(hosts):
+        raise ValueError('slave route hosts must be unique')
+    if len(set(ports)) != len(ports):
+        raise ValueError('slave listen ports must be unique')
+    if len(set(device_ids)) != len(device_ids):
+        raise ValueError('slave expected device identities must be unique')
+    if args.esp_host in hosts:
+        raise ValueError('master and slave ESP hosts must be different')
+    if args.listen_port in ports:
+        raise ValueError('master and slave WSL listen ports must be different')
+    return routes
+
+
+def remap_relay_endpoint(
+    router: UdpRouter,
+    relay: StepEspRelay,
+    registry: SessionIdentityRegistry,
+    *,
+    new_endpoint: str,
+) -> SessionIdentity:
+    """Refresh ESP host/IP while keeping the canonical device_id binding."""
+    if not new_endpoint:
+        raise ValueError('new endpoint must not be empty')
+    old_endpoint = relay.esp_host
+    session = relay.session_identity
+    if session.verified and session.device_id is not None:
+        session.current_endpoint = new_endpoint
+        rebound = registry.bind(session)
+        relay.session_identity = rebound
+        session = rebound
+    else:
+        session.current_endpoint = new_endpoint
+    relay.esp_host = new_endpoint
+    router.remap_host(old_endpoint, new_endpoint, relay)
+    return session
+
+
 async def run_relays(args: argparse.Namespace) -> None:
     registry = SessionIdentityRegistry()
     master = StepEspRelay(
@@ -760,41 +893,67 @@ async def run_relays(args: argparse.Namespace) -> None:
         expected_device_id=args.expected_device_id,
         identity_registry=registry,
     )
-    routes = {args.esp_host: master}
+    routes: dict[str, StepEspRelay] = {args.esp_host: master}
     tasks = [master.serve(args.listen_host, args.listen_port)]
 
-    if args.slave_host:
-        if args.slave_host == args.esp_host:
-            raise ValueError('master and slave ESP hosts must be different')
-        if args.slave_listen_port == args.listen_port:
-            raise ValueError('master and slave WSL listen ports must be different')
+    for index, slave_route in enumerate(parse_slave_routes(args)):
         slave = StepEspRelay(
             'slave',
-            args.slave_host,
-            args.slave_esp_port,
-            expected_device_id=args.slave_expected_device_id,
+            slave_route.host,
+            slave_route.esp_port,
+            expected_device_id=slave_route.expected_device_id,
             identity_registry=registry,
         )
-        routes[args.slave_host] = slave
-        tasks.append(slave.serve(args.listen_host, args.slave_listen_port))
+        routes[slave_route.host] = slave
+        tasks.append(
+            slave.serve(args.listen_host, slave_route.listen_port)
+        )
+        print(
+            f'[relay:config] slave[{index}] host={slave_route.host} '
+            f'listen={slave_route.listen_port} '
+            f'expected={slave_route.expected_device_id}',
+            flush=True,
+        )
 
     router = UdpRouter(args.udp_port, routes)
     await asyncio.gather(router.serve(), *tasks)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            'Relay STEP_ESP32 master plus up to '
+            f'{MAX_SLAVE_ROUTES} identity-bound slave TCP/UDP routes.'
+        )
+    )
     parser.add_argument('--esp-host', default='192.168.4.1')
     parser.add_argument('--esp-port', type=int, default=5000)
     parser.add_argument('--udp-port', type=int, default=55001)
     parser.add_argument('--listen-host', default='0.0.0.0')
     parser.add_argument('--listen-port', type=int, default=5002)
     parser.add_argument('--expected-device-id')
-    parser.add_argument('--slave-host')
+    parser.add_argument(
+        '--slave-route',
+        action='append',
+        default=[],
+        metavar='HOST:LISTEN_PORT:EXPECTED_DEVICE_ID',
+        help=(
+            'Repeatable slave route (max '
+            f'{MAX_SLAVE_ROUTES}). Prefer this form for N slaves.'
+        ),
+    )
+    parser.add_argument(
+        '--slave-host',
+        help='Singular one-slave compatibility host (optional with --slave-route).',
+    )
     parser.add_argument('--slave-esp-port', type=int, default=5000)
     parser.add_argument('--slave-listen-port', type=int, default=5003)
     parser.add_argument('--slave-expected-device-id')
-    asyncio.run(run_relays(parser.parse_args()))
+    return parser
+
+
+def main() -> None:
+    asyncio.run(run_relays(build_arg_parser().parse_args()))
 
 
 if __name__ == '__main__':
