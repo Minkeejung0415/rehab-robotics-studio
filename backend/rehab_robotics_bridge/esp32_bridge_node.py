@@ -624,6 +624,8 @@ class Esp32BridgeNode(Node):
             self._identify_device,
         )
         if self._node_id == 'master':
+            # USB/legacy single-session pair view. Wireless fleet mode publishes
+            # identity-bound /esp/status/pair from fleet_bridge_node instead.
             self._pub_pair_health = self.create_publisher(String, '/esp/status/pair', 10)
             self._slave_health_subscription = self.create_subscription(
                 String, '/esp/status/slave', self._on_slave_health, 10,

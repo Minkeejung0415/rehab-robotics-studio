@@ -21,6 +21,47 @@ from rehab_robotics_bridge.esp32_bridge_node import (
 FLEET_REGISTRY_TOPIC = '/esp/fleet/registry'
 FLEET_REGISTRY_SCHEMA = 'oe_esp32.fleet_registry.v1'
 
+# Compatibility aliases (COMP-01 / FLEET-02): same String payload as canonical mac_ topics.
+# Typed OpenSim IMU (/esp32/{master,slave}/imu) is NOT mirrored here — those stay on
+# stream publishers / OpenSim launch consumers; fleet owns JSON raw/status aliases only.
+ALIAS_RAW_MASTER_TOPIC = '/esp/raw/master'
+ALIAS_RAW_SLAVE_TOPIC = '/esp/raw/slave'
+ALIAS_STATUS_MASTER_TOPIC = '/esp/status/master'
+ALIAS_STATUS_SLAVE_TOPIC = '/esp/status/slave'
+PAIR_HEALTH_TOPIC = '/esp/status/pair'
+PAIR_HEALTH_SCHEMA = 'oe_esp32.pair_health.v1'
+
+
+def build_pair_health(
+    master_snapshot: dict[str, Any] | None,
+    slave_snapshot: dict[str, Any] | None,
+    *,
+    timestamp_us: int | None = None,
+) -> dict[str, Any]:
+    """Build oe_esp32.pair_health.v1 from alias-bound master/slave health snapshots."""
+    if timestamp_us is None:
+        if isinstance(master_snapshot, dict) and isinstance(
+            master_snapshot.get('timestamp_us'), int
+        ):
+            timestamp_us = master_snapshot['timestamp_us']
+        else:
+            timestamp_us = time.monotonic_ns() // 1000
+    master_ok = (
+        isinstance(master_snapshot, dict)
+        and master_snapshot.get('connection_state') == 'connected'
+    )
+    slave_ok = (
+        isinstance(slave_snapshot, dict)
+        and slave_snapshot.get('connection_state') == 'connected'
+    )
+    return {
+        'schema': PAIR_HEALTH_SCHEMA,
+        'timestamp_us': timestamp_us,
+        'master': master_snapshot,
+        'slave': slave_snapshot,
+        'pair_available': bool(master_ok and slave_ok),
+    }
+
 
 def canonical_topic_paths(device_id: str) -> tuple[str, str]:
     """Return identity-stable raw and status topic paths for a device."""
@@ -317,7 +358,7 @@ class FleetDeviceSession:
 
 
 class FleetSessionManager:
-    """Owns N identity sessions and the shared layered registry (ROS-free core)."""
+    """Owns N identity sessions, registry, and explicit Master/Slave aliases."""
 
     def __init__(
         self,
@@ -332,13 +373,39 @@ class FleetSessionManager:
         self.registry = FleetRegistryStore()
         self.revision = 0
         self.sessions: list[FleetDeviceSession] = []
-        self._alias_master = (
+        self._create_publisher = create_publisher
+        self._string_type = string_message_type
+        self._alias_master_param = (
             normalize_device_id(alias_master_device_id) if alias_master_device_id else ''
         )
-        self._alias_slave = (
+        self._alias_slave_param = (
             normalize_device_id(alias_slave_device_id) if alias_slave_device_id else ''
         )
+        self._alias_master = self._alias_master_param
+        self._alias_slave = self._alias_slave_param
         self._on_registry_change = on_registry_change
+        self._online_devices: set[str] = set()
+        self._alias_raw_master_pub: Any = None
+        self._alias_raw_slave_pub: Any = None
+        self._alias_status_master_pub: Any = None
+        self._alias_status_slave_pub: Any = None
+        self._pair_health_pub: Any = None
+        if create_publisher is not None:
+            self._alias_raw_master_pub = create_publisher(
+                string_message_type, ALIAS_RAW_MASTER_TOPIC, 10
+            )
+            self._alias_raw_slave_pub = create_publisher(
+                string_message_type, ALIAS_RAW_SLAVE_TOPIC, 10
+            )
+            self._alias_status_master_pub = create_publisher(
+                string_message_type, ALIAS_STATUS_MASTER_TOPIC, 10
+            )
+            self._alias_status_slave_pub = create_publisher(
+                string_message_type, ALIAS_STATUS_SLAVE_TOPIC, 10
+            )
+            self._pair_health_pub = create_publisher(
+                string_message_type, PAIR_HEALTH_TOPIC, 10
+            )
         for route in routes:
             session = FleetDeviceSession(
                 host=route['host'],
@@ -358,6 +425,9 @@ class FleetSessionManager:
             row.discovery = 'configured'
             self.sessions.append(session)
 
+    def aliases_bound(self) -> bool:
+        return bool(self._alias_master and self._alias_slave)
+
     def build_registry(self) -> dict[str, Any]:
         return self.registry.build(
             revision=self.revision,
@@ -370,6 +440,80 @@ class FleetSessionManager:
         if self._on_registry_change is not None:
             self._on_registry_change(doc)
         return doc
+
+    def _publish_string(self, publisher: Any, payload: str) -> None:
+        if publisher is None:
+            return
+        message = self._string_type()
+        message.data = payload
+        publisher.publish(message)
+
+    def _device_online(self, device_id: str) -> bool:
+        if not device_id:
+            return False
+        return device_id in self._online_devices
+
+    def _resolve_role_aliases(self) -> None:
+        """Bind empty alias params to first verified master/slave roles (not TCP order)."""
+        if not self._alias_master_param:
+            for session in self.sessions:
+                if session._bound_device_id and session.role == 'master':
+                    self._alias_master = session._bound_device_id
+                    break
+        else:
+            self._alias_master = self._alias_master_param
+        if not self._alias_slave_param:
+            for session in self.sessions:
+                if session._bound_device_id and session.role == 'slave':
+                    self._alias_slave = session._bound_device_id
+                    break
+        else:
+            self._alias_slave = self._alias_slave_param
+
+    def _mirror_alias_payload(
+        self,
+        device_id: str,
+        *,
+        raw_payload: str | None = None,
+        status_payload: str | None = None,
+    ) -> None:
+        if not device_id or not self._device_online(device_id):
+            return
+        if device_id == self._alias_master:
+            if raw_payload is not None:
+                self._publish_string(self._alias_raw_master_pub, raw_payload)
+            if status_payload is not None:
+                self._publish_string(self._alias_status_master_pub, status_payload)
+        if device_id == self._alias_slave:
+            if raw_payload is not None:
+                self._publish_string(self._alias_raw_slave_pub, raw_payload)
+            if status_payload is not None:
+                self._publish_string(self._alias_status_slave_pub, status_payload)
+
+    def publish_session_raw(self, session: FleetDeviceSession, payload: str) -> None:
+        session.publish_raw_json(payload)
+        device_id = session._bound_device_id or ''
+        self._mirror_alias_payload(device_id, raw_payload=payload)
+
+    def publish_session_health(self, session: FleetDeviceSession, payload: str) -> None:
+        session.publish_health_json(payload)
+        device_id = session._bound_device_id or ''
+        self._mirror_alias_payload(device_id, status_payload=payload)
+
+    def publish_pair_health(
+        self,
+        master_snapshot: dict[str, Any] | None,
+        slave_snapshot: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Publish /esp/status/pair only when both Master and Slave aliases are bound."""
+        if not self.aliases_bound():
+            return None
+        pair = build_pair_health(master_snapshot, slave_snapshot)
+        self._publish_string(
+            self._pair_health_pub,
+            json.dumps(pair, sort_keys=True, separators=(',', ':')),
+        )
+        return pair
 
     def on_session_bound(
         self,
@@ -384,6 +528,7 @@ class FleetSessionManager:
             last_seen_us = time.monotonic_ns() // 1000
         prior = session._bound_device_id
         if prior is not None and prior != device_id:
+            self._online_devices.discard(prior)
             self.registry.replace_session_identity(
                 prior_device_id=prior,
                 new_device_id=device_id,
@@ -413,6 +558,8 @@ class FleetSessionManager:
                 observed_hz=observed_hz,
                 last_seen_us=last_seen_us,
             )
+        self._online_devices.add(normalize_device_id(device_id))
+        self._resolve_role_aliases()
         self.revision += 1
         return self._emit_registry()
 
@@ -425,6 +572,7 @@ class FleetSessionManager:
         if last_seen_us is None:
             last_seen_us = time.monotonic_ns() // 1000
         device_id = session._bound_device_id or session.expected_device_id
+        self._online_devices.discard(normalize_device_id(device_id))
         self.registry.mark_offline(device_id, last_seen_us=last_seen_us)
         self.revision += 1
         return self._emit_registry()
@@ -474,7 +622,9 @@ class FleetBridgeNode(Node):
 
         self.get_logger().info(
             f'fleet_bridge_node routes={len(self._sessions)} '
-            f'registry={FLEET_REGISTRY_TOPIC}'
+            f'registry={FLEET_REGISTRY_TOPIC} '
+            f'alias_master={alias_master or "(role-resolved)"} '
+            f'alias_slave={alias_slave or "(role-resolved)"}'
         )
 
         self._loop = asyncio.new_event_loop()
