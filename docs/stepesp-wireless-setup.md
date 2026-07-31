@@ -57,6 +57,17 @@ route UDP packets to WSL's private NAT address.
    `--slave-route HOST:LISTEN_PORT:EXPECTED_DEVICE_ID` args. Typed OpenSim IMU
    topics remain `/esp32/master/imu` and `/esp32/slave/imu` for the live-link
    consumer; fleet String aliases do not invent `/esp32/mac_*` publishers.
+
+   **Fleet diagnostics (FLEET-03, offline-tested):** `/esp/fleet/registry`
+   (`oe_esp32.fleet_registry.v1`) rows expose layered readiness plus
+   `drops.udp_drop_count` / `drops.queue_maxsize` (per-route UDP drop-oldest,
+   maxsize 256) and `reconnects.count` / `reconnects.generation`. Route states
+   include `connected`, `reconnecting`, `offline`, and `stale` — a failed route
+   is marked without a global relay restart. Per-device health
+   (`oe_esp32.health.v1` on `/esp/status/mac_<12hex>` and alias status topics)
+   adds additive `drop_count`, `reconnect_count`, and nested `drops`. Live
+   STEP_ESP32 Soft-AP validation remains operator-run; automated tests cover
+   multi-route isolation, DHCP topic stability, and drop counters without Wi-Fi.
 3. Verify the master/slave pair connection:
 
    ```powershell

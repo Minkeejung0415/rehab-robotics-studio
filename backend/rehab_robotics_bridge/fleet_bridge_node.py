@@ -6,7 +6,7 @@ import json
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 import rclpy
 from rclpy.node import Node
@@ -30,6 +30,46 @@ ALIAS_STATUS_MASTER_TOPIC = '/esp/status/master'
 ALIAS_STATUS_SLAVE_TOPIC = '/esp/status/slave'
 PAIR_HEALTH_TOPIC = '/esp/status/pair'
 PAIR_HEALTH_SCHEMA = 'oe_esp32.pair_health.v1'
+
+
+async def run_isolated_session_tasks(
+    session_factories: list[Callable[[], Awaitable[Any]]],
+    *,
+    on_session_error: Callable[[int, BaseException], None] | None = None,
+) -> list[BaseException | None]:
+    """Run one supervised task per session; sibling failures never cancel peers.
+
+    Recording/acquisition paths must call this (or equivalent per-task
+    supervision) instead of a fatal ``asyncio.gather`` that cancels siblings
+    on the first exception. ``CancelledError`` is re-raised so shutdown still
+    propagates; other errors are reported and swallowed per index.
+    """
+
+    async def _guard(index: int, factory: Callable[[], Awaitable[Any]]) -> BaseException | None:
+        try:
+            await factory()
+            return None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — isolation boundary
+            if on_session_error is not None:
+                on_session_error(index, exc)
+            return exc
+
+    tasks = [
+        asyncio.create_task(_guard(index, factory), name=f'fleet-session-{index}')
+        for index, factory in enumerate(session_factories)
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    errors: list[BaseException | None] = []
+    for result in results:
+        if isinstance(result, asyncio.CancelledError):
+            raise result
+        if isinstance(result, BaseException):
+            errors.append(result)
+        else:
+            errors.append(result)
+    return errors
 
 
 def build_pair_health(
@@ -758,14 +798,42 @@ class FleetBridgeNode(Node):
         self._publish_registry_doc(self._manager.build_registry())
 
     async def _run_sessions(self) -> None:
-        """Supervisor placeholder: each session reconnects independently.
+        """Supervise one isolated task per configured route (no global cancel).
 
         Live TCP/UDP streaming continues to use Esp32BridgeNode / relay paths;
-        this fleet node owns registry + canonical publisher lifecycle. Plan 04
-        hardens per-session isolation against sibling failures.
+        this fleet node owns registry + canonical publisher lifecycle. Each
+        session task reconnects independently — sibling failures must not stop
+        acquisition, health, Identify, or recording for other devices.
         """
-        while rclpy.ok():
-            await asyncio.sleep(1.0)
+
+        async def _session_loop(index: int) -> None:
+            session = self._sessions[index]
+            while rclpy.ok():
+                try:
+                    # Placeholder until live TCP sessions bind here; keep the
+                    # isolation contract under test via run_isolated_session_tasks.
+                    await asyncio.sleep(1.0)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    self.get_logger().warning(
+                        f'session[{index}] {session.expected_device_id} error={exc!r}; '
+                        'marking reconnecting without affecting siblings'
+                    )
+                    self._manager.on_session_reconnecting(session)
+                    await asyncio.sleep(0.5)
+
+        if not self._sessions:
+            while rclpy.ok():
+                await asyncio.sleep(1.0)
+            return
+
+        await run_isolated_session_tasks(
+            [lambda i=index: _session_loop(i) for index in range(len(self._sessions))],
+            on_session_error=lambda index, exc: self.get_logger().warning(
+                f'isolated session[{index}] exited with {exc!r}'
+            ),
+        )
 
 
 def main(args=None):
