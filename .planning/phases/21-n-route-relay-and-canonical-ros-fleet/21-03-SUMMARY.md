@@ -79,7 +79,7 @@ Each task was committed atomically:
 3. **Task 2 RED:** `ca5c1d4` — test(21-03): add failing single fleet launcher contracts
 4. **Task 2 GREEN:** `c9392ef` — feat(21-03): launch one fleet_bridge_node with alias and route params
 
-**Plan metadata:** (pending final docs commit)
+**Plan metadata:** `0339680` (docs: complete plan)
 
 ## Files Created/Modified
 
