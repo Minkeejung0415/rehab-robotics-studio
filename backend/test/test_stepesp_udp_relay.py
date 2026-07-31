@@ -387,8 +387,8 @@ class LauncherIdentityContractTests(unittest.TestCase):
 
     def test_role_alias_endpoint_and_verified_identity_are_separate_launch_values(self):
         for contract in (
-            '--esp-host $MasterHost',
-            '--expected-device-id $verifiedMasterDeviceId',
+            "'--esp-host', $MasterHost",
+            "'--expected-device-id', $verifiedMasterDeviceId",
             '--slave-route',
             'node_id:=master',
             'node_id:=slave',

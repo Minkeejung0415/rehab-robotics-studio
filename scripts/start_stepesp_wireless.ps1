@@ -6,6 +6,7 @@ param(
   [string]$SlaveHost = 'auto',
   [int]$SlavePort = 5000,
   [string]$ExpectedSlaveDeviceId = '',
+  [string[]]$ExpectedSlaveDeviceIds = @(),
   [int]$UdpPort = 55001,
   [int]$RelayPort = 5002,
   [int]$SlaveRelayPort = 5003,
@@ -16,13 +17,15 @@ param(
   [int]$RosDomainId = 0,
   [string]$DiagnosticPort = 'COM3',
   [string]$WifiProfile = 'STEP_ESP32',
-  [string]$InternetProfile = 'ubcsecure',
+  [string]$InternetProfile = 'ubcvisitor',
   [string]$WifiInterface = 'Wi-Fi',
   [switch]$SkipGui,
   [switch]$NoBrowser
 )
 
 $ErrorActionPreference = 'Stop'
+# Firmware peer inventory capacity; relay CLI enforces the same cap.
+$MAX_SLAVE_ROUTES = 6
 
 function ConvertTo-StepEspCanonicalId {
   param(
@@ -85,7 +88,7 @@ function Get-StepEspIdentity {
     [string]$HostAddress,
     [Parameter(Mandatory = $true)]
     [int]$Port,
-    [int]$TimeoutMs = 3000
+    [int]$TimeoutMs = 5000
   )
 
   $client = [System.Net.Sockets.TcpClient]::new()
@@ -107,6 +110,7 @@ function Get-StepEspIdentity {
 
     $buffer = [byte[]]::new(4096)
     $text = [System.Text.StringBuilder]::new()
+    $rawResponse = [System.Text.StringBuilder]::new()
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
     $receivedBytes = 0
     $selfFields = $null
@@ -126,7 +130,9 @@ function Get-StepEspIdentity {
       if ($receivedBytes -gt 16384) {
         throw "Identity response from $HostAddress exceeds the 16384-byte bound."
       }
-      [void]$text.Append([System.Text.Encoding]::ASCII.GetString($buffer, 0, $count))
+      $chunk = [System.Text.Encoding]::ASCII.GetString($buffer, 0, $count)
+      [void]$rawResponse.Append($chunk)
+      [void]$text.Append($chunk)
 
       while (($newline = $text.ToString().IndexOf("`n", [StringComparison]::Ordinal)) -ge 0) {
         $line = $text.ToString(0, $newline).TrimEnd("`r")
@@ -223,7 +229,12 @@ function Get-StepEspIdentity {
         }
       }
     }
-    throw "Endpoint $HostAddress did not return a complete IDENTITY_OK/IDENTITY_PEER/IDENTITY_END inventory."
+    $receivedPreview = $rawResponse.ToString()
+    if ($receivedPreview.Length -gt 500) {
+      $receivedPreview = $receivedPreview.Substring(0, 500)
+    }
+    $receivedPreview = $receivedPreview.Replace("`r`n", "\n").Replace("`n", "\n").Replace("`r", "\n")
+    throw "Endpoint $HostAddress did not return a complete IDENTITY_OK/IDENTITY_PEER/IDENTITY_END inventory. Received: $receivedPreview"
   } finally {
     $client.Dispose()
   }
@@ -322,8 +333,24 @@ $expectedMasterCanonical = if ($ExpectedMasterDeviceId) {
 } else {
   $null
 }
-$expectedSlaveCanonical = if ($ExpectedSlaveDeviceId) {
-  ConvertTo-StepEspCanonicalId -DeviceId $ExpectedSlaveDeviceId -Label 'Expected Slave identity'
+$expectedSlaveFilterIds = [System.Collections.Generic.List[string]]::new()
+if ($ExpectedSlaveDeviceIds -and $ExpectedSlaveDeviceIds.Count -gt 0) {
+  foreach ($rawId in $ExpectedSlaveDeviceIds) {
+    if (-not [string]::IsNullOrWhiteSpace($rawId)) {
+      $expectedSlaveFilterIds.Add(
+        (ConvertTo-StepEspCanonicalId -DeviceId $rawId -Label 'Expected Slave identity')
+      )
+    }
+  }
+}
+if ($ExpectedSlaveDeviceId) {
+  $singular = ConvertTo-StepEspCanonicalId -DeviceId $ExpectedSlaveDeviceId -Label 'Expected Slave identity'
+  if (-not $expectedSlaveFilterIds.Contains($singular)) {
+    $expectedSlaveFilterIds.Add($singular)
+  }
+}
+$expectedSlaveCanonical = if ($expectedSlaveFilterIds.Count -eq 1) {
+  $expectedSlaveFilterIds[0]
 } else {
   $null
 }
@@ -403,9 +430,9 @@ foreach ($candidateHost in $candidateSlaveHosts) {
 }
 
 $verifiedSlaveCandidates = @($slaveIdentityProbes)
-if ($expectedSlaveCanonical) {
+if ($expectedSlaveFilterIds.Count -gt 0) {
   $verifiedSlaveCandidates = @($slaveIdentityProbes | Where-Object {
-    $_.DeviceId -eq $expectedSlaveCanonical
+    $expectedSlaveFilterIds.Contains($_.DeviceId)
   })
 }
 $discoveredSelfIds = @(
@@ -421,18 +448,37 @@ if ($verifiedSlaveCandidates.Count -eq 0) {
   }
   throw "No verified Slave self identity matched. Discovered verified self identities: $discovered"
 }
-if ($verifiedSlaveCandidates.Count -gt 1) {
-  throw "Slave route selection is ambiguous. Discovered verified self identities: $($discoveredSelfIds -join ', '). Pass -ExpectedSlaveDeviceId esp32:aabbccddeeff."
+if ($verifiedSlaveCandidates.Count -gt $MAX_SLAVE_ROUTES) {
+  throw "Discovered $($verifiedSlaveCandidates.Count) verified slaves; exceeds the firmware peer slot limit ($MAX_SLAVE_ROUTES). Discovered verified self identities: $($discoveredSelfIds -join ', ')."
 }
 
-$selectedSlave = $verifiedSlaveCandidates[0]
+$seenSlaveIds = @{}
+foreach ($candidate in $verifiedSlaveCandidates) {
+  if ($candidate.DeviceId -eq $verifiedMasterDeviceId) {
+    throw "Master and Slave routes reported the same self identity $verifiedMasterDeviceId."
+  }
+  if ($seenSlaveIds.ContainsKey($candidate.DeviceId)) {
+    throw "duplicate slave identity $($candidate.DeviceId) discovered on $($seenSlaveIds[$candidate.DeviceId]) and $($candidate.Host)."
+  }
+  $seenSlaveIds[$candidate.DeviceId] = $candidate.Host
+}
+
+$selectedSlaves = @(
+  $verifiedSlaveCandidates |
+    Sort-Object -Property DeviceId, Host
+)
+$selectedSlave = $selectedSlaves[0]
 $resolvedSlaveHost = $selectedSlave.Host
 $verifiedSlaveDeviceId = $selectedSlave.DeviceId
-if ($verifiedSlaveDeviceId -eq $verifiedMasterDeviceId) {
-  throw "Master and Slave routes reported the same self identity $verifiedMasterDeviceId."
-}
 
-Write-Host "STEP_ESP32 routes: master=$MasterHost ($verifiedMasterDeviceId), slave=$resolvedSlaveHost ($verifiedSlaveDeviceId), Windows=$wifiAddress"
+$slaveRouteSummaries = @(
+  for ($index = 0; $index -lt $selectedSlaves.Count; $index++) {
+    $route = $selectedSlaves[$index]
+    $listenPort = $SlaveRelayPort + $index
+    "$($route.DeviceId)@$($route.Host):$listenPort"
+  }
+)
+Write-Host "STEP_ESP32 routes: master=$MasterHost ($verifiedMasterDeviceId), slaves=$($slaveRouteSummaries -join ', '), Windows=$wifiAddress"
 
 # The short-lived identity probe closes before the relay takes ownership.
 Start-Sleep -Seconds 2
@@ -442,7 +488,25 @@ if (-not $wslGateway) {
   throw 'Could not determine the Windows gateway address visible from WSL.'
 }
 
-$relayArgs = "`"$relayScript`" --esp-host $MasterHost --esp-port $MasterPort --expected-device-id $verifiedMasterDeviceId --udp-port $UdpPort --listen-port $RelayPort --slave-host $resolvedSlaveHost --slave-esp-port $SlavePort --slave-listen-port $SlaveRelayPort --slave-expected-device-id $verifiedSlaveDeviceId"
+$relayArgList = [System.Collections.Generic.List[string]]::new()
+$relayArgList.AddRange([string[]]@(
+  $relayScript,
+  '--esp-host', $MasterHost,
+  '--esp-port', "$MasterPort",
+  '--expected-device-id', $verifiedMasterDeviceId,
+  '--udp-port', "$UdpPort",
+  '--listen-port', "$RelayPort",
+  '--slave-esp-port', "$SlavePort"
+))
+for ($index = 0; $index -lt $selectedSlaves.Count; $index++) {
+  $route = $selectedSlaves[$index]
+  $listenPort = $SlaveRelayPort + $index
+  $relayArgList.Add('--slave-route')
+  $relayArgList.Add("$($route.Host):${listenPort}:$($route.DeviceId)")
+}
+$relayArgs = ($relayArgList | ForEach-Object {
+  if ($_ -match '\s') { '"{0}"' -f $_ } else { $_ }
+}) -join ' '
 $availableSerialPorts = [System.IO.Ports.SerialPort]::GetPortNames()
 if ($DiagnosticPort -and $availableSerialPorts -contains $DiagnosticPort) {
   $serialArgs = "`"$serialDrainScript`" $DiagnosticPort"
@@ -510,7 +574,7 @@ Write-Host "GUI: http://127.0.0.1:5173"
 Write-Host "rosbridge: ws://127.0.0.1:9090"
 Write-Host "Verify pair: source $RosInstall/setup.bash; ROS_DOMAIN_ID=$RosDomainId ros2 topic echo /esp/status/pair --once --field data"
 Write-Host "Verify deployment topics: source $RosInstall/setup.bash; ROS_DOMAIN_ID=$RosDomainId ros2 topic list | grep processing_blocks"
-Write-Host "Bridge log: $bridgeLog (kept after you return to ubcsecure)"
+Write-Host "Bridge log: $bridgeLog (kept after you return to ubcvisitor)"
 Write-Host "Slave bridge log: $slaveBridgeLog"
 Write-Host "rosbridge log: $rosbridgeLog"
 Write-Host "observer log: $observerLog"

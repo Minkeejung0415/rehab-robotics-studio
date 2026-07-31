@@ -4,13 +4,14 @@ This mode replaces the USB serial bridge with a direct connection to the
 ESP32 master. One PowerShell command starts the complete local application:
 the Windows relay, WSL master and slave ROS bridges, rosbridge on port `9090`,
 processing block observer, OpenSim quaternion subscriber, and Vite GUI on port
-`5173`. The Windows relay owns both ESP TCP control connections and shared UDP
-port `55001`. It separates master (`192.168.4.1`) and slave
-(`192.168.4.2`) datagrams by source IP and forwards them to WSL ports `5002`
-and `5003`. This is required because the ESP Soft AP cannot route UDP packets
-to WSL's private NAT address.
+`5173`. The Windows relay owns the master ESP TCP control connection plus every
+verified slave route (up to the firmware peer slot limit of 6) and shared UDP
+port `55001`. It separates master (`192.168.4.1`) and slave datagrams by source
+IP and forwards them to WSL listen ports `5002`, `5003`, `5004`, … Contiguous
+slave listen ports start at `SlaveRelayPort` (default `5003`). This is required
+because the ESP Soft AP cannot route UDP packets to WSL's private NAT address.
 
-1. Power the master first, then the slave. Confirm the master has created the
+1. Power the master first, then the slave(s). Confirm the master has created the
    `STEP_ESP32` access point.
 2. From the repository root in PowerShell, run:
 
@@ -33,13 +34,22 @@ to WSL's private NAT address.
    port (default `COM3`) is absent, the script skips serial diagnostics and
    continues with the Wi-Fi data/control path.
 
-   The slave address is discovered automatically. STEP_ESP32 DHCP assignment
-   order is not fixed, so the laptop may receive `192.168.4.2` and the slave
-   may receive `192.168.4.3`. To override discovery, pass the actual address:
+   Every verified slave self-identity on the Soft AP is routed automatically
+   (capped at 6). STEP_ESP32 DHCP assignment order is not fixed, so the laptop
+   may receive `192.168.4.2` while slaves receive later addresses. Discovery
+   never selects by ping order — only verified `record=self` identities bind
+   routes. To filter the set, pass one or more canonical IDs:
 
    ```powershell
+   .\scripts\start_stepesp_wireless.ps1 -ExpectedSlaveDeviceIds esp32:112233445566,esp32:77bbccddeeff
+   .\scripts\start_stepesp_wireless.ps1 -ExpectedSlaveDeviceId esp32:112233445566
    .\scripts\start_stepesp_wireless.ps1 -SlaveHost 192.168.4.3
    ```
+
+   Duplicate MAC discovery or more than six verified slaves fails closed.
+   Transitional ROS still launches one master bridge and one slave bridge for
+   the first selected identity; the relay itself receives every selected slave
+   via repeatable `--slave-route HOST:LISTEN_PORT:EXPECTED_DEVICE_ID` args.
 3. Verify the master/slave pair connection:
 
    ```powershell
@@ -112,8 +122,9 @@ or launches WSL/OpenSim itself.
 5. **Verify the official live angle.** Confirm `IK solution: Valid`, then move
    the knee gently. The `Knee` value in **Front Panel**, the
    **Joint Angle Display** in **Block Diagram**, and `OpenSim knee angle` in
-   HealthPanel must agree in degrees. A valid straight-knee result may be
-   `0.0 deg`; missing, invalid, or data older than 2 seconds must show `—` and
+   HealthPanel must agree in degrees. A valid straight-knee result is
+   `180.0 deg` and decreases with flexion; missing, invalid, or data older than
+   2 seconds must show `—` and
    `Waiting for calibrated IK`, never a fabricated or retained zero.
 
 6. **Recover without bypassing the safety gates.**
