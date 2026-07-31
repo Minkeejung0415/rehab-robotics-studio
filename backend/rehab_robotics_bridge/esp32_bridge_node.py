@@ -606,6 +606,8 @@ class Esp32BridgeNode(Node):
         }
         self._connection_state = 'connecting'
         self._reconnect_count = 0
+        self._drop_count = 0
+        self._udp_queue_maxsize = 256
         self._last_frame_monotonic: float | None = None
         self._frame_times: deque[float] = deque()
         self._frames_received = 0
@@ -1005,12 +1007,19 @@ class Esp32BridgeNode(Node):
             if elapsed > 0:
                 observed_rate = round((len(self._frame_times) - 1) / elapsed, 2)
         age_ms = None if self._last_frame_monotonic is None else round((now - self._last_frame_monotonic) * 1000, 1)
+        drop_count = int(getattr(self, '_drop_count', 0) or 0)
+        queue_maxsize = int(getattr(self, '_udp_queue_maxsize', 256) or 256)
         return {
             'schema': 'oe_esp32.health.v1',
             'node_id': self._node_id,
             'timestamp_us': time.monotonic_ns() // 1000,
             'connection_state': self._connection_state,
             'reconnect_count': self._reconnect_count,
+            'drop_count': drop_count,
+            'drops': {
+                'udp_drop_count': drop_count,
+                'queue_maxsize': queue_maxsize,
+            },
             'configured_rate_hz': self._sample_rate_hz,
             'effective_rate_hz': self._effective_sample_rate_hz,
             'observed_stream_rate_hz': observed_rate,

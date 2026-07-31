@@ -700,7 +700,12 @@ class UdpRouter:
         self.queues = {
             host: asyncio.Queue[bytes](maxsize=256) for host in routes
         }
+        self.drop_counts: dict[str, int] = {host: 0 for host in routes}
         self._unknown_sources: set[str] = set()
+
+    def drop_count(self, host: str) -> int:
+        """Return drop-oldest count for one ESP source IP (0 if unknown)."""
+        return int(self.drop_counts.get(host, 0))
 
     def remap_host(self, old_host: str, new_host: str, relay: StepEspRelay) -> None:
         """Move one route/queue to a refreshed ESP source IP without dropping identity."""
@@ -708,17 +713,20 @@ class UdpRouter:
             self.routes[new_host] = relay
             if new_host not in self.queues:
                 self.queues[new_host] = asyncio.Queue[bytes](maxsize=256)
+            self.drop_counts.setdefault(new_host, 0)
             return
         if new_host in self.routes and self.routes[new_host] is not relay:
             raise ValueError(
                 f'cannot remap {old_host} onto occupied UDP host {new_host}'
             )
         queue = self.queues.pop(old_host, None)
+        drops = self.drop_counts.pop(old_host, 0)
         self.routes.pop(old_host, None)
         if queue is None:
             queue = asyncio.Queue[bytes](maxsize=256)
         self.routes[new_host] = relay
         self.queues[new_host] = queue
+        self.drop_counts[new_host] = drops
 
     async def _forward_route(self, host: str) -> None:
         relay = self.routes[host]
@@ -748,6 +756,7 @@ class UdpRouter:
             return False
         if queue.full():
             queue.get_nowait()
+            self.drop_counts[source_host] = self.drop_counts.get(source_host, 0) + 1
         queue.put_nowait(data)
         return True
 

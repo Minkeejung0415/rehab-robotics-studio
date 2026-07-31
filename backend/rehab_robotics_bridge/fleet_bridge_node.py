@@ -254,6 +254,53 @@ class FleetRegistryStore:
         state.orientation_freshness = 'stale'
         state.last_seen_us = last_seen_us
 
+    def mark_reconnecting(self, device_id: str, *, last_seen_us: int) -> None:
+        """Mark one route reconnecting without removing the registry row."""
+        device_id = normalize_device_id(device_id)
+        state = self._devices.get(device_id)
+        if state is None:
+            self._devices[device_id] = FleetDeviceState(
+                device_id=device_id,
+                route='reconnecting',
+                discovery='known',
+                command='unavailable',
+                orientation_freshness='stale',
+                last_seen_us=last_seen_us,
+            )
+            return
+        state.route = 'reconnecting'
+        state.command = 'unavailable'
+        state.orientation_freshness = 'stale'
+        state.last_seen_us = last_seen_us
+
+    def record_udp_drops(self, device_id: str, drop_count: int) -> None:
+        """Set absolute per-device UDP drop-oldest counter (relay-visible)."""
+        device_id = normalize_device_id(device_id)
+        state = self._devices.get(device_id)
+        if state is None:
+            self._devices[device_id] = FleetDeviceState(
+                device_id=device_id,
+                route='offline',
+                discovery='known',
+                udp_drop_count=int(drop_count),
+            )
+            return
+        state.udp_drop_count = int(drop_count)
+
+    def note_reconnect(self, device_id: str) -> None:
+        """Increment reconnect_count for the affected device only."""
+        device_id = normalize_device_id(device_id)
+        state = self._devices.get(device_id)
+        if state is None:
+            self._devices[device_id] = FleetDeviceState(
+                device_id=device_id,
+                route='reconnecting',
+                discovery='known',
+                reconnect_count=1,
+            )
+            return
+        state.reconnect_count += 1
+
     def replace_session_identity(
         self,
         *,
@@ -527,6 +574,15 @@ class FleetSessionManager:
         if last_seen_us is None:
             last_seen_us = time.monotonic_ns() // 1000
         prior = session._bound_device_id
+        device_id = normalize_device_id(device_id)
+        prior_state = self.registry._devices.get(device_id)
+        # Count reconnect only after a prior connected generation (not initial configure).
+        if (
+            prior_state is not None
+            and prior_state.route in ('offline', 'reconnecting', 'stale')
+            and prior_state.reconnect_generation >= 1
+        ):
+            self.registry.note_reconnect(device_id)
         if prior is not None and prior != device_id:
             self._online_devices.discard(prior)
             self.registry.replace_session_identity(
@@ -560,6 +616,27 @@ class FleetSessionManager:
             )
         self._online_devices.add(normalize_device_id(device_id))
         self._resolve_role_aliases()
+        self.revision += 1
+        return self._emit_registry()
+
+    def on_session_reconnecting(
+        self,
+        session: FleetDeviceSession,
+        *,
+        last_seen_us: int | None = None,
+    ) -> dict[str, Any]:
+        """Mark only this session reconnecting; siblings keep publishing."""
+        if last_seen_us is None:
+            last_seen_us = time.monotonic_ns() // 1000
+        device_id = session._bound_device_id or session.expected_device_id
+        self._online_devices.discard(normalize_device_id(device_id))
+        self.registry.mark_reconnecting(device_id, last_seen_us=last_seen_us)
+        self.revision += 1
+        return self._emit_registry()
+
+    def apply_udp_drop_count(self, device_id: str, drop_count: int) -> dict[str, Any]:
+        """Propagate relay-visible per-route drop_count into the registry row."""
+        self.registry.record_udp_drops(device_id, drop_count)
         self.revision += 1
         return self._emit_registry()
 
