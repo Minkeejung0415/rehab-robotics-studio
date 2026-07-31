@@ -390,13 +390,29 @@ class LauncherIdentityContractTests(unittest.TestCase):
             "'--esp-host', $MasterHost",
             "'--expected-device-id', $verifiedMasterDeviceId",
             '--slave-route',
-            'node_id:=master',
-            'node_id:=slave',
-            'expected_device_id:=$verifiedMasterDeviceId',
-            'expected_device_id:=$verifiedSlaveDeviceId',
+            'fleet_bridge_node',
+            'alias_master_device_id:=$verifiedMasterDeviceId',
+            'alias_slave_device_id:=$verifiedSlaveDeviceId',
+            'routes_json:=',
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, self.launcher)
+        # Dual role bridges are no longer the default wireless path.
+        self.assertNotIn('esp_bridge_master', self.launcher)
+        self.assertNotIn('esp_bridge_slave', self.launcher)
+        self.assertNotIn('node_id:=master', self.launcher)
+        self.assertNotIn('node_id:=slave', self.launcher)
+
+    def test_launcher_starts_single_fleet_process_with_alias_bindings(self):
+        self.assertIn('fleet_bridge_node', self.launcher)
+        self.assertIn('alias_master_device_id:=$verifiedMasterDeviceId', self.launcher)
+        self.assertIn('alias_slave_device_id:=$verifiedSlaveDeviceId', self.launcher)
+        self.assertIn('routes_json:=', self.launcher)
+        self.assertEqual(self.launcher.count('fleet_bridge_node'), 1)
+        self.assertNotIn('esp32_bridge_node', self.launcher)
+        self.assertIn('/esp/raw/master', self.launcher)
+        self.assertIn('/esp/raw/slave', self.launcher)
+        self.assertIn('/esp/fleet/registry', self.launcher)
 
     def test_existing_two_route_and_operator_stack_contracts_remain(self):
         for preserved in (
