@@ -26,6 +26,13 @@ from typing import Any
 
 DEFAULT_STORE_PATH: Path = Path.home() / ".ros" / "rehab_robotics" / "mapping_store.json"
 
+# Mirrors ik_contracts.SOLVER_PROFILE_MIN_SENSORS — kept local to avoid circular
+# import between mapping_node and opensim_node (both import from ik_contracts,
+# but mapping_node must not import from opensim_node or vice versa at module level).
+_SOLVER_PROFILE_MIN_SENSORS: dict[str, int] = {
+    "lower_body": 2,
+}
+
 _SCHEMA_VERSION = "map.v1"
 _VALID_STATES = {"assigned", "not_used", "unassigned"}
 _DEVICE_ID_RE = re.compile(r"^esp32:[0-9a-f]{12}$")
@@ -312,13 +319,23 @@ class MappingStore:
                     ),
                 }
 
-        # Solver sufficiency check (D-20: best-effort warning, not a block)
-        detail = ""
-        assigned_count = sum(
-            1 for entry in assignments.values() if entry.get("state") == "assigned"
-        )
-        if assigned_count == 0 and assignments:
-            detail = "solver_insufficient: no devices assigned"
+        # Solver sufficiency hard-block (D-12, IK-04): upgraded from soft warning.
+        # Returns solver_insufficient BEFORE atomic swap when assigned device count
+        # is below the minimum for the current solver profile.
+        assigned_devices = [
+            did for did, entry in assignments.items()
+            if entry.get("state") == "assigned"
+        ]
+        solver_profile = self._data.get("solver_profile", "lower_body")
+        min_sensors = _SOLVER_PROFILE_MIN_SENSORS.get(solver_profile, 2)
+        if len(assigned_devices) < min_sensors:
+            return {
+                "outcome": "solver_insufficient",
+                "applied_revision": self.applied_revision,
+                "detail": (
+                    f"need_{min_sensors}_assigned_got_{len(assigned_devices)}"
+                ),
+            }
 
         # Atomic swap: persist applied_revision
         self._data["applied_revision"] = self._data.get("revision", 0)
@@ -327,7 +344,7 @@ class MappingStore:
         return {
             "outcome": "applied",
             "applied_revision": self.applied_revision,
-            "detail": detail,
+            "detail": "",
         }
 
     def reset(self, model_hash: str) -> str:

@@ -45,6 +45,17 @@ class CalibrationState(str, Enum):
     FAILED = "FAILED"
 
 
+SOLVER_PROFILE_MIN_SENSORS: dict[str, int] = {
+    "lower_body": 2,
+}
+"""Minimum number of assigned devices required per solver profile (D-12, IK-04).
+
+Hard-blocks mapping Apply when the assigned device count is below this threshold.
+Authoritative source — mapping_node.py mirrors this value locally to avoid
+a circular import between opensim_node and mapping_node.
+"""
+
+
 def may_publish_joint_states(state: CalibrationState | str) -> bool:
     """Return True only when calibration state is CALIBRATED.
 

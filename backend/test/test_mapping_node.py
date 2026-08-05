@@ -432,17 +432,25 @@ class MappingStoreTest(unittest.TestCase):
 
     # MAP-04: apply_candidate — success path
     def test_apply_passes_with_valid_candidate(self):
-        """MAP-04: apply_candidate succeeds and persists applied_revision when all checks pass."""
-        self.store.set_frame_list([{"segment": "femur_r", "frame": "femur_r_imu"}])
+        """MAP-04: apply_candidate succeeds and persists applied_revision when all checks pass.
+
+        Requires >= 2 assigned devices (SOLVER_PROFILE_MIN_SENSORS['lower_body'] == 2, IK-04).
+        """
+        frame_list = [
+            {"segment": "femur_r", "frame": "femur_r_imu"},
+            {"segment": "tibia_r", "frame": "tibia_r_imu"},
+        ]
+        self.store.set_frame_list(frame_list)
         self.store.set_assignment(DEVICE_A, "femur_r", "femur_r_imu", "assigned")
+        self.store.set_assignment(DEVICE_B, "tibia_r", "tibia_r_imu", "assigned")
         result = self.store.apply_candidate(
-            expected_revision=1,
-            frame_list=[{"segment": "femur_r", "frame": "femur_r_imu"}],
+            expected_revision=2,
+            frame_list=frame_list,
             interlock_active=False,
         )
         self.assertEqual(result["outcome"], "applied")
-        self.assertEqual(result["applied_revision"], 1)
-        self.assertEqual(self.store.applied_revision, 1)
+        self.assertEqual(result["applied_revision"], 2)
+        self.assertEqual(self.store.applied_revision, 2)
 
     # MAP-04: apply_candidate — invalid_frame
     def test_apply_fails_invalid_frame(self):
@@ -459,28 +467,36 @@ class MappingStoreTest(unittest.TestCase):
 
     # MAP-04: applied_revision is preserved on failure
     def test_apply_preserves_applied_revision_on_failure(self):
-        """MAP-04: failed apply does not overwrite a previously applied_revision."""
-        self.store.set_frame_list([{"segment": "femur_r", "frame": "femur_r_imu"}])
+        """MAP-04: failed apply does not overwrite a previously applied_revision.
+
+        Uses 2 assigned devices for the first apply (IK-04 min-sensor hard-block requires >= 2).
+        """
+        frame_list = [
+            {"segment": "femur_r", "frame": "femur_r_imu"},
+            {"segment": "tibia_r", "frame": "tibia_r_imu"},
+        ]
+        self.store.set_frame_list(frame_list)
         self.store.set_assignment(DEVICE_A, "femur_r", "femur_r_imu", "assigned")
-        # First apply — succeeds
+        self.store.set_assignment(DEVICE_B, "tibia_r", "tibia_r_imu", "assigned")
+        # First apply — succeeds (revision=2 after 2 assignments)
         first = self.store.apply_candidate(
-            expected_revision=1,
-            frame_list=[{"segment": "femur_r", "frame": "femur_r_imu"}],
+            expected_revision=2,
+            frame_list=frame_list,
             interlock_active=False,
         )
         self.assertEqual(first["outcome"], "applied")
-        self.assertEqual(self.store.applied_revision, 1)
-        # Add an unassigned device (bumps revision to 2)
-        self.store.set_assignment(DEVICE_B, "", "", "unassigned")
+        self.assertEqual(self.store.applied_revision, 2)
+        # Add an unassigned device (bumps revision to 3)
+        self.store.set_assignment(DEVICE_C, "", "", "unassigned")
         # Second apply — should fail incomplete
         second = self.store.apply_candidate(
-            expected_revision=2,
-            frame_list=[{"segment": "femur_r", "frame": "femur_r_imu"}],
+            expected_revision=3,
+            frame_list=frame_list,
             interlock_active=False,
         )
         self.assertEqual(second["outcome"], "incomplete")
-        # applied_revision must still be 1
-        self.assertEqual(self.store.applied_revision, 1)
+        # applied_revision must still be 2
+        self.assertEqual(self.store.applied_revision, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -495,22 +511,30 @@ class MappingNodeApplyTest(unittest.TestCase):
         self.node = _make_node(self.tmp.name)
         # Load catalog (sets model_hash + frame_list)
         self.node._on_catalog(_str_msg(_FAKE_CATALOG_JSON))
-        # Assign DEVICE_A to femur_r frame
+        # Assign DEVICE_A to femur_r frame (revision=1)
         req = _set_assign_req(DEVICE_A, "femur_r", "femur_r_imu", "assigned")
         resp = _set_assign_resp()
         self.node._on_set_assignment(req, resp)
-        self.assertEqual(resp.outcome, "ok", "setUp: set_assignment must succeed")
+        self.assertEqual(resp.outcome, "ok", "setUp: set_assignment A must succeed")
+        # Assign DEVICE_B to tibia_r frame (revision=2) — required for IK-04 min-sensor hard-block
+        req2 = _set_assign_req(DEVICE_B, "tibia_r", "tibia_r_imu", "assigned")
+        resp2 = _set_assign_resp()
+        self.node._on_set_assignment(req2, resp2)
+        self.assertEqual(resp2.outcome, "ok", "setUp: set_assignment B must succeed")
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def test_apply_ok(self):
-        """MAP-04: successful apply returns outcome=applied, applied_revision=1."""
-        req = _apply_req(expected_revision=1)
+        """MAP-04: successful apply returns outcome=applied, applied_revision=2.
+
+        setUp now assigns 2 devices (IK-04 min-sensor hard-block requires >= 2).
+        """
+        req = _apply_req(expected_revision=2)
         resp = _apply_resp()
         result = self.node._on_apply_mapping(req, resp)
         self.assertEqual(result.outcome, "applied")
-        self.assertEqual(result.applied_revision, 1)
+        self.assertEqual(result.applied_revision, 2)
 
     def test_apply_revision_mismatch(self):
         """MAP-04: apply with wrong expected_revision returns revision_mismatch."""
@@ -538,12 +562,16 @@ class MappingNodeApplyTest(unittest.TestCase):
         self.assertIn("calibration", result.detail)
 
     def test_apply_incomplete_unassigned_device(self):
-        """MAP-04: apply fails with 'incomplete' when a device has state=unassigned."""
-        # Add DEVICE_B as unassigned (revision becomes 2)
-        req2 = _set_assign_req(DEVICE_B, "", "", "unassigned")
-        resp2 = _set_assign_resp()
-        self.node._on_set_assignment(req2, resp2)
-        req = _apply_req(expected_revision=2)
+        """MAP-04: apply fails with 'incomplete' when a device has state=unassigned.
+
+        setUp assigns DEVICE_A (revision=1) and DEVICE_B (revision=2).
+        Adding DEVICE_C as unassigned bumps revision to 3.
+        """
+        # Add DEVICE_C as unassigned (revision becomes 3)
+        req3 = _set_assign_req(DEVICE_C, "", "", "unassigned")
+        resp3 = _set_assign_resp()
+        self.node._on_set_assignment(req3, resp3)
+        req = _apply_req(expected_revision=3)
         resp = _apply_resp()
         result = self.node._on_apply_mapping(req, resp)
         self.assertEqual(result.outcome, "incomplete")
@@ -564,22 +592,27 @@ class MappingNodeApplyTest(unittest.TestCase):
         self.assertEqual(result.outcome, "invalid_frame")
 
     def test_apply_preserves_applied_revision_on_failure(self):
-        """MAP-04: failed apply does not overwrite previously applied_revision."""
-        # First apply — OK at revision=1
-        req1 = _apply_req(expected_revision=1)
+        """MAP-04: failed apply does not overwrite previously applied_revision.
+
+        setUp assigns DEVICE_A (revision=1) and DEVICE_B (revision=2).
+        First apply with revision=2 succeeds. Then DEVICE_C unassigned bumps to 3.
+        Second apply fails incomplete; applied_revision stays at 2.
+        """
+        # First apply — OK at revision=2 (setUp assigned 2 devices)
+        req1 = _apply_req(expected_revision=2)
         resp1 = _apply_resp()
         self.node._on_apply_mapping(req1, resp1)
-        self.assertEqual(self.node._store.applied_revision, 1)
-        # Add DEVICE_B as unassigned (revision becomes 2)
-        req2 = _set_assign_req(DEVICE_B, "", "", "unassigned")
+        self.assertEqual(self.node._store.applied_revision, 2)
+        # Add DEVICE_C as unassigned (revision becomes 3)
+        req2 = _set_assign_req(DEVICE_C, "", "", "unassigned")
         resp2 = _set_assign_resp()
         self.node._on_set_assignment(req2, resp2)
         # Second apply fails — incomplete
-        req3 = _apply_req(expected_revision=2)
+        req3 = _apply_req(expected_revision=3)
         resp3 = _apply_resp()
         result = self.node._on_apply_mapping(req3, resp3)
         self.assertEqual(result.outcome, "incomplete")
-        self.assertEqual(self.node._store.applied_revision, 1)
+        self.assertEqual(self.node._store.applied_revision, 2)
 
 
 # ---------------------------------------------------------------------------

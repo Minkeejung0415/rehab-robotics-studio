@@ -334,6 +334,11 @@ class OpenSimBridgeNode(Node):
             "/rehab/opensim/input_validity",
             10,
         )
+        self._n_joint_states_metadata_publisher = self.create_publisher(
+            String,
+            "/rehab/opensim/joint_states_metadata",
+            10,
+        )
 
         self._capture_service = self.create_service(
             Trigger,
@@ -569,17 +574,131 @@ class OpenSimBridgeNode(Node):
         validity = self._check_sync_skew(inputs_snapshot)
         self._publish_input_validity(validity)
 
+        # Build input_validity_mask in alphabetical device_id order
+        device_validities = validity.get("device_validities", {})
+        input_validity_mask = [
+            bool(device_validities.get(entry.device_id, {}).get("valid", False))
+            for entry in inputs_snapshot
+        ]
+
+        # Compute calibration identity and provenance strings when calibrated
+        calibration_identity: str | None = None
+        visualizer_provenance: str | None = None
+        if self._n_calib_artifact is not None:
+            artifact_path = self._n_calib_store.compute_artifact_path(
+                self._n_model_hash, self._n_mapping_revision
+            )
+            calibration_identity = artifact_path.name
+            hash8 = str(self._n_model_hash)[:8]
+            visualizer_provenance = f"{hash8}_rev{self._n_mapping_revision}"
+
         if not validity["all_valid"]:
-            return  # Gate: at least one device invalid — suppress IK, acquisition continues
+            # Gate: at least one device invalid — suppress IK, acquisition continues
+            self._publish_n_ik_metadata(
+                input_validity_mask=input_validity_mask,
+                solver_status="suppressed",
+                calibration_identity=calibration_identity,
+                visualizer_provenance=visualizer_provenance,
+            )
+            return
 
         if self._n_calib_artifact is None:
-            return  # Gate: calibration required before IK solve
+            # Gate: calibration required before IK solve
+            self._publish_n_ik_metadata(
+                input_validity_mask=input_validity_mask,
+                solver_status="calibration_required",
+                calibration_identity=None,
+                visualizer_provenance=None,
+            )
+            return
 
-        # Plan 23-04 will wire the actual N-sensor solver call here.
-        # Stub: IK gate passed; solver not yet wired.
-        self.get_logger().debug(
-            "N-sensor IK gate passed; solver wired in Plan 23-04"
+        # Build solver inputs: (frame, xyzw) pairs in alphabetical device_id order (D-03)
+        # Threat model T-23-04-02: explicit None check before building solver_inputs
+        solver_inputs = [
+            (entry.frame, entry.last_xyzw)
+            for entry in inputs_snapshot
+            if entry.last_xyzw is not None
+        ]
+        if len(solver_inputs) != len(inputs_snapshot):
+            self._publish_n_ik_metadata(
+                input_validity_mask=input_validity_mask,
+                solver_status="missing_xyzw",
+                calibration_identity=calibration_identity,
+                visualizer_provenance=visualizer_provenance,
+            )
+            return
+
+        # Source timestamp = min(last_ts_ns) across all inputs (parallel to pair strategy)
+        ts_values = [entry.last_ts_ns for entry in inputs_snapshot if entry.last_ts_ns is not None]
+        source_ts = min(ts_values) if ts_values else None
+
+        # Input age = min(now - last_seen_monotonic) across devices
+        now = self._monotonic_clock()
+        age_values = [
+            max(0.0, now - entry.last_seen_monotonic)
+            for entry in inputs_snapshot
+            if entry.last_seen_monotonic is not None
+        ]
+        input_age_s = min(age_values) if age_values else None
+
+        # Call solve_n — wrapped in try/except (Threat model T-23-04-05: exception propagation)
+        try:
+            solution = self._ik_solver.solve_n(
+                inputs=solver_inputs,
+                source_timestamp_ns=source_ts,
+                input_age_s=input_age_s,
+                joint_names=self._ik_joint_names,
+            )
+        except Exception as exc:
+            self._publish_n_ik_metadata(
+                input_validity_mask=input_validity_mask,
+                solver_status=f"solve_error:{type(exc).__name__}",
+                calibration_identity=calibration_identity,
+                visualizer_provenance=visualizer_provenance,
+            )
+            return
+
+        solver_status = str(solution.reason) if solution is not None else "no_solution"
+        self._publish_n_ik_metadata(
+            input_validity_mask=input_validity_mask,
+            solver_status=solver_status,
+            calibration_identity=calibration_identity,
+            visualizer_provenance=visualizer_provenance,
         )
+
+        # Publish JointState when solution is valid (N-sensor gate: all_valid + calib + valid)
+        if solution is not None and solution.solution_valid and source_ts is not None:
+            message = JointState()
+            message.name = [str(name) for name in solution.joint_names]
+            message.position = [float(v) for v in solution.positions_rad]
+            message.header.stamp.sec = source_ts // 1_000_000_000
+            message.header.stamp.nanosec = source_ts % 1_000_000_000
+            self._joint_states_publisher.publish(message)
+
+    def _publish_n_ik_metadata(
+        self,
+        *,
+        input_validity_mask: list[bool],
+        solver_status: str,
+        calibration_identity: str | None,
+        visualizer_provenance: str | None,
+    ) -> None:
+        """Publish /rehab/opensim/joint_states_metadata JSON on every _solve_and_publish_ik_n() call.
+
+        Published on ALL paths: suppressed, calibration_required, solve error, and successful solves.
+        Payload schema: rehab.n_ik_metadata.1
+        """
+        payload = {
+            "schema": "rehab.n_ik_metadata.1",
+            "mapping_revision": self._n_mapping_revision,
+            "calibration_identity": calibration_identity,
+            "input_validity_mask": input_validity_mask,
+            "solver_status": solver_status,
+            "visualizer_provenance": visualizer_provenance,
+        }
+        message = String()
+        message.data = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        self._n_joint_states_metadata_publisher.publish(message)
 
     def _on_calibration_capture_n(
         self,

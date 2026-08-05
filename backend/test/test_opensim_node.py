@@ -2086,10 +2086,26 @@ class IkFourContractTests(unittest.TestCase):
 
     # --- IK-04-G: solver_insufficient hard-block: 1 assigned device → outcome == solver_insufficient ---
 
+    def _ensure_mapping_stubs(self):
+        """Install rehab_robotics_interfaces stubs needed to import MappingStore from mapping_node."""
+        if "rehab_robotics_interfaces" not in sys.modules:
+            rehab_interfaces = types.ModuleType("rehab_robotics_interfaces")
+            rehab_srv = types.ModuleType("rehab_robotics_interfaces.srv")
+            for svc_name in ("SetAssignment", "ApplyMapping", "GetMappingState", "ResetMapping"):
+                svc_cls = type(svc_name, (), {
+                    "Request": type(svc_name + ".Request", (), {}),
+                    "Response": type(svc_name + ".Response", (), {}),
+                })
+                setattr(rehab_srv, svc_name, svc_cls)
+            rehab_interfaces.srv = rehab_srv
+            sys.modules["rehab_robotics_interfaces"] = rehab_interfaces
+            sys.modules["rehab_robotics_interfaces.srv"] = rehab_srv
+
     def test_ik04_g_solver_insufficient_hard_block_one_assigned_device(self):
         """IK-04-G: apply_candidate with 1 assigned device returns outcome=='solver_insufficient'."""
-        from rehab_robotics_bridge.mapping_node import MappingStore
         import tempfile
+        self._ensure_mapping_stubs()
+        from rehab_robotics_bridge.mapping_node import MappingStore
 
         with tempfile.TemporaryDirectory() as tmpdir:
             store = MappingStore(store_path=Path(tmpdir) / "map.json")
@@ -2113,8 +2129,9 @@ class IkFourContractTests(unittest.TestCase):
 
     def test_ik04_h_two_assigned_devices_does_not_trigger_solver_insufficient(self):
         """IK-04-H: apply_candidate with 2 assigned devices does not return solver_insufficient."""
-        from rehab_robotics_bridge.mapping_node import MappingStore
         import tempfile
+        self._ensure_mapping_stubs()
+        from rehab_robotics_bridge.mapping_node import MappingStore
 
         with tempfile.TemporaryDirectory() as tmpdir:
             store = MappingStore(store_path=Path(tmpdir) / "map.json")
