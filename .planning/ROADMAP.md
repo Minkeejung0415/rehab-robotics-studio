@@ -171,7 +171,7 @@ Plans:
 
 **Wave 2** *(blocked on 24-01 completion)*
 
-- [ ] 24-03-PLAN.md — MappingWorkspace.tsx: full panel component with header, 9-column table, footer, all interactions
+- [x] 24-03-PLAN.md — MappingWorkspace.tsx: full panel component with header, 9-column table, footer, all interactions
 
 **Wave 3** *(blocked on 24-01, 24-02, 24-03 completion)*
 
@@ -201,7 +201,7 @@ Plans:
 | 21. N-Route Relay and Canonical ROS Fleet | 6/6 | Complete | 2026-08-05 |
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 6/6 | Complete | 2026-08-05 |
 | 23. N-Sensor Calibration and Official OpenSim IK | 5/5 | Complete | 2026-08-05 |
-| 24. Rosbridge and Studio Mapping Workspace | 2/4 | In Progress|  |
+| 24. Rosbridge and Studio Mapping Workspace | 3/4 | In Progress|  |
 | 25. Multi-Device Compatibility and Promotion Gate | 0/TBD | Not started | - |
 
 ---
