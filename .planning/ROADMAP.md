@@ -19,7 +19,7 @@ Milestone v1.6 generalizes the existing fixed Master/Slave acquisition and OpenS
 - [x] **Phase 21: N-Route Relay and Canonical ROS Fleet** - All devices remain independently discoverable, routed, observable, and compatible with explicit legacy aliases. (completed 2026-08-05)
 - [x] **Phase 22: Model Catalog, Mapping Store, and Transactional Contracts** - Model-derived assignments are validated, revisioned, persisted, and applied atomically. (completed 2026-08-05)
 - [x] **Phase 23: N-Sensor Calibration and Official OpenSim IK** - Applied mappings drive provenance-bound calibration and valid synchronized N-sensor OpenSim solves. (completed 2026-08-05)
-- [ ] **Phase 24: Rosbridge and Studio Mapping Workspace** - Operators manage the authoritative fleet mapping through stable, actionable device rows.
+- [x] **Phase 24: Rosbridge and Studio Mapping Workspace** - Operators manage the authoritative fleet mapping through stable, actionable device rows. (completed 2026-08-05)
 - [ ] **Phase 25: Multi-Device Compatibility and Promotion Gate** - Deterministic and physical acceptance evidence preserves existing workflows and determines default-mode readiness.
 
 ## Phase Details
@@ -175,7 +175,7 @@ Plans:
 
 **Wave 3** *(blocked on 24-01, 24-02, 24-03 completion)*
 
-- [ ] 24-04-PLAN.md — App shell wiring: App.tsx Mapping tab + appDataSource.ts callbacks + integration smoke test
+- [x] 24-04-PLAN.md — App shell wiring: App.tsx Mapping tab + appDataSource.ts callbacks + integration smoke test
 
 ### Phase 25: Multi-Device Compatibility and Promotion Gate
 
@@ -201,7 +201,7 @@ Plans:
 | 21. N-Route Relay and Canonical ROS Fleet | 6/6 | Complete | 2026-08-05 |
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 6/6 | Complete | 2026-08-05 |
 | 23. N-Sensor Calibration and Official OpenSim IK | 5/5 | Complete | 2026-08-05 |
-| 24. Rosbridge and Studio Mapping Workspace | 3/4 | In Progress|  |
+| 24. Rosbridge and Studio Mapping Workspace | 4/4 | Complete   | 2026-08-05 |
 | 25. Multi-Device Compatibility and Promotion Gate | 0/TBD | Not started | - |
 
 ---
