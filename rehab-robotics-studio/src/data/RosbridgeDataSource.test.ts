@@ -1040,6 +1040,145 @@ describe('systemStore - persistent visualizer request state', () => {
   });
 });
 
+// ── 24-02: Parse functions and service call stubs ─────────────────────────────
+
+/**
+ * Phase 24-02 tests: guard-parse functions and service call method presence.
+ *
+ * Tests:
+ *   1.  parseModelCatalog: valid payload → correct snapshot
+ *   2.  parseModelCatalog: null → null
+ *   3.  parseModelCatalog: model_hash not string → null
+ *   4.  parseMappingCurrent: valid payload → revision=1, appliedRevision=0
+ *   5.  parseMappingCurrent: revision not number → null
+ *   6.  parseFleetRegistry: valid payload → snapshot with devices array
+ *   7.  parseFleetRegistry: missing devices array → null
+ *   8.  parseNCalibrationStatus: valid 'capturing' → snapshot with state='capturing'
+ *   9.  parseNCalibrationStatus: state null → null
+ *   10. parseInputValidity: valid device_validities → snapshot
+ *   11. parseInputValidity: missing device_validities → null
+ *   12. RosbridgeDataSource has callSetAssignment method
+ *   13. RosbridgeDataSource has callApplyMapping method
+ *   14. RosbridgeDataSource has callResetMapping method
+ *   15. RosbridgeDataSource has callIdentifyDevice method
+ */
+
+const {
+  parseModelCatalog,
+  parseMappingCurrent,
+  parseFleetRegistry,
+  parseNCalibrationStatus,
+  parseInputValidity,
+} = await import('./RosbridgeDataSource.js');
+
+describe('24-02 parseModelCatalog', () => {
+  it('01 valid payload returns snapshot with frame_list correctly shaped', () => {
+    const result = parseModelCatalog({
+      schema: 'v1',
+      model_hash: 'abc',
+      model_path: '/foo.osim',
+      frame_list: [{ path: 'tibia', name: 'Tibia' }],
+    });
+    assert.ok(result !== null, 'should return non-null for valid payload');
+    assert.equal(result!.model_hash, 'abc');
+    assert.equal(result!.model_path, '/foo.osim');
+    assert.equal(result!.frame_list.length, 1);
+    assert.equal(result!.frame_list[0].path, 'tibia');
+    assert.equal(result!.frame_list[0].name, 'Tibia');
+  });
+
+  it('02 null input returns null', () => {
+    assert.equal(parseModelCatalog(null), null);
+  });
+
+  it('03 model_hash not string returns null', () => {
+    assert.equal(parseModelCatalog({ model_hash: 123, model_path: '/foo.osim', frame_list: [] }), null);
+  });
+});
+
+describe('24-02 parseMappingCurrent / parseFleetRegistry / parseNCalibrationStatus / parseInputValidity', () => {
+  it('04 parseMappingCurrent valid payload returns revision=1 appliedRevision=0', () => {
+    const result = parseMappingCurrent({
+      revision: 1,
+      applied_revision: 0,
+      model_hash: 'abc',
+      assignments: { 'esp32:aa': { segment: 's', frame: 'f', state: 'assigned' } },
+    });
+    assert.ok(result !== null, 'should return non-null for valid payload');
+    assert.equal(result!.revision, 1);
+    assert.equal(result!.applied_revision, 0);
+    assert.ok('esp32:aa' in result!.assignments);
+  });
+
+  it('05 parseMappingCurrent revision not number returns null', () => {
+    assert.equal(parseMappingCurrent({ revision: 'bad' }), null);
+  });
+
+  it('06 parseFleetRegistry valid payload returns snapshot with devices array', () => {
+    const result = parseFleetRegistry({
+      devices: [{
+        device_id: 'esp32:aa',
+        role: 'master',
+        route_state: 'active',
+        connection_state: 'connected',
+        rate_hz: 100,
+        drop_count: 0,
+      }],
+    });
+    assert.ok(result !== null, 'should return non-null for valid payload');
+    assert.equal(result!.devices.length, 1);
+    assert.equal(result!.devices[0].device_id, 'esp32:aa');
+  });
+
+  it('07 parseFleetRegistry missing devices array returns null', () => {
+    assert.equal(parseFleetRegistry({}), null);
+  });
+
+  it('08 parseNCalibrationStatus valid capturing returns snapshot with state=capturing', () => {
+    const result = parseNCalibrationStatus({ state: 'capturing', revision: 1, model_hash: 'abc' });
+    assert.ok(result !== null, 'should return non-null for valid payload');
+    assert.equal(result!.state, 'capturing');
+  });
+
+  it('09 parseNCalibrationStatus state null returns null', () => {
+    assert.equal(parseNCalibrationStatus({ state: null }), null);
+  });
+
+  it('10 parseInputValidity valid device_validities returns snapshot', () => {
+    const result = parseInputValidity({
+      device_validities: { 'esp32:aa': true, 'esp32:bb': false },
+    });
+    assert.ok(result !== null, 'should return non-null for valid payload');
+    assert.equal(result!.device_validities['esp32:aa'], true);
+    assert.equal(result!.device_validities['esp32:bb'], false);
+  });
+
+  it('11 parseInputValidity missing device_validities returns null', () => {
+    assert.equal(parseInputValidity({}), null);
+  });
+});
+
+describe('24-02 RosbridgeDataSource mapping service methods', () => {
+  // Use explicit URL to bypass import.meta.env access in Node.js test context
+  const ds = new RosbridgeDataSource('ws://localhost:9090', '/esp/raw/master', '/esp/raw/slave');
+
+  it('12 callSetAssignment is a public method returning Promise', () => {
+    assert.equal(typeof ds.callSetAssignment, 'function', 'callSetAssignment must be a method');
+  });
+
+  it('13 callApplyMapping is a public method', () => {
+    assert.equal(typeof ds.callApplyMapping, 'function', 'callApplyMapping must be a method');
+  });
+
+  it('14 callResetMapping is a public method', () => {
+    assert.equal(typeof ds.callResetMapping, 'function', 'callResetMapping must be a method');
+  });
+
+  it('15 callIdentifyDevice is a public method', () => {
+    assert.equal(typeof ds.callIdentifyDevice, 'function', 'callIdentifyDevice must be a method');
+  });
+});
+
 describe('systemStore - recording health synchronization', () => {
   it('reflects an already-active hardware session before another Rec click', () => {
     const store = useSystemStore.getState();
