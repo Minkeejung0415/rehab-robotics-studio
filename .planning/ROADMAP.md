@@ -127,7 +127,26 @@ Plans:
   3. Joint states publish only when every required input is valid, fresh, post-reconnect, and within the synchronization-skew bound; degraded inputs suppress new IK output while acquisition and recording continue.
   4. Official OpenSim orientation IK consumes mapped inputs in deterministic order and exposes mapping revision, calibration identity, input validity, solver status, and visualizer provenance.
 
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+
+**Wave 1** *(parallel — no dependencies between 23-01 and 23-02)*
+
+- [ ] 23-01-PLAN.md — Dynamic N-sensor subscription management + solve_n() (IK-01)
+- [ ] 23-02-PLAN.md — Calibration artifact store and capture service (IK-02)
+
+**Wave 2** *(blocked on 23-01 completion — needs _DeviceInput)*
+
+- [ ] 23-03-PLAN.md — Sync-skew gate and reconnect freshness (IK-03)
+
+**Wave 3** *(blocked on 23-01, 23-02, 23-03 completion)*
+
+- [ ] 23-04-PLAN.md — N-sensor IK wiring and extended output (IK-04)
+
+**Wave 4** *(blocked on all prior plans)*
+
+- [ ] 23-05-PLAN.md — Launch wiring and integration smoke test (all IK requirements)
 
 ### Phase 24: Rosbridge and Studio Mapping Workspace
 
@@ -167,7 +186,7 @@ Plans:
 | 20. Full Identity and Confirmed Identify | 6/6 | Complete   | 2026-07-30 |
 | 21. N-Route Relay and Canonical ROS Fleet | 4/6 | Gap closure in progress | 2026-07-31 |
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 0/6 | Not started | - |
-| 23. N-Sensor Calibration and Official OpenSim IK | 0/TBD | Not started | - |
+| 23. N-Sensor Calibration and Official OpenSim IK | 0/5 | Not started | - |
 | 24. Rosbridge and Studio Mapping Workspace | 0/TBD | Not started | - |
 | 25. Multi-Device Compatibility and Promotion Gate | 0/TBD | Not started | - |
 
