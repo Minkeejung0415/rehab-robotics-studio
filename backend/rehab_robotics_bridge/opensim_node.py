@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import datetime
 import json
 import math
 import threading
@@ -30,6 +31,7 @@ from .opensim.ik_contracts import (
     VISUALIZER_OPEN_SERVICE,
     may_publish_joint_states,
 )
+from .opensim.n_sensor_calibration import CalibrationArtifactStore
 from .opensim.opensim_orientation_ik import create_orientation_ik_solver
 from .opensim.orientation_ik import (
     DEFAULT_JOINT_NAME,
@@ -307,6 +309,22 @@ class OpenSimBridgeNode(Node):
             _IMU_QOS,
         )
 
+        # N-sensor calibration artifact state (IK-02)
+        self._n_calib_artifact: dict | None = None
+        self._n_calib_state: str = "uncalibrated"
+        self._n_calib_store = CalibrationArtifactStore()
+        self._n_model_hash: str = ""   # populated from mapping JSON when available
+        self._n_capture_service = self.create_service(
+            Trigger,
+            "/rehab/calibration/capture",
+            self._on_calibration_capture_n,
+        )
+        self._n_calibration_status_publisher = self.create_publisher(
+            String,
+            "/rehab/calibration/status",
+            10,
+        )
+
         self._capture_service = self.create_service(
             Trigger,
             CALIBRATION_CAPTURE_SERVICE,
@@ -387,10 +405,12 @@ class OpenSimBridgeNode(Node):
                     self._mac_inputs[device_id].frame = frame
 
             self._n_mapping_revision = int(data.get("applied_revision", 0))
+            self._n_model_hash = str(data.get("model_hash", ""))
 
         self.get_logger().info(
             f"N-sensor mapping update: {len(self._mac_inputs)} devices"
         )
+        self._check_artifact_validity()
 
     def _on_mac_imu(self, device_id: str, message: Imu) -> None:
         """Handle a MAC-addressed IMU frame for a dynamically subscribed device."""
@@ -444,6 +464,102 @@ class OpenSimBridgeNode(Node):
             for device_id in reconnected:
                 if device_id in self._mac_inputs:
                     self._mac_inputs[device_id].post_reconnect_fresh = False
+
+    def _on_calibration_capture_n(
+        self,
+        _request: Trigger.Request,
+        response: Trigger.Response,
+    ) -> Trigger.Response:
+        """Handle /rehab/calibration/capture: snapshot inputs and write artifact.
+
+        Implements T-23-02-03 mitigation: _mac_inputs is snapshotted under lock
+        before any reads to prevent TOCTOU race with concurrent remap callbacks.
+        """
+        with self._input_lock:
+            inputs = dict(self._mac_inputs)   # snapshot under lock
+        if not inputs:
+            response.success = False
+            response.message = json.dumps({"outcome": "no_mapping", "artifact_path": None})
+            return response
+        missing = [did for did, entry in inputs.items() if entry.last_xyzw is None]
+        if missing:
+            response.success = False
+            response.message = json.dumps({"outcome": "missing_inputs", "artifact_path": None})
+            return response
+        # Build artifact (D-03: alphabetical device_order)
+        device_order = sorted(inputs.keys())
+        frame_assignments = {
+            did: {"segment": "", "frame": inputs[did].frame}
+            for did in device_order
+        }
+        reference_pose = {}
+        for did in device_order:
+            xyzw = inputs[did].last_xyzw
+            reference_pose[did] = {
+                "qw": xyzw[3],
+                "qx": xyzw[0],
+                "qy": xyzw[1],
+                "qz": xyzw[2],
+            }
+        artifact = {
+            "schema_version": "calib.v1",
+            "model_hash": self._n_model_hash,
+            "applied_revision": self._n_mapping_revision,
+            "device_order": device_order,
+            "frame_assignments": frame_assignments,
+            "solver_profile": "lower_body",
+            "calibrated_at_iso8601": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+            "reference_pose": reference_pose,
+        }
+        artifact_path = self._n_calib_store.compute_artifact_path(
+            self._n_model_hash, self._n_mapping_revision
+        )
+        self._n_calib_store.save(artifact_path, artifact)
+        self._n_calib_artifact = artifact
+        self._n_calib_state = "calibrated"
+        self._publish_n_calibration_status()
+        response.success = True
+        response.message = json.dumps(
+            {"outcome": "captured", "artifact_path": str(artifact_path)}
+        )
+        return response
+
+    def _check_artifact_validity(self) -> None:
+        """Invalidate calibration artifact if mapping identity has changed (D-05).
+
+        Called after every _on_mapping_current update.
+        """
+        if self._n_calib_artifact is None:
+            return
+        with self._input_lock:
+            current_device_order = sorted(self._mac_inputs.keys())
+        valid = self._n_calib_store.is_valid(
+            self._n_calib_artifact,
+            self._n_model_hash,
+            self._n_mapping_revision,
+            current_device_order,
+        )
+        if not valid:
+            self._n_calib_artifact = None
+            self._n_calib_state = "uncalibrated"
+            self._publish_n_calibration_status()
+            self.get_logger().info(
+                "N-sensor calibration invalidated by mapping change"
+            )
+
+    def _publish_n_calibration_status(self) -> None:
+        """Publish N-sensor calibration status to /rehab/calibration/status."""
+        payload: dict[str, object] = {
+            "schema": "rehab.n_calibration_status.1",
+            "state": self._n_calib_state,
+            "revision": self._n_mapping_revision,
+            "model_hash": self._n_model_hash,
+        }
+        if self._n_calib_artifact is not None:
+            payload["schema_version"] = "calib.v1"
+        message = String()
+        message.data = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        self._n_calibration_status_publisher.publish(message)
 
     def _on_master_imu(self, message: Imu) -> None:
         self._on_imu("master", message)
@@ -866,6 +982,7 @@ class OpenSimBridgeNode(Node):
         self._publish_calibration_status()
         self._publish_ik_status()
         self._publish_diagnostics()
+        self._publish_n_calibration_status()
 
     def _ik_status_payload(self) -> dict[str, object]:
         if self._last_ik_solution is not None:
