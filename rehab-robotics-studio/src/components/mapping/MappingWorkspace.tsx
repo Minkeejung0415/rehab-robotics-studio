@@ -682,7 +682,6 @@ export function MappingWorkspace() {
     }));
 
     try {
-      // @ts-expect-error — callMappingSetAssignment is wired in Plan 24-04
       const { callMappingSetAssignment } = await import('../../data/appDataSource');
       const segment = row.draftSegment ?? row.backendSegment ?? '';
       const frame = row.draftFrame ?? row.backendFrame ?? segment;
@@ -725,7 +724,6 @@ export function MappingWorkspace() {
   const handleIdentify = useCallback(async (deviceId: string) => {
     useMappingStore.getState().setIdentifyBusy(deviceId, true);
     try {
-      // @ts-expect-error — callMappingIdentifyDevice is wired in Plan 24-04
       const { callMappingIdentifyDevice } = await import('../../data/appDataSource');
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call
       const result = await (callMappingIdentifyDevice as (
@@ -744,7 +742,6 @@ export function MappingWorkspace() {
     const store = useMappingStore.getState();
     store.setApplyStatus('applying');
     try {
-      // @ts-expect-error — callMappingApply is wired in Plan 24-04
       const { callMappingApply } = await import('../../data/appDataSource');
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call
       const result = await (callMappingApply as (
@@ -812,7 +809,6 @@ export function MappingWorkspace() {
     setResetConfirm(false);
 
     try {
-      // @ts-expect-error — callMappingReset is wired in Plan 24-04
       const { callMappingReset } = await import('../../data/appDataSource');
       const currentHash = useMappingStore.getState().catalogModelHash;
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call

@@ -3,6 +3,7 @@ import { mockDataSource } from './MockDataSource';
 import { RosbridgeDataSource, type ImuControlParameter } from './RosbridgeDataSource';
 import { LiveKneeAngleTracker, normalizeLiveKneeReason } from './liveKneeAngle';
 import { useSystemStore } from '../state/systemStore';
+import { useMappingStore } from '../state/mappingStore';
 
 const sourceMode = import.meta.env.VITE_DATA_SOURCE || 'rosbridge';
 let active: DataSource = mockDataSource;
@@ -51,6 +52,12 @@ const rosbridgeDataSource = new RosbridgeDataSource(
     store.setOpenSimJointState(jointState);
     store.setLiveKneeAngle(liveKneeAngleTracker.setJointState(jointState));
   },
+  // Phase 24: Mapping workspace callbacks (positions 12-16, per D-25)
+  (catalog) => useMappingStore.getState().updateFromCatalog(catalog),
+  (state) => useMappingStore.getState().updateFromMappingCurrent(state),
+  (registry) => useMappingStore.getState().updateFromFleetRegistry(registry.devices ?? []),
+  (status) => useMappingStore.getState().updateFromCalibrationStatus(status),
+  (validity) => useMappingStore.getState().updateInputValidity(validity),
 );
 
 if (sourceMode !== 'mock') active = rosbridgeDataSource;
@@ -169,4 +176,52 @@ export function reconnectHardware(): { success: boolean; message: string } {
   rosbridgeDataSource.stop();
   rosbridgeDataSource.start(requestedRate);
   return { success: true, message: 'Reconnecting to the ROS bridge' };
+}
+
+/** Submit a per-device segment assignment to the backend via SetAssignment service. */
+export async function callMappingSetAssignment(
+  deviceId: string,
+  segment: string,
+  frame: string,
+  state: string,
+): Promise<{ success: boolean; message: string; outcome: string; detail: string }> {
+  if (active !== rosbridgeDataSource) {
+    return { success: false, message: 'Live ROS ESP32 stream is not active', outcome: '', detail: '' };
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return rosbridgeDataSource.callSetAssignment(deviceId, segment, frame, state) as any;
+}
+
+/** Atomically apply all current assignments via ApplyMapping service. */
+export async function callMappingApply(
+  expectedRevision: number,
+): Promise<{ success: boolean; message: string; outcome: string; appliedRevision: number; detail: string }> {
+  if (active !== rosbridgeDataSource) {
+    return { success: false, message: 'Live ROS ESP32 stream is not active', outcome: '', appliedRevision: 0, detail: '' };
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return rosbridgeDataSource.callApplyMapping(expectedRevision) as any;
+}
+
+/** Reset all assignments for the given model hash via ResetMapping service. */
+export async function callMappingReset(
+  modelHash: string | null,
+): Promise<{ success: boolean; message: string; outcome: string }> {
+  if (active !== rosbridgeDataSource) {
+    return { success: false, message: 'Live ROS ESP32 stream is not active', outcome: '' };
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return rosbridgeDataSource.callResetMapping(modelHash ?? '') as any;
+}
+
+/** Trigger LED flash on a device for physical identification via IdentifyDevice service. */
+export async function callMappingIdentifyDevice(
+  deviceId: string,
+  timeoutMs = 5000,
+): Promise<{ success: boolean; message: string; outcome: string }> {
+  if (active !== rosbridgeDataSource) {
+    return { success: false, message: 'Live ROS ESP32 stream is not active', outcome: '' };
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return rosbridgeDataSource.callIdentifyDevice(deviceId, timeoutMs) as any;
 }
