@@ -153,11 +153,16 @@ class OpenSimBridgeNode(Node):
             "calibration_max_dispersion_deg": DEFAULT_MAX_DISPERSION_DEG,
             "ik_joint_names": DEFAULT_JOINT_NAME,
             "ik_coordinate_paths": DEFAULT_JOINT_NAME,
+            "sync_skew_ms": 50,
         }
         values = {
             name: self.declare_parameter(name, default).value
             for name, default in parameter_defaults.items()
         }
+        try:
+            self._sync_skew_ms = max(1, int(values["sync_skew_ms"]))
+        except (TypeError, ValueError):
+            self._sync_skew_ms = 50
         self._model_path = str(values["model_path"])
         try:
             configured_timeout = float(values["stale_timeout_s"])
@@ -324,6 +329,11 @@ class OpenSimBridgeNode(Node):
             "/rehab/calibration/status",
             10,
         )
+        self._n_input_validity_publisher = self.create_publisher(
+            String,
+            "/rehab/opensim/input_validity",
+            10,
+        )
 
         self._capture_service = self.create_service(
             Trigger,
@@ -436,6 +446,8 @@ class OpenSimBridgeNode(Node):
             entry.last_seen_monotonic = now
             if first_frame:
                 entry.post_reconnect_fresh = True
+        # Lock released — trigger N-sensor IK evaluation outside lock (IK-03)
+        self._solve_and_publish_ik_n()
 
     def _on_fleet_registry(self, message: String) -> None:
         """Handle /esp/fleet/registry reconnect events; clears post_reconnect_fresh."""
@@ -464,6 +476,110 @@ class OpenSimBridgeNode(Node):
             for device_id in reconnected:
                 if device_id in self._mac_inputs:
                     self._mac_inputs[device_id].post_reconnect_fresh = False
+
+    def _check_sync_skew(self, inputs: list[_DeviceInput]) -> dict:
+        """Compute per-device sync-skew validity using median-reference algorithm (D-07, IK-03).
+
+        Returns a dict with:
+          "all_valid": bool — True only if every device has a valid timestamp,
+                              is within sync_skew_ms of the median, and is post_reconnect_fresh.
+          "device_validities": dict[str, dict] keyed by device_id, each with:
+              {"valid": bool, "fresh": bool, "skew_ms": float | None}
+
+        This method is pure computation — takes no locks (caller holds the snapshot).
+        """
+        if not inputs:
+            return {"all_valid": False, "device_validities": {}}
+
+        timestamps = [entry.last_ts_ns for entry in inputs if entry.last_ts_ns is not None]
+        if not timestamps:
+            # No timestamps at all — all invalid
+            return {
+                "all_valid": False,
+                "device_validities": {
+                    entry.device_id: {"valid": False, "fresh": entry.post_reconnect_fresh, "skew_ms": None}
+                    for entry in inputs
+                },
+            }
+
+        # Compute median of available timestamps
+        sorted_ts = sorted(timestamps)
+        n = len(sorted_ts)
+        if n % 2 == 0:
+            reference_ts = (sorted_ts[n // 2 - 1] + sorted_ts[n // 2]) / 2.0
+        else:
+            reference_ts = float(sorted_ts[n // 2])
+
+        device_validities: dict[str, dict] = {}
+        for entry in inputs:
+            fresh = entry.post_reconnect_fresh
+            if entry.last_ts_ns is None:
+                device_validities[entry.device_id] = {"valid": False, "fresh": fresh, "skew_ms": None}
+            else:
+                skew_ms = abs(entry.last_ts_ns - reference_ts) / 1_000_000.0
+                within_skew = skew_ms <= self._sync_skew_ms
+                valid = within_skew and fresh
+                device_validities[entry.device_id] = {
+                    "valid": valid,
+                    "fresh": fresh,
+                    "skew_ms": round(skew_ms, 3),
+                }
+
+        all_valid = all(v["valid"] for v in device_validities.values())
+        return {"all_valid": all_valid, "device_validities": device_validities}
+
+    def _publish_input_validity(self, validity: dict) -> None:
+        """Publish per-device sync validity on /rehab/opensim/input_validity (IK-03).
+
+        Called on every IK evaluation cycle — even when IK is suppressed.
+        """
+        payload = {
+            "schema": "rehab.n_input_validity.1",
+            "all_valid": bool(validity.get("all_valid", False)),
+            "device_validities": validity.get("device_validities", {}),
+        }
+        message = String()
+        message.data = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        self._n_input_validity_publisher.publish(message)
+
+    def _solve_and_publish_ik_n(self) -> None:
+        """Evaluate N-sensor IK gate and publish validity; suppress solve if any device invalid (IK-03).
+
+        Gate sequence (D-07, D-08, D-09):
+          1. Snapshot _mac_inputs (alphabetical) under lock
+          2. Compute sync-skew validity for all devices
+          3. Publish validity on /rehab/opensim/input_validity (always, even when suppressed)
+          4. If not all_valid → return (suppressed); acquisition path is unaffected
+          5. If _n_calib_artifact is None → return (calibration required)
+          6. Full IK solver call wired in Plan 23-04
+
+        Called from _on_mac_imu OUTSIDE the input lock.
+        The existing single-sensor _solve_and_publish_ik() path is NOT touched here.
+        """
+        # Snapshot inputs under lock (D-03: alphabetical sort for determinism)
+        with self._input_lock:
+            inputs_snapshot = sorted(
+                self._mac_inputs.values(),
+                key=lambda e: e.device_id,
+            )
+
+        if not inputs_snapshot:
+            return  # No mapping applied; nothing to evaluate
+
+        validity = self._check_sync_skew(inputs_snapshot)
+        self._publish_input_validity(validity)
+
+        if not validity["all_valid"]:
+            return  # Gate: at least one device invalid — suppress IK, acquisition continues
+
+        if self._n_calib_artifact is None:
+            return  # Gate: calibration required before IK solve
+
+        # Plan 23-04 will wire the actual N-sensor solver call here.
+        # Stub: IK gate passed; solver not yet wired.
+        self.get_logger().debug(
+            "N-sensor IK gate passed; solver wired in Plan 23-04"
+        )
 
     def _on_calibration_capture_n(
         self,

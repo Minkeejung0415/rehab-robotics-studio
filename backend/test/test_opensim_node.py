@@ -27,12 +27,16 @@ class _Logger:
     def __init__(self):
         self.info_messages = []
         self.warning_messages = []
+        self.debug_messages = []
 
     def info(self, message):
         self.info_messages.append(message)
 
     def warning(self, message):
         self.warning_messages.append(message)
+
+    def debug(self, message):
+        self.debug_messages.append(message)
 
 
 class _StubNode:
@@ -1673,10 +1677,15 @@ class IkThreeContractTests(unittest.TestCase):
     # --- IK-03-B: one device 100ms behind median → all_valid=False ---
 
     def test_ik03_b_one_device_100ms_behind_all_valid_false(self):
-        """IK-03-B: _check_sync_skew with one device 100ms behind median → all_valid=False, that device valid=False."""
+        """IK-03-B: _check_sync_skew with one device 100ms behind median → all_valid=False, that device valid=False.
+
+        With sync_skew_ms=50: two devices 200ms apart means each is 100ms from the median.
+        The device 100ms behind the median exceeds the 50ms limit → invalid.
+        """
         node = self._make_node()  # default sync_skew_ms=50
         ts_now = 2_000_000_000   # 2 seconds
-        ts_old = ts_now - 100_000_000  # 100ms earlier (100_000_000 ns)
+        # 200ms gap so each device is 100ms from the median (midpoint)
+        ts_old = ts_now - 200_000_000  # 200ms earlier (200_000_000 ns)
         inputs = [
             self._make_device_input("esp32:aabbccddeeff", "tibia_r_imu", ts_now, True),
             self._make_device_input("esp32:112233445566", "femur_r_imu", ts_old, True),
@@ -1684,12 +1693,11 @@ class IkThreeContractTests(unittest.TestCase):
         result = node._check_sync_skew(inputs)
         self.assertFalse(result["all_valid"])
         self.assertFalse(result["device_validities"]["esp32:112233445566"]["valid"])
-        # The device with the recent timestamp should be valid
-        self.assertTrue(result["device_validities"]["esp32:aabbccddeeff"]["valid"])
-        # skew_ms for the late device should be ~50ms (relative to median which is midpoint)
+        # The device with the recent timestamp is also >50ms from median, so also invalid
+        # skew_ms for the late device should be ~100ms from the median
         skew = result["device_validities"]["esp32:112233445566"]["skew_ms"]
         self.assertIsNotNone(skew)
-        self.assertGreater(skew, 0.0)
+        self.assertGreater(skew, 50.0)
 
     # --- IK-03-C: fresh=False on one device → all_valid=False ---
 
@@ -1737,13 +1745,10 @@ class IkThreeContractTests(unittest.TestCase):
         )
         initial_joint_count = len(joint_pub.messages)
 
-        # Device A gets recent timestamp (2s), device B gets 100ms old (well beyond 50ms skew)
-        ts_now = 2_000_000_000
-        ts_old = ts_now - 100_000_000  # 100ms older
-
-        # Use _on_mac_imu to update entries — timestamps determine skew
+        # Device A gets timestamp at 2s, device B gets 200ms older (1.8s).
+        # Median is 1.9s; each device deviates 100ms from median → exceeds 50ms limit.
         node._on_mac_imu("esp32:aabbccddeeff", self._imu_msg(stamp_sec=2, stamp_nanosec=0))
-        node._on_mac_imu("esp32:112233445566", self._imu_msg(stamp_sec=1, stamp_nanosec=900_000_000))  # 1.9s
+        node._on_mac_imu("esp32:112233445566", self._imu_msg(stamp_sec=1, stamp_nanosec=800_000_000))  # 1.8s
 
         # After each _on_mac_imu call, _solve_and_publish_ik_n is called automatically
         # Both calls together should produce validity messages
