@@ -379,5 +379,159 @@ class IkTwoArtifactTests(unittest.TestCase):
         self.assertTrue(str(path).startswith(str(Path.home() / ".ros" / "rehab_robotics")))
 
 
+class CalibrationArtifactStoreExtendedTests(unittest.TestCase):
+    """Extended offline tests for CalibrationArtifactStore — corruption recovery, edge cases.
+
+    Named to match plan must_haves.artifacts.contains requirements.
+    All tests are offline — no live ROS, no live filesystem except tempfile isolation.
+    """
+
+    def setUp(self):
+        self.store = CalibrationArtifactStore()
+
+    def _minimal_valid_artifact(
+        self,
+        model_hash: str = "deadbeef1234",
+        revision: int = 1,
+        device_order: list | None = None,
+    ) -> dict:
+        if device_order is None:
+            device_order = ["esp32:aabbccddeeff", "esp32:112233445566"]
+        return {
+            "schema_version": "calib.v1",
+            "model_hash": model_hash,
+            "applied_revision": revision,
+            "device_order": device_order,
+            "frame_assignments": {},
+            "solver_profile": "lower_body",
+            "calibrated_at_iso8601": "2026-08-05T12:00:00Z",
+            "reference_pose": {},
+        }
+
+    # ------------------------------------------------------------------
+    # test_corruption_recovery
+    # ------------------------------------------------------------------
+
+    def test_corruption_recovery(self):
+        """load() returns None for corrupt JSON; node remains in uncalibrated state."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            corrupt_path = Path(tmpdir) / "corrupt.json"
+            corrupt_path.write_text("{{not json", encoding="utf-8")
+            result = self.store.load(corrupt_path)
+        # CalibrationArtifactStore.load returns None on bad JSON
+        self.assertIsNone(result)
+        # is_valid(None, ...) also returns False — node stays uncalibrated
+        self.assertFalse(
+            self.store.is_valid(result, "any_hash", 0, []),
+            "is_valid(None, ...) must return False so node stays uncalibrated",
+        )
+
+    # ------------------------------------------------------------------
+    # test_wrong_schema_version
+    # ------------------------------------------------------------------
+
+    def test_wrong_schema_version(self):
+        """load() returns None when schema_version is not 'calib.v1'."""
+        wrong = {"schema_version": "calib.v2", "model_hash": "abc"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "wrong_schema.json"
+            path.write_text(json.dumps(wrong), encoding="utf-8")
+            result = self.store.load(path)
+        self.assertIsNone(result)
+
+    # ------------------------------------------------------------------
+    # test_empty_device_order_invalid
+    # ------------------------------------------------------------------
+
+    def test_empty_device_order_invalid(self):
+        """is_valid edge cases with empty device_order."""
+        artifact_empty = self._minimal_valid_artifact(device_order=[])
+
+        # Vacuously valid: both stored and current are empty
+        self.assertTrue(
+            self.store.is_valid(artifact_empty, "deadbeef1234", 1, []),
+            "Both stored and current empty device sets: should be vacuously valid",
+        )
+
+        # Invalid: stored is empty but current has devices
+        self.assertFalse(
+            self.store.is_valid(artifact_empty, "deadbeef1234", 1, ["esp32:aabbccddeeff"]),
+            "Stored empty but current has devices: should return False",
+        )
+
+    # ------------------------------------------------------------------
+    # test_artifact_path_uses_hash_prefix
+    # ------------------------------------------------------------------
+
+    def test_artifact_path_uses_hash_prefix(self):
+        """compute_artifact_path uses first 8 chars of hash (or full hash if shorter)."""
+        # Standard: 16-char hash → first 8 chars
+        path_long = self.store.compute_artifact_path("abc123def4567890", 5)
+        self.assertIn("abc123de", path_long.name)
+        self.assertEqual(path_long.name, "calibration_abc123de_rev5.json")
+
+        # Short hash: "abcdef" → str[:8] == "abcdef" (no padding)
+        path_short = self.store.compute_artifact_path("abcdef", 0)
+        self.assertIn("abcdef", path_short.name)
+        self.assertTrue(path_short.name.startswith("calibration_"))
+
+    # ------------------------------------------------------------------
+    # test_save_creates_parent_dirs
+    # ------------------------------------------------------------------
+
+    def test_save_creates_parent_dirs(self):
+        """save() creates parent directories that do not yet exist."""
+        data = self._minimal_valid_artifact()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            deeply_nested = Path(tmpdir) / "x" / "y" / "z"
+            artifact_path = deeply_nested / "calibration_deadbeef_rev1.json"
+            self.store.save(artifact_path, data)
+            self.assertTrue(artifact_path.exists(), "File must exist after save()")
+
+    # ------------------------------------------------------------------
+    # test_atomic_write_no_tmp_residue
+    # ------------------------------------------------------------------
+
+    def test_atomic_write_no_tmp_residue(self):
+        """save() must not leave a .tmp file behind and must write valid JSON."""
+        data = self._minimal_valid_artifact()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_path = Path(tmpdir) / "calibration_deadbeef_rev1.json"
+            self.store.save(artifact_path, data)
+            tmp_file = artifact_path.with_suffix(".tmp")
+            self.assertFalse(tmp_file.exists(), ".tmp residue must not exist after save()")
+            self.assertTrue(artifact_path.exists(), "Final file must exist")
+            loaded = json.loads(artifact_path.read_text(encoding="utf-8"))
+            self.assertEqual(loaded["schema_version"], "calib.v1")
+
+    # ------------------------------------------------------------------
+    # test_load_missing_file
+    # ------------------------------------------------------------------
+
+    def test_load_missing_file(self):
+        """load() returns None for a path that does not exist (no exception raised)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = Path(tmpdir) / "does_not_exist.json"
+            result = self.store.load(missing)
+        self.assertIsNone(result)
+
+    # ------------------------------------------------------------------
+    # test_is_valid_all_match
+    # ------------------------------------------------------------------
+
+    def test_is_valid_all_match(self):
+        """is_valid() returns True when all fields match exactly."""
+        artifact = self._minimal_valid_artifact(
+            model_hash="deadbeef1234", revision=7
+        )
+        result = self.store.is_valid(
+            artifact,
+            "deadbeef1234",
+            7,
+            ["esp32:aabbccddeeff", "esp32:112233445566"],
+        )
+        self.assertTrue(result)
+
+
 if __name__ == "__main__":
     unittest.main()
