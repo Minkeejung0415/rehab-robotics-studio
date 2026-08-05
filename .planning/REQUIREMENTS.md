@@ -36,7 +36,7 @@
 ### Dynamic Calibration and OpenSim IK
 
 - [ ] **IK-01**: The applied mapping creates and tears down deterministic MAC-keyed subscriptions and one ordered N-sensor orientation input set without leaking subscriptions, callbacks, or queues across remaps.
-- [ ] **IK-02**: Calibration artifacts are bound to model hash, applied mapping revision, exact device-to-Frame assignments, and solver profile, and are invalidated by any semantic change.
+- [x] **IK-02**: Calibration artifacts are bound to model hash, applied mapping revision, exact device-to-Frame assignments, and solver profile, and are invalidated by any semantic change.
 - [ ] **IK-03**: Joint-state publication occurs only when every required mapped input is valid, fresh, post-reconnect, and within the configured synchronization-skew bound; degraded input suppresses new IK output without stopping acquisition or recording.
 - [ ] **IK-04**: Official OpenSim orientation IK consumes the mapped N-sensor set in deterministic order and reports mapping revision, calibration identity, input validity, solver status, and visualizer provenance.
 
@@ -93,7 +93,7 @@
 | MAP-05 | Phase 22 | Pending |
 | MAP-06 | Phase 22 | Pending |
 | IK-01 | Phase 23 | Pending |
-| IK-02 | Phase 23 | Pending |
+| IK-02 | Phase 23 | Complete |
 | IK-03 | Phase 23 | Pending |
 | IK-04 | Phase 23 | Pending |
 | UI-01 | Phase 24 | Pending |

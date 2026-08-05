@@ -133,8 +133,8 @@ Plans:
 
 **Wave 1** *(parallel — no dependencies between 23-01 and 23-02)*
 
-- [ ] 23-01-PLAN.md — Dynamic N-sensor subscription management + solve_n() (IK-01)
-- [ ] 23-02-PLAN.md — Calibration artifact store and capture service (IK-02)
+- [x] 23-01-PLAN.md — Dynamic N-sensor subscription management + solve_n() (IK-01)
+- [x] 23-02-PLAN.md — Calibration artifact store and capture service (IK-02)
 
 **Wave 2** *(blocked on 23-01 completion — needs _DeviceInput)*
 
@@ -186,7 +186,7 @@ Plans:
 | 20. Full Identity and Confirmed Identify | 6/6 | Complete   | 2026-07-30 |
 | 21. N-Route Relay and Canonical ROS Fleet | 4/6 | Gap closure in progress | 2026-07-31 |
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 0/6 | Not started | - |
-| 23. N-Sensor Calibration and Official OpenSim IK | 0/5 | Not started | - |
+| 23. N-Sensor Calibration and Official OpenSim IK | 2/5 | In Progress|  |
 | 24. Rosbridge and Studio Mapping Workspace | 0/TBD | Not started | - |
 | 25. Multi-Device Compatibility and Promotion Gate | 0/TBD | Not started | - |
 

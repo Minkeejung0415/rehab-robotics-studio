@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.6
-milestone_name: milestone
-status: completed
+milestone_name: Multi-Sensor Bone Mapping
+status: verifying
 stopped_at: Completed 21-04-PLAN.md
-last_updated: "2026-08-05T18:46:50.306Z"
-last_activity: 2026-08-05 -- Phase 22 marked complete
+last_updated: "2026-08-05T19:30:37.727Z"
+last_activity: 2026-08-05
 progress:
   total_phases: 6
   completed_phases: 3
-  total_plans: 18
-  completed_plans: 18
+  total_plans: 23
+  completed_plans: 20
   percent: 50
 ---
 
@@ -27,10 +27,10 @@ See: `.planning/PROJECT.md` (updated 2026-07-30)
 
 Phase: 22 — COMPLETE
 Plan: 4 of 4 executed; verification 2/5
-Status: Phase 22 complete
-Last activity: 2026-08-05 -- Phase 22 marked complete
+Status: Phase complete — ready for verification
+Last activity: 2026-08-05
 
-Progress: [██░░░░░░░░] 17% (Phase 20 complete; Phase 21 blocked on gap closure)
+Progress: [█████████░] 87%
 Verification: `.planning/phases/21-n-route-relay-and-canonical-ros-fleet/21-VERIFICATION.md`
 
 ## Performance Metrics
@@ -115,6 +115,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-07-31T18:58:23.666Z
+Last session: 2026-08-05T19:30:37.715Z
 Stopped at: Completed 21-04-PLAN.md
 Resume file: None
