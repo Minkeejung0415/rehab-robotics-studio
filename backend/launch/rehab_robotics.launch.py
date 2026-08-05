@@ -83,6 +83,11 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_model_catalog', default_value='true', description='Start model_catalog_node'),
         DeclareLaunchArgument('enable_mapping_node', default_value='true', description='Start mapping_node'),
         DeclareLaunchArgument('mapping_store_path', default_value='', description='Path to mapping_store.json (empty = use default ~/.ros/rehab_robotics/mapping_store.json)'),
+        DeclareLaunchArgument(
+            'sync_skew_ms',
+            default_value='50',
+            description='Sync skew tolerance in ms for N-sensor IK gate',
+        ),
     ]
 
     def bridge(role, host, tcp_port, transport, udp_port, segment):
@@ -132,6 +137,7 @@ def generate_launch_description():
         'status_topic': LaunchConfiguration('status_topic'),
         'joint_angle_topic': LaunchConfiguration('joint_angle_topic'),
         'publish_joint_angle_enabled': LaunchConfiguration('publish_joint_angle_enabled'),
+        'sync_skew_ms': LaunchConfiguration('sync_skew_ms'),
     }], condition=IfCondition(LaunchConfiguration('enable_opensim_bridge')))
     opensim_test_publisher = Node(
         package='rehab_robotics_bridge', executable='opensim_test_publisher',
