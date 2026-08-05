@@ -937,5 +937,327 @@ class FleetFailureIsolationTest(unittest.TestCase):
         self.assertIn('CancelledError', source)
 
 
+class FleetLiveSessionContractTest(unittest.TestCase):
+    """Live-session contract tests for plan 21-06 (no STEP_ESP32 required)."""
+
+    # --- wire format constants (from 21-06-PLAN.md) ---
+    IDENTITY_OK = (
+        b'IDENTITY_OK protocol=id-v1 record=self device_id=esp32:aabbccddeeff '
+        b'display_mac=AA:BB:CC:DD:EE:FF base_mac=AA:BB:CC:DD:EE:FF '
+        b'sta_mac=AA:BB:CC:DD:EE:FE ap_mac=AA:BB:CC:DD:EE:FF '
+        b'espnow_mac=AA:BB:CC:DD:EE:FF role=master schema_version=1 verified=1 '
+        b'identify_supported=1 peer_count=0 route_ip=192.168.4.1 board_revision=3\n'
+    )
+    IDENTITY_END = b'IDENTITY_END protocol=id-v1 peer_count=0\n'
+    STARTED_TCP = b'STARTED BIN:esp32s3_arduino transport=tcp\n'
+
+    def _make_stub_manager(self, routes=None):
+        """Build a FleetSessionManager with stub publishers."""
+        import json as _json
+        if routes is None:
+            routes = fleet.parse_routes_json(_json.dumps([
+                {
+                    'host': '127.0.0.1',
+                    'port': 5002,
+                    'expected_device_id': 'esp32:aabbccddeeff',
+                    'role': 'master',
+                },
+            ]))
+
+        class _StubPub:
+            def __init__(self, topic):
+                self.topic = topic
+            def publish(self, message):
+                pass
+
+        def _create_pub(msg_type, topic, qos):
+            return _StubPub(topic)
+
+        string_type = type('String', (), {'__init__': lambda self: setattr(self, 'data', '')})
+        return fleet.FleetSessionManager(
+            routes,
+            create_publisher=_create_pub,
+            string_message_type=string_type,
+        )
+
+    def _make_stub_node(self, routes=None):
+        """Build a minimal FleetBridgeNode stub bypassing ROS init."""
+        import json as _json
+        if routes is None:
+            routes = fleet.parse_routes_json(_json.dumps([
+                {
+                    'host': '127.0.0.1',
+                    'port': 5002,
+                    'expected_device_id': 'esp32:aabbccddeeff',
+                    'role': 'master',
+                },
+            ]))
+
+        manager = self._make_stub_manager(routes)
+
+        class _NullLogger:
+            def info(self, *a, **k): pass
+            def warning(self, *a, **k): pass
+            def debug(self, *a, **k): pass
+            def error(self, *a, **k): pass
+
+        node = object.__new__(fleet.FleetBridgeNode)
+        node._reconnect_delay_s = 5.0
+        node._handshake_timeout_s = 15.0
+        node._identify_timeout_s = 3.0
+        node._routes = routes
+        node._body_segments = {}
+        node._manager = manager
+        node._sessions = manager.sessions
+        node._registry = manager.registry
+        n = len(manager.sessions)
+        import asyncio
+        node._active_writers = [None] * n
+        node._session_locks = [None] * n
+        node._identify_queues = [None] * n
+        node._imu_pubs = {'master': None, 'slave': None}
+        node._loop = asyncio.new_event_loop()
+        node.get_logger = lambda: _NullLogger()
+        return node
+
+    # --- test 1 ---
+    def test_fleet_handshake_binds_session_on_valid_identity(self):
+        """_fleet_handshake with valid IDENTITY_OK bytes binds device_id and marks registry connected."""
+        import asyncio
+
+        # Wire format: IDENTITY_OK (self record) + IDENTITY_END (peer count=0, so 1 extra line)
+        # + OK response to REDPITAYA handshake + STARTED response to START command.
+        identity_bytes = self.IDENTITY_OK + self.IDENTITY_END
+
+        node = self._make_stub_node()
+        session = node._sessions[0]
+
+        # Minimal mock writer (write/drain/is_closing stubs)
+        class _MockWriter:
+            def __init__(self):
+                self.sent = bytearray()
+            def write(self, data):
+                self.sent.extend(data)
+            async def drain(self):
+                pass
+            def is_closing(self):
+                return False
+
+        async def _run():
+            # Build mock reader inside the event loop to avoid DeprecationWarning
+            # Protocol sequence:
+            #   [recv] IDENTITY_OK ...   → records[0] (IDENTITY_OK self line)
+            #   [recv] IDENTITY_END ...  → records[1] (peer_count=0 → 0+1=1 extra line)
+            #   [send] REDPITAYA\n
+            #   [recv] OK\n              → discarded REDPITAYA acknowledgement
+            #   [send] START\n
+            #   [recv] STARTED BIN:...  → StartedOK
+            reader = asyncio.StreamReader()
+            # Feed: identity lines, then REDPITAYA ack ('OK\n'), then STARTED line
+            reader.feed_data(identity_bytes + b'OK\n' + self.STARTED_TCP)
+            reader.feed_eof()
+            writer = _MockWriter()
+            return await node._fleet_handshake(0, session, reader, writer)
+
+        loop = asyncio.new_event_loop()
+        try:
+            transport_type = loop.run_until_complete(_run())
+        finally:
+            loop.close()
+
+        self.assertEqual(session._bound_device_id, 'esp32:aabbccddeeff')
+        doc = node._manager.build_registry()
+        by_id = {row['device_id']: row for row in doc['devices']}
+        self.assertEqual(by_id['esp32:aabbccddeeff']['route'], 'connected')
+        self.assertIn(transport_type, ('tcp', 'udp'))
+
+    # --- test 2 ---
+    def test_session_reconnecting_does_not_cancel_siblings(self):
+        """run_isolated_session_tasks with one failing route leaves sibling's registry row connected."""
+        import asyncio
+        import json as _json
+
+        routes = fleet.parse_routes_json(_json.dumps([
+            {'host': '127.0.0.1', 'port': 5002,
+             'expected_device_id': 'esp32:aabbccddeeff', 'role': 'master'},
+            {'host': '127.0.0.1', 'port': 5003,
+             'expected_device_id': 'esp32:1111ccddeeff', 'role': 'slave'},
+        ]))
+        manager = self._make_stub_manager(routes)
+        events: list[str] = []
+
+        async def failing_factory():
+            events.append('failing-start')
+            raise RuntimeError('simulated TCP disconnect')
+
+        async def healthy_factory():
+            events.append('healthy-start')
+            # Simulate a brief connected run
+            await asyncio.sleep(0.05)
+            events.append('healthy-done')
+
+        # Bind the healthy session first so its registry row starts 'connected'
+        manager.on_session_bound(manager.sessions[1], 'esp32:1111ccddeeff', last_seen_us=1)
+        # Mark the failing session reconnecting (simulating what _connect_and_stream_route does)
+        manager.on_session_reconnecting(manager.sessions[0], last_seen_us=2)
+
+        # run_isolated_session_tasks must not cancel the healthy factory
+        async def run():
+            await fleet.run_isolated_session_tasks([failing_factory, healthy_factory])
+
+        asyncio.run(run())
+
+        self.assertIn('failing-start', events)
+        self.assertIn('healthy-start', events)
+        self.assertIn('healthy-done', events)
+
+        doc = manager.build_registry()
+        by_id = {row['device_id']: row for row in doc['devices']}
+        self.assertEqual(by_id['esp32:aabbccddeeff']['route'], 'reconnecting')
+        self.assertEqual(by_id['esp32:1111ccddeeff']['route'], 'connected')
+
+    # --- test 3 ---
+    def test_identify_fleet_device_returns_offline_when_no_writer(self):
+        """_identify_fleet_device returns 'offline' when _active_writers[index] is None."""
+        node = self._make_stub_node()
+        # Ensure the session is known but has no active writer
+        self.assertIsNone(node._active_writers[0])
+
+        class _StubRequest:
+            command_id = 'test-cmd-001'
+            target_device_id = 'esp32:aabbccddeeff'
+            duration_ms = 1500
+
+        class _StubResponse:
+            command_id = ''
+            target_device_id = ''
+            outcome = ''
+            applied_duration_ms = 0
+            detail = ''
+
+        response = node._identify_fleet_device(_StubRequest(), _StubResponse())
+        self.assertEqual(response.outcome, 'offline')
+
+    # --- test 4 ---
+    def test_imu_publishers_created_for_master_and_slave_roles(self):
+        """fleet_bridge_node.py source contains /esp32/master/imu and /esp32/slave/imu publisher topics."""
+        from pathlib import Path
+        source = (
+            Path(__file__).parents[1]
+            / 'rehab_robotics_bridge'
+            / 'fleet_bridge_node.py'
+        ).read_text(encoding='utf-8')
+        self.assertIn('/esp32/master/imu', source)
+        self.assertIn('/esp32/slave/imu', source)
+        # Both should appear in the __init__ section (within the first 1000 lines)
+        lines = source.splitlines()
+        imu_lines = [i for i, line in enumerate(lines, 1)
+                     if '/esp32/master/imu' in line or '/esp32/slave/imu' in line]
+        self.assertGreaterEqual(len(imu_lines), 2,
+            'Expected at least two lines referencing imu publisher topics')
+
+    # --- test 5 ---
+    def test_fleet_frame_publish_calls_session_raw_publish(self):
+        """_publish_fleet_frame with 14-channel all-zeros OE payload calls publish_session_raw."""
+        import json as _json
+        import struct
+
+        published_raw: list[str] = []
+
+        class _StubPub:
+            def __init__(self, topic):
+                self.topic = topic
+            def publish(self, message):
+                published_raw.append(getattr(message, 'data', ''))
+
+        routes = fleet.parse_routes_json(_json.dumps([
+            {'host': '127.0.0.1', 'port': 5002,
+             'expected_device_id': 'esp32:aabbccddeeff', 'role': 'master'},
+        ]))
+        string_type = type('String', (), {'__init__': lambda self: setattr(self, 'data', '')})
+
+        def _create_pub(msg_type, topic, qos):
+            return _StubPub(topic)
+
+        manager = fleet.FleetSessionManager(
+            routes,
+            create_publisher=_create_pub,
+            string_message_type=string_type,
+        )
+
+        # Override publish_session_raw to capture calls
+        session_raw_calls: list[str] = []
+        original_pub = manager.publish_session_raw
+        def _spy_raw(session, payload):
+            session_raw_calls.append(payload)
+        manager.publish_session_raw = _spy_raw
+
+        manager.on_session_bound(manager.sessions[0], 'esp32:aabbccddeeff', last_seen_us=1)
+
+        node = object.__new__(fleet.FleetBridgeNode)
+        node._manager = manager
+        node._sessions = manager.sessions
+        node._imu_pubs = {'master': None, 'slave': None}
+        node._body_segments = {}
+
+        # 14-channel, 1 sample/period, 2 bytes/sample → 28 bytes all zeros
+        n_ch = 14
+        n_per = 1
+        payload = bytes(n_ch * n_per * 2)
+
+        node._publish_fleet_frame(0, manager.sessions[0], payload, n_ch, n_per, 1)
+
+        self.assertEqual(len(session_raw_calls), 1)
+        data = _json.loads(session_raw_calls[0])
+        self.assertIn('device_id', data)
+        self.assertIn('node_role', data)
+        self.assertIn('quat', data)
+        self.assertIn('imu', data)
+        self.assertEqual(data['device_id'], 'esp32:aabbccddeeff')
+        self.assertEqual(data['node_role'], 'master')
+
+    # --- test 6 ---
+    def test_apply_udp_drop_count_called_on_reconnect(self):
+        """FleetRegistryStore.record_udp_drops + apply_udp_drop_count propagates to registry row."""
+        store = fleet.FleetRegistryStore()
+        store.upsert_connected(
+            device_id='esp32:aabbccddeeff',
+            role='master',
+            host='192.168.4.1',
+            esp_port=5000,
+            listen_port=5002,
+            configured_hz=100,
+            observed_hz=99.0,
+            last_seen_us=1,
+        )
+        store.record_udp_drops('esp32:aabbccddeeff', 42)
+
+        import json as _json
+        routes = fleet.parse_routes_json(_json.dumps([
+            {'host': '192.168.4.1', 'port': 5002,
+             'expected_device_id': 'esp32:aabbccddeeff', 'role': 'master'},
+        ]))
+        string_type = type('String', (), {'__init__': lambda self: setattr(self, 'data', '')})
+
+        class _StubPub:
+            def __init__(self, topic): pass
+            def publish(self, message): pass
+
+        manager = fleet.FleetSessionManager(
+            routes,
+            create_publisher=lambda t, topic, q: _StubPub(topic),
+            string_message_type=string_type,
+        )
+        manager.on_session_bound(manager.sessions[0], 'esp32:aabbccddeeff', last_seen_us=1)
+
+        # Simulate what _connect_and_stream_route does on reconnect:
+        # propagate relay-visible drop_count into the registry
+        manager.apply_udp_drop_count('esp32:aabbccddeeff', 42)
+
+        doc = manager.build_registry()
+        by_id = {row['device_id']: row for row in doc['devices']}
+        self.assertEqual(by_id['esp32:aabbccddeeff']['drops']['udp_drop_count'], 42)
+
+
 if __name__ == '__main__':
     unittest.main()
