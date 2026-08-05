@@ -16,7 +16,7 @@ Milestone v1.6 generalizes the existing fixed Master/Slave acquisition and OpenS
 ## Phases
 
 - [x] **Phase 20: Full Identity and Confirmed Identify** - Every Master and Slave has a verified stable identity and a safely acknowledged physical Identify action. (completed 2026-07-30)
-- [ ] **Phase 21: N-Route Relay and Canonical ROS Fleet** - All devices remain independently discoverable, routed, observable, and compatible with explicit legacy aliases. (verification gaps 2026-07-31 — live fleet TCP placeholder)
+- [x] **Phase 21: N-Route Relay and Canonical ROS Fleet** - All devices remain independently discoverable, routed, observable, and compatible with explicit legacy aliases. (completed 2026-08-05)
 - [ ] **Phase 22: Model Catalog, Mapping Store, and Transactional Contracts** - Model-derived assignments are validated, revisioned, persisted, and applied atomically.
 - [ ] **Phase 23: N-Sensor Calibration and Official OpenSim IK** - Applied mappings drive provenance-bound calibration and valid synchronized N-sensor OpenSim solves.
 - [ ] **Phase 24: Rosbridge and Studio Mapping Workspace** - Operators manage the authoritative fleet mapping through stable, actionable device rows.
@@ -70,13 +70,15 @@ Plans:
   2. Each device publishes canonical per-MAC IMU and health data on the same topics after DHCP, reconnect, or ordering changes, while fixed Master/Slave aliases remain explicitly bound to identities and carry matching data.
   3. A failed, stale, or reconnecting route does not stop acquisition, health, Identify, or recording for other devices, and its bounded queue, drop, and reconnect diagnostics remain visible.
 
-**Plans**: 4 plans
+**Plans**: 6 plans
 
 Plans:
 - [x] 21-01-PLAN.md — Multi-slave relay + launcher discovery (route all verified ≤6)
 - [x] 21-02-PLAN.md — Fleet manager: canonical mac_ topics + layered registry
 - [x] 21-03-PLAN.md — Legacy aliases + pair health + single-process launch params
 - [x] 21-04-PLAN.md — Isolation diagnostics (drop_count, reconnect) + deterministic tests
+- [ ] 21-05-PLAN.md — Live TCP session loop: per-route connect/handshake/stream/Identify/Imu (gap closure)
+- [ ] 21-06-PLAN.md — Deterministic live-session contract tests (gap closure)
 
 ### Phase 22: Model Catalog, Mapping Store, and Transactional Contracts
 
@@ -143,7 +145,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 20. Full Identity and Confirmed Identify | 6/6 | Complete   | 2026-07-30 |
-| 21. N-Route Relay and Canonical ROS Fleet | 4/4 | Verification gaps | 2026-07-31 |
+| 21. N-Route Relay and Canonical ROS Fleet | 4/6 | Gap closure in progress | 2026-07-31 |
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 0/TBD | Not started | - |
 | 23. N-Sensor Calibration and Official OpenSim IK | 0/TBD | Not started | - |
 | 24. Rosbridge and Studio Mapping Workspace | 0/TBD | Not started | - |
