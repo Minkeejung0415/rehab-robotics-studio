@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import math
+import threading
 import time
 from typing import Callable
 
@@ -99,6 +100,23 @@ class _SensorState:
     last_xyzw: tuple[float, float, float, float] | None = None
     updates: int = 0
     last_error: str = ""
+
+
+@dataclass
+class _DeviceInput:
+    """Per-device state for dynamic N-sensor subscription management (IK-01)."""
+
+    device_id: str          # canonical "esp32:aabbccddeeff"
+    frame: str              # OpenSim frame name e.g. "tibia_r_imu"
+    subscription_handle: object  # ROS subscription returned by create_subscription
+    last_xyzw: tuple[float, float, float, float] | None = None
+    last_ts_ns: int | None = None
+    post_reconnect_fresh: bool = False
+    last_seen_monotonic: float | None = None
+
+
+_MAPPING_CURRENT_TOPIC = "/rehab/mapping/current"
+_FLEET_REGISTRY_TOPIC = "/esp/fleet/registry"
 
 
 class OpenSimBridgeNode(Node):
@@ -271,6 +289,24 @@ class OpenSimBridgeNode(Node):
             self._on_slave_imu,
             _IMU_QOS,
         )
+
+        # N-sensor dynamic subscription management (IK-01)
+        self._input_lock = threading.Lock()
+        self._mac_inputs: dict[str, _DeviceInput] = {}
+        self._n_mapping_revision: int = 0
+        self._mapping_subscription = self.create_subscription(
+            String,
+            _MAPPING_CURRENT_TOPIC,
+            self._on_mapping_current,
+            _IMU_QOS,
+        )
+        self._fleet_registry_subscription = self.create_subscription(
+            String,
+            _FLEET_REGISTRY_TOPIC,
+            self._on_fleet_registry,
+            _IMU_QOS,
+        )
+
         self._capture_service = self.create_service(
             Trigger,
             CALIBRATION_CAPTURE_SERVICE,
@@ -290,6 +326,124 @@ class OpenSimBridgeNode(Node):
             min(self._stale_timeout_s / 2.0, 0.5),
             self._on_status_timer,
         )
+
+    def _on_mapping_current(self, message: String) -> None:
+        """Handle /rehab/mapping/current: create/destroy MAC-keyed subscriptions."""
+        try:
+            data = json.loads(message.data)
+        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+            self.get_logger().warning(
+                f"N-sensor mapping: malformed JSON ignored: {exc}"
+            )
+            return
+
+        assigned_list = data.get("assigned", [])
+        if not isinstance(assigned_list, list):
+            self.get_logger().warning(
+                "N-sensor mapping: 'assigned' field is not a list; ignored"
+            )
+            return
+
+        with self._input_lock:
+            new_device_ids = {
+                entry["device_id"]
+                for entry in assigned_list
+                if isinstance(entry, dict) and "device_id" in entry
+            }
+            # Destroy subscriptions for removed devices
+            for device_id in list(self._mac_inputs):
+                if device_id not in new_device_ids:
+                    try:
+                        self.destroy_subscription(
+                            self._mac_inputs[device_id].subscription_handle
+                        )
+                    except Exception:
+                        pass
+                    del self._mac_inputs[device_id]
+            # Create subscriptions for new devices
+            for entry in assigned_list:
+                if not isinstance(entry, dict):
+                    continue
+                device_id = entry.get("device_id", "")
+                if not device_id:
+                    continue
+                frame = entry.get("frame", "")
+                if device_id not in self._mac_inputs:
+                    mac_hex = device_id.replace("esp32:", "")
+                    topic = f"/esp/raw/mac_{mac_hex}"
+                    sub = self.create_subscription(
+                        Imu,
+                        topic,
+                        lambda msg, did=device_id: self._on_mac_imu(did, msg),
+                        _IMU_QOS,
+                    )
+                    self._mac_inputs[device_id] = _DeviceInput(
+                        device_id=device_id,
+                        frame=frame,
+                        subscription_handle=sub,
+                    )
+                else:
+                    # Update frame if it changed
+                    self._mac_inputs[device_id].frame = frame
+
+            self._n_mapping_revision = int(data.get("applied_revision", 0))
+
+        self.get_logger().info(
+            f"N-sensor mapping update: {len(self._mac_inputs)} devices"
+        )
+
+    def _on_mac_imu(self, device_id: str, message: Imu) -> None:
+        """Handle a MAC-addressed IMU frame for a dynamically subscribed device."""
+        source_ts = _source_timestamp_ns(message)
+        now = self._monotonic_clock()
+        with self._input_lock:
+            entry = self._mac_inputs.get(device_id)
+            if entry is None:
+                return
+            orientation = message.orientation
+            try:
+                xyzw = (
+                    float(orientation.x),
+                    float(orientation.y),
+                    float(orientation.z),
+                    float(orientation.w),
+                )
+            except (TypeError, AttributeError):
+                return
+            first_frame = entry.last_xyzw is None
+            entry.last_xyzw = xyzw
+            entry.last_ts_ns = source_ts
+            entry.last_seen_monotonic = now
+            if first_frame:
+                entry.post_reconnect_fresh = True
+
+    def _on_fleet_registry(self, message: String) -> None:
+        """Handle /esp/fleet/registry reconnect events; clears post_reconnect_fresh."""
+        try:
+            data = json.loads(message.data)
+        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+            self.get_logger().warning(
+                f"N-sensor fleet registry: malformed JSON ignored: {exc}"
+            )
+            return
+
+        reconnected: list[str] = []
+        if "reconnected_devices" in data:
+            val = data["reconnected_devices"]
+            if isinstance(val, list):
+                reconnected = [str(d) for d in val]
+        elif "devices" in data and isinstance(data["devices"], list):
+            for device_entry in data["devices"]:
+                if isinstance(device_entry, dict):
+                    if device_entry.get("event") == "reconnect":
+                        did = device_entry.get("device_id", "")
+                        if did:
+                            reconnected.append(str(did))
+
+        with self._input_lock:
+            for device_id in reconnected:
+                if device_id in self._mac_inputs:
+                    self._mac_inputs[device_id].post_reconnect_fresh = False
 
     def _on_master_imu(self, message: Imu) -> None:
         self._on_imu("master", message)
@@ -509,6 +663,28 @@ class OpenSimBridgeNode(Node):
             and may_publish_joint_states(self._calibration.state)
             and solution.source_timestamp_ns is not None
         ):
+            pose_names = (
+                list(solution.visualization_coordinate_names)
+                or list(solution.joint_names)
+            )
+            pose_positions = (
+                list(solution.visualization_positions_rad)
+                or list(solution.positions_rad)
+            )
+            try:
+                pose_accepted = self._adapter.update_pose(
+                    pose_names,
+                    pose_positions,
+                )
+                if not pose_accepted and self._recover_visualizer_adapter():
+                    self._adapter.update_pose(
+                        pose_names,
+                        pose_positions,
+                    )
+            except Exception:
+                # Visualization remains orthogonal to acquisition and product
+                # JointState publication.  The adapter owns its failure state.
+                pass
             self._ik_solution = {
                 "name": list(solution.joint_names),
                 "position": list(solution.positions_rad),
@@ -608,6 +784,7 @@ class OpenSimBridgeNode(Node):
         if reason not in (
             "visualizer_open_failed",
             "visualizer_update_failed",
+            "visualizer_pose_update_failed",
         ):
             return False
         now = self._monotonic_clock()
