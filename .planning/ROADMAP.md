@@ -184,9 +184,9 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 20. Full Identity and Confirmed Identify | 6/6 | Complete   | 2026-07-30 |
-| 21. N-Route Relay and Canonical ROS Fleet | 4/6 | Gap closure in progress | 2026-07-31 |
-| 22. Model Catalog, Mapping Store, and Transactional Contracts | 0/6 | Not started | - |
-| 23. N-Sensor Calibration and Official OpenSim IK | 5/5 | Complete   | 2026-08-05 |
+| 21. N-Route Relay and Canonical ROS Fleet | 6/6 | Complete | 2026-08-05 |
+| 22. Model Catalog, Mapping Store, and Transactional Contracts | 6/6 | Complete | 2026-08-05 |
+| 23. N-Sensor Calibration and Official OpenSim IK | 5/5 | Complete | 2026-08-05 |
 | 24. Rosbridge and Studio Mapping Workspace | 0/TBD | Not started | - |
 | 25. Multi-Device Compatibility and Promotion Gate | 0/TBD | Not started | - |
 
