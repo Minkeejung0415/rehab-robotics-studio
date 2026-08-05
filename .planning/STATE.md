@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Multi-Sensor Bone Mapping
 status: verifying
-stopped_at: Completed 23-05-PLAN.md — Phase 23 green gate (359 passed)
-last_updated: "2026-08-05T20:01:08.189Z"
+stopped_at: Completed 24-01-PLAN.md
+last_updated: "2026-08-05T22:10:55.392Z"
 last_activity: 2026-08-05
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 23
-  completed_plans: 23
+  total_plans: 27
+  completed_plans: 24
   percent: 67
 ---
 
@@ -30,7 +30,7 @@ Plan: 4 of 4 executed; verification 2/5
 Status: Phase complete — ready for verification
 Last activity: 2026-08-05
 
-Progress: [██████████] 100%
+Progress: [█████████░] 89%
 Verification: `.planning/phases/21-n-route-relay-and-canonical-ros-fleet/21-VERIFICATION.md`
 
 ## Performance Metrics
@@ -58,6 +58,7 @@ Verification: `.planning/phases/21-n-route-relay-and-canonical-ros-fleet/21-VERI
 
 | Phase 21 P04 | 35min | 2 tasks | 7 files |
 | Phase 23 P05 | 521 | 3 tasks | 3 files |
+| Phase 24 P01 | 8m | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,7 @@ Decisions are logged in `PROJECT.md`. Current milestone decisions:
 - [Phase ?]: sync_skew_ms wired to opensim_bridge executable via DeclareLaunchArgument(default=50); node clamps with max(1,int(value))
 - [Phase ?]: CalibrationArtifactStoreExtendedTests adds 8 named contract methods covering corruption, schema, and edge cases
 - [Phase ?]: std_msgs stub extended with Float32MultiArray+Header+SetBool to fix pytest module-ordering isolation failure
+- [Phase ?]: mappingStore uses node:test runner instead of vitest; globalThis.setTimeout for mockable auto-clear in D-18
 
 ### Pending Todos
 
@@ -119,6 +121,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-08-05T20:01:08.180Z
-Stopped at: Completed 23-05-PLAN.md — Phase 23 green gate (359 passed)
+Last session: 2026-08-05T22:10:55.384Z
+Stopped at: Completed 24-01-PLAN.md
 Resume file: None

@@ -42,10 +42,10 @@
 
 ### Studio Mapping Workspace
 
-- [ ] **UI-01**: Operator can open a dedicated mapping panel containing stable rows for the Master and every known Slave, including offline saved devices.
+- [x] **UI-01**: Operator can open a dedicated mapping panel containing stable rows for the Master and every known Slave, including offline saved devices.
 - [ ] **UI-02**: Each row shows full MAC identity, role/capabilities, layered readiness, live rate/errors, model-derived segment selector, explicit Not used choice, and targeted Identify control.
-- [ ] **UI-03**: Operator can distinguish Draft, Saved, Applied, and Runtime Ready states and receives immediate local conflict feedback plus authoritative backend validation and stale-revision errors.
-- [ ] **UI-04**: Reload, reconnect, arbitrary status ordering, and temporary dropout preserve row identity and restore the backend mapping without treating browser state as applied truth.
+- [x] **UI-03**: Operator can distinguish Draft, Saved, Applied, and Runtime Ready states and receives immediate local conflict feedback plus authoritative backend validation and stale-revision errors.
+- [x] **UI-04**: Reload, reconnect, arbitrary status ordering, and temporary dropout preserve row identity and restore the backend mapping without treating browser state as applied truth.
 
 ### Compatibility and Promotion
 
@@ -96,10 +96,10 @@
 | IK-02 | Phase 23 | Complete |
 | IK-03 | Phase 23 | Complete |
 | IK-04 | Phase 23 | Complete |
-| UI-01 | Phase 24 | Pending |
+| UI-01 | Phase 24 | Complete |
 | UI-02 | Phase 24 | Pending |
-| UI-03 | Phase 24 | Pending |
-| UI-04 | Phase 24 | Pending |
+| UI-03 | Phase 24 | Complete |
+| UI-04 | Phase 24 | Complete |
 | COMP-01 | Phase 25 | Pending |
 | COMP-02 | Phase 25 | Pending |
 | COMP-03 | Phase 25 | Pending |

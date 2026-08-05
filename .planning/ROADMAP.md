@@ -160,8 +160,22 @@ Plans:
   3. Operator can distinguish Draft, Saved, Applied, and Runtime Ready states and receives immediate conflict feedback plus authoritative validation, interlock, and stale-revision errors.
   4. Reload, reconnect, arbitrary status ordering, and temporary dropout preserve row identity and restore backend state without treating local browser state as applied truth.
 
-**Plans**: TBD
-**UI hint**: yes
+**Plans**: 4 plans
+
+Plans:
+
+**Wave 1** *(parallel — both independent)*
+
+- [x] 24-01-PLAN.md — mappingStore.ts: Zustand store with all types, row identity, mappingStatus computation (TDD)
+- [ ] 24-02-PLAN.md — RosbridgeDataSource extensions: 5 subscriptions + 4 service call methods (TDD)
+
+**Wave 2** *(blocked on 24-01 completion)*
+
+- [ ] 24-03-PLAN.md — MappingWorkspace.tsx: full panel component with header, 9-column table, footer, all interactions
+
+**Wave 3** *(blocked on 24-01, 24-02, 24-03 completion)*
+
+- [ ] 24-04-PLAN.md — App shell wiring: App.tsx Mapping tab + appDataSource.ts callbacks + integration smoke test
 
 ### Phase 25: Multi-Device Compatibility and Promotion Gate
 
@@ -187,7 +201,7 @@ Plans:
 | 21. N-Route Relay and Canonical ROS Fleet | 6/6 | Complete | 2026-08-05 |
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 6/6 | Complete | 2026-08-05 |
 | 23. N-Sensor Calibration and Official OpenSim IK | 5/5 | Complete | 2026-08-05 |
-| 24. Rosbridge and Studio Mapping Workspace | 0/TBD | Not started | - |
+| 24. Rosbridge and Studio Mapping Workspace | 1/4 | In Progress|  |
 | 25. Multi-Device Compatibility and Promotion Gate | 0/TBD | Not started | - |
 
 ---
