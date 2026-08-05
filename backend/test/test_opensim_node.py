@@ -218,14 +218,29 @@ def _install_ros_stubs():
     if "rehab_robotics_interfaces" not in sys.modules:
         rehab_interfaces = types.ModuleType("rehab_robotics_interfaces")
         rehab_interfaces.srv = types.ModuleType("rehab_robotics_interfaces.srv")
-        rehab_interfaces.srv.IdentifyDevice = type("IdentifyDevice", (), {})
+        for _sym in (
+            "IdentifyDevice",
+            "ApplyMapping",
+            "GetMappingState",
+            "ResetMapping",
+            "SetAssignment",
+        ):
+            setattr(rehab_interfaces.srv, _sym, type(_sym, (), {}))
         sys.modules["rehab_robotics_interfaces"] = rehab_interfaces
         sys.modules["rehab_robotics_interfaces.srv"] = rehab_interfaces.srv
     else:
-        # Patch missing IdentifyDevice onto the existing stub if absent
+        # Patch missing symbols onto the existing stub if absent
         existing_srv = sys.modules.get("rehab_robotics_interfaces.srv")
-        if existing_srv is not None and not hasattr(existing_srv, "IdentifyDevice"):
-            existing_srv.IdentifyDevice = type("IdentifyDevice", (), {})
+        if existing_srv is not None:
+            for _sym in (
+                "IdentifyDevice",
+                "ApplyMapping",
+                "GetMappingState",
+                "ResetMapping",
+                "SetAssignment",
+            ):
+                if not hasattr(existing_srv, _sym):
+                    setattr(existing_srv, _sym, type(_sym, (), {}))
 
 
 _install_ros_stubs()
