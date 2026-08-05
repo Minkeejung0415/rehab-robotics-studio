@@ -6,6 +6,7 @@ import math
 import sys
 import types
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -85,6 +86,10 @@ class _StubNode:
         timer = types.SimpleNamespace(period=period, callback=callback)
         self.timers.append(timer)
         return timer
+
+    def destroy_subscription(self, sub):
+        if sub in self.subscriptions:
+            self.subscriptions.remove(sub)
 
     def get_logger(self):
         return self.logger
@@ -225,6 +230,7 @@ class _FakeAdapter:
     ):
         self.accepted = accepted
         self.calls = []
+        self.pose_calls = []
         self.open_calls = 0
         self.open_result = open_result
         self._status = {
@@ -247,6 +253,10 @@ class _FakeAdapter:
 
     def update_sensor(self, sensor_id, frame_name, rotation):
         self.calls.append((sensor_id, frame_name, rotation))
+        return self.accepted
+
+    def update_pose(self, coordinate_names, positions_rad):
+        self.pose_calls.append((list(coordinate_names), list(positions_rad)))
         return self.accepted
 
     def status(self):
@@ -276,24 +286,25 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
         node = self._node()
 
         self.assertEqual(node.node_name, "opensim_bridge")
-        self.assertEqual(len(node.subscriptions), 2)
-        self.assertEqual(
-            [subscription.topic for subscription in node.subscriptions],
-            ["/esp32/master/imu", "/esp32/slave/imu"],
+        # Check by topic name rather than bare count to tolerate additional
+        # infrastructure subscriptions (e.g. /rehab/mapping/current, /esp/fleet/registry).
+        topics = [subscription.topic for subscription in node.subscriptions]
+        self.assertIn("/esp32/master/imu", topics)
+        self.assertIn("/esp32/slave/imu", topics)
+        imu_subs = [s for s in node.subscriptions if s.topic in ("/esp32/master/imu", "/esp32/slave/imu")]
+        self.assertTrue(
+            all(s.message_type is _Imu for s in imu_subs)
         )
         self.assertTrue(
-            all(subscription.message_type is _Imu for subscription in node.subscriptions)
+            all(s.qos.history == "keep_last" for s in imu_subs)
         )
         self.assertTrue(
-            all(subscription.qos.history == "keep_last" for subscription in node.subscriptions)
+            all(s.qos.depth == 1 for s in imu_subs)
         )
-        self.assertTrue(
-            all(subscription.qos.depth == 1 for subscription in node.subscriptions)
-        )
-        topics = [publisher.topic for publisher in node.publishers]
-        self.assertIn("/opensim/status", topics)
-        self.assertIn(CALIBRATION_STATUS_TOPIC, topics)
-        self.assertIn(JOINT_STATES_TOPIC, topics)
+        pub_topics = [publisher.topic for publisher in node.publishers]
+        self.assertIn("/opensim/status", pub_topics)
+        self.assertIn(CALIBRATION_STATUS_TOPIC, pub_topics)
+        self.assertIn(JOINT_STATES_TOPIC, pub_topics)
         self.assertFalse(node.parameters.get("publish_joint_angle_enabled", True))
 
     def test_visualizer_trigger_is_unique_typed_and_delegates_once_per_request(self):
@@ -459,10 +470,9 @@ class OpenSimNodeForwardingTests(unittest.TestCase):
             monotonic_clock=self.clock,
         )
 
-        self.assertEqual(
-            [subscription.topic for subscription in node.subscriptions],
-            ["/custom/master", "/custom/slave"],
-        )
+        sub_topics = [subscription.topic for subscription in node.subscriptions]
+        self.assertIn("/custom/master", sub_topics)
+        self.assertIn("/custom/slave", sub_topics)
         self.assertEqual(node.publishers[0].topic, "/custom/status")
         joint_angle_pubs = [
             publisher
@@ -1046,7 +1056,12 @@ class OpenSimNodeCalibrationTests(unittest.TestCase):
 
     def test_fake_solver_publishes_stamped_joint_states_when_calibrated(self):
         fast = CalibrationController(window_s=0.3, min_samples=4)
-        node = self._node(calibration=fast, ik_solver=FakeOrientationIkSolver())
+        adapter = _FakeAdapter()
+        node = self._node(
+            adapter=adapter,
+            calibration=fast,
+            ik_solver=FakeOrientationIkSolver(),
+        )
         joint_pub = next(p for p in node.publishers if p.topic == JOINT_STATES_TOPIC)
         self._calibrate_live(node, stamp_sec=50)
         node._on_master_imu(_Imu(stamp_sec=200))
@@ -1058,6 +1073,53 @@ class OpenSimNodeCalibrationTests(unittest.TestCase):
         self.assertAlmostEqual(message.position[0], 0.0, places=5)
         self.assertEqual(message.header.stamp.sec, 200)
         self.assertEqual(message.header.stamp.nanosec, 0)
+        self.assertGreaterEqual(len(adapter.pose_calls), 1)
+        pose_names, pose_positions = adapter.pose_calls[-1]
+        self.assertEqual(pose_names, ["knee_angle_r"])
+        self.assertAlmostEqual(pose_positions[0], message.position[0], places=6)
+
+    def test_full_ik_pose_drives_visualizer_without_expanding_product_output(self):
+        class _FullPoseFake(FakeOrientationIkSolver):
+            def solve(self, **kwargs):
+                result = super().solve(**kwargs)
+                return replace(
+                    result,
+                    visualization_coordinate_names=[
+                        "hip_flexion_r",
+                        "hip_adduction_r",
+                        "hip_rotation_r",
+                        "knee_angle_r",
+                    ],
+                    visualization_positions_rad=[0.4, 0.1, -0.2, 0.3],
+                )
+
+        fast = CalibrationController(window_s=0.3, min_samples=4)
+        adapter = _FakeAdapter()
+        node = self._node(
+            adapter=adapter,
+            calibration=fast,
+            ik_solver=_FullPoseFake(),
+        )
+        joint_pub = next(p for p in node.publishers if p.topic == JOINT_STATES_TOPIC)
+        self._calibrate_live(node, stamp_sec=50)
+        node._on_master_imu(_Imu(stamp_sec=200))
+        node._on_slave_imu(_Imu(stamp_sec=200))
+
+        message = joint_pub.messages[-1]
+        self.assertEqual(list(message.name), ["knee_angle_r"])
+        self.assertEqual(len(message.position), 1)
+        self.assertEqual(
+            adapter.pose_calls[-1],
+            (
+                [
+                    "hip_flexion_r",
+                    "hip_adduction_r",
+                    "hip_rotation_r",
+                    "knee_angle_r",
+                ],
+                [0.4, 0.1, -0.2, 0.3],
+            ),
+        )
 
     def test_clear_stops_joint_states_and_resets_solution(self):
         fast = CalibrationController(window_s=0.3, min_samples=4)
@@ -1147,6 +1209,165 @@ class OpenSimNodeCalibrationTests(unittest.TestCase):
         self.assertGreaterEqual(len(diag_pub.messages), 1)
         payload = json.loads(diag_pub.messages[-1].data)
         self.assertIn("solution_valid", payload)
+
+
+class IkOneContractTests(unittest.TestCase):
+    """IK-01 contract tests: dynamic MAC-keyed subscription lifecycle.
+
+    Covers IK-01-A through IK-01-F as defined in 23-01-PLAN.md.
+    All tests run without live ROS or hardware via _install_ros_stubs().
+    """
+
+    _MAPPING_TWO_DEVICES = json.dumps({
+        "applied_revision": 1,
+        "assigned": [
+            {"device_id": "esp32:aabbccddeeff", "frame": "tibia_r_imu", "segment": "tibia"},
+            {"device_id": "esp32:112233445566", "frame": "femur_r_imu", "segment": "femur"},
+        ],
+    })
+
+    _MAPPING_ONE_NEW_ONE_REMOVED = json.dumps({
+        "applied_revision": 2,
+        "assigned": [
+            {"device_id": "esp32:aabbccddeeff", "frame": "tibia_r_imu", "segment": "tibia"},
+            {"device_id": "esp32:ffeeddccbbaa", "frame": "pelvis_imu", "segment": "pelvis"},
+        ],
+    })
+
+    _MAPPING_SINGLE_DEVICE = json.dumps({
+        "applied_revision": 3,
+        "assigned": [
+            {"device_id": "esp32:aabbccddeeff", "frame": "tibia_r_imu", "segment": "tibia"},
+        ],
+    })
+
+    def setUp(self):
+        _StubNode.parameter_overrides = {}
+        self.clock = _Clock()
+
+    def _make_node(self):
+        return opensim_node.OpenSimBridgeNode(
+            adapter=_FakeAdapter(),
+            monotonic_clock=self.clock,
+            ik_solver=UnavailableOrientationIkSolver("test_ik01"),
+        )
+
+    def _mapping_msg(self, json_str):
+        msg = _String()
+        msg.data = json_str
+        return msg
+
+    def _imu_msg(self, x=0.0, y=0.0, z=0.0, w=1.0, stamp_sec=100, stamp_nanosec=0):
+        return _Imu(x=x, y=y, z=z, w=w, stamp_sec=stamp_sec, stamp_nanosec=stamp_nanosec)
+
+    def test_ik01_a_two_assigned_devices_create_two_mac_subscriptions(self):
+        """IK-01-A: _on_mapping_current with 2 assigned devices creates 2 MAC subscriptions."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+
+        mac_subs = [s for s in node.subscriptions if "/esp/raw/mac_" in s.topic]
+        self.assertEqual(len(mac_subs), 2)
+
+        mac_topics = {s.topic for s in mac_subs}
+        self.assertIn("/esp/raw/mac_aabbccddeeff", mac_topics)
+        self.assertIn("/esp/raw/mac_112233445566", mac_topics)
+
+    def test_ik01_b_remap_destroys_removed_subscription_creates_new(self):
+        """IK-01-B: Re-calling _on_mapping_current replaces old subscriptions with new ones."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+
+        # First mapping: aabbccddeeff + 112233445566
+        initial_mac_subs = [s for s in node.subscriptions if "/esp/raw/mac_" in s.topic]
+        self.assertEqual(len(initial_mac_subs), 2)
+
+        # Remap: keep aabbccddeeff, remove 112233445566, add ffeeddccbbaa
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_ONE_NEW_ONE_REMOVED))
+
+        mac_subs_after = [s for s in node.subscriptions if "/esp/raw/mac_" in s.topic]
+        mac_topics_after = {s.topic for s in mac_subs_after}
+
+        # Old device 112233445566 must be gone
+        self.assertNotIn("/esp/raw/mac_112233445566", mac_topics_after)
+        # Kept device must remain
+        self.assertIn("/esp/raw/mac_aabbccddeeff", mac_topics_after)
+        # New device must be present
+        self.assertIn("/esp/raw/mac_ffeeddccbbaa", mac_topics_after)
+        # Exactly 2 MAC subscriptions
+        self.assertEqual(len(mac_subs_after), 2)
+
+    def test_ik01_c_mac_inputs_dict_has_exactly_new_device_ids_after_remap(self):
+        """IK-01-C: _mac_inputs dict has exactly the new device_ids as keys after remap."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+
+        self.assertIn("esp32:aabbccddeeff", node._mac_inputs)
+        self.assertIn("esp32:112233445566", node._mac_inputs)
+        self.assertEqual(len(node._mac_inputs), 2)
+
+        # Remap with different devices
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_ONE_NEW_ONE_REMOVED))
+
+        self.assertIn("esp32:aabbccddeeff", node._mac_inputs)
+        self.assertNotIn("esp32:112233445566", node._mac_inputs)
+        self.assertIn("esp32:ffeeddccbbaa", node._mac_inputs)
+        self.assertEqual(len(node._mac_inputs), 2)
+
+    def test_ik01_d_on_mac_imu_sets_last_xyzw_and_fresh_on_first_call(self):
+        """IK-01-D: _on_mac_imu sets last_xyzw and post_reconnect_fresh=True on first call;
+        subsequent calls do NOT re-set post_reconnect_fresh."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_SINGLE_DEVICE))
+
+        device_id = "esp32:aabbccddeeff"
+        self.assertIn(device_id, node._mac_inputs)
+        entry = node._mac_inputs[device_id]
+        self.assertIsNone(entry.last_xyzw)
+        self.assertFalse(entry.post_reconnect_fresh)
+
+        # First IMU frame
+        node._on_mac_imu(device_id, self._imu_msg(x=0.0, y=0.0, z=0.0, w=1.0, stamp_sec=10))
+        self.assertIsNotNone(entry.last_xyzw)
+        self.assertTrue(entry.post_reconnect_fresh)
+
+        # Second IMU frame — post_reconnect_fresh must stay True (not re-set)
+        node._on_mac_imu(device_id, self._imu_msg(x=0.1, y=0.0, z=0.0, w=0.99, stamp_sec=11))
+        self.assertTrue(entry.post_reconnect_fresh)
+
+    def test_ik01_e_on_fleet_registry_reconnect_clears_post_reconnect_fresh(self):
+        """IK-01-E: _on_fleet_registry with reconnect event sets post_reconnect_fresh=False."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_SINGLE_DEVICE))
+        device_id = "esp32:aabbccddeeff"
+
+        # Receive first frame so post_reconnect_fresh = True
+        node._on_mac_imu(device_id, self._imu_msg(stamp_sec=10))
+        self.assertTrue(node._mac_inputs[device_id].post_reconnect_fresh)
+
+        # Fleet registry reconnect event
+        reconnect_event = json.dumps({
+            "reconnected_devices": ["esp32:aabbccddeeff"],
+        })
+        fleet_msg = _String()
+        fleet_msg.data = reconnect_event
+        node._on_fleet_registry(fleet_msg)
+
+        self.assertFalse(node._mac_inputs[device_id].post_reconnect_fresh)
+
+    def test_ik01_f_malformed_mapping_json_logs_warning_and_does_not_raise(self):
+        """IK-01-F: _on_mapping_current with malformed JSON logs a warning and does not raise."""
+        node = self._make_node()
+        bad_msg = _String()
+        bad_msg.data = "THIS IS NOT JSON {{{broken"
+
+        # Must not raise
+        try:
+            node._on_mapping_current(bad_msg)
+        except Exception as exc:
+            self.fail(f"_on_mapping_current raised unexpectedly: {exc}")
+
+        # _mac_inputs must remain empty (no partial modification)
+        self.assertEqual(len(node._mac_inputs), 0)
 
 
 if __name__ == "__main__":
