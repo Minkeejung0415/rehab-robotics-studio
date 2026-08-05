@@ -1596,5 +1596,275 @@ class IkTwoNodeTests(unittest.TestCase):
         self.assertAlmostEqual(pose["qw"], 0.5)
 
 
+class IkThreeContractTests(unittest.TestCase):
+    """IK-03 contract tests: sync-skew gate, reconnect freshness, input_validity publisher.
+
+    Covers IK-03-A through IK-03-H as defined in 23-03-PLAN.md.
+    All tests run without live ROS or hardware via _install_ros_stubs().
+    """
+
+    _MAPPING_TWO_DEVICES = json.dumps({
+        "applied_revision": 1,
+        "model_hash": "abc123",
+        "assigned": [
+            {"device_id": "esp32:aabbccddeeff", "frame": "tibia_r_imu", "segment": "tibia"},
+            {"device_id": "esp32:112233445566", "frame": "femur_r_imu", "segment": "femur"},
+        ],
+    })
+
+    def setUp(self):
+        _StubNode.parameter_overrides = {}
+        self.clock = _Clock()
+
+    def _make_node(self, **param_overrides):
+        _StubNode.parameter_overrides = param_overrides
+        return opensim_node.OpenSimBridgeNode(
+            adapter=_FakeAdapter(),
+            monotonic_clock=self.clock,
+            ik_solver=FakeOrientationIkSolver(),
+        )
+
+    def _make_device_input(
+        self,
+        device_id,
+        frame,
+        last_ts_ns,
+        post_reconnect_fresh,
+        last_xyzw=(0.0, 0.0, 0.0, 1.0),
+    ):
+        """Create a _DeviceInput with specific state directly."""
+        from rehab_robotics_bridge.opensim_node import _DeviceInput
+        entry = _DeviceInput(
+            device_id=device_id,
+            frame=frame,
+            subscription_handle=None,
+            last_xyzw=last_xyzw,
+            last_ts_ns=last_ts_ns,
+            post_reconnect_fresh=post_reconnect_fresh,
+        )
+        return entry
+
+    def _mapping_msg(self, json_str):
+        msg = _String()
+        msg.data = json_str
+        return msg
+
+    def _imu_msg(self, x=0.0, y=0.0, z=0.0, w=1.0, stamp_sec=100, stamp_nanosec=0):
+        return _Imu(x=x, y=y, z=z, w=w, stamp_sec=stamp_sec, stamp_nanosec=stamp_nanosec)
+
+    # --- IK-03-A: two devices at same timestamp, both fresh → all_valid=True ---
+
+    def test_ik03_a_same_timestamp_both_fresh_all_valid_true(self):
+        """IK-03-A: _check_sync_skew with 2 devices at same timestamp, both fresh → all_valid=True."""
+        node = self._make_node()
+        ts = 1_000_000_000  # 1 second in nanoseconds
+        inputs = [
+            self._make_device_input("esp32:aabbccddeeff", "tibia_r_imu", ts, True),
+            self._make_device_input("esp32:112233445566", "femur_r_imu", ts, True),
+        ]
+        result = node._check_sync_skew(inputs)
+        self.assertTrue(result["all_valid"])
+        self.assertAlmostEqual(
+            result["device_validities"]["esp32:aabbccddeeff"]["skew_ms"], 0.0
+        )
+        self.assertTrue(result["device_validities"]["esp32:aabbccddeeff"]["valid"])
+        self.assertTrue(result["device_validities"]["esp32:112233445566"]["valid"])
+
+    # --- IK-03-B: one device 100ms behind median → all_valid=False ---
+
+    def test_ik03_b_one_device_100ms_behind_all_valid_false(self):
+        """IK-03-B: _check_sync_skew with one device 100ms behind median → all_valid=False, that device valid=False."""
+        node = self._make_node()  # default sync_skew_ms=50
+        ts_now = 2_000_000_000   # 2 seconds
+        ts_old = ts_now - 100_000_000  # 100ms earlier (100_000_000 ns)
+        inputs = [
+            self._make_device_input("esp32:aabbccddeeff", "tibia_r_imu", ts_now, True),
+            self._make_device_input("esp32:112233445566", "femur_r_imu", ts_old, True),
+        ]
+        result = node._check_sync_skew(inputs)
+        self.assertFalse(result["all_valid"])
+        self.assertFalse(result["device_validities"]["esp32:112233445566"]["valid"])
+        # The device with the recent timestamp should be valid
+        self.assertTrue(result["device_validities"]["esp32:aabbccddeeff"]["valid"])
+        # skew_ms for the late device should be ~50ms (relative to median which is midpoint)
+        skew = result["device_validities"]["esp32:112233445566"]["skew_ms"]
+        self.assertIsNotNone(skew)
+        self.assertGreater(skew, 0.0)
+
+    # --- IK-03-C: fresh=False on one device → all_valid=False ---
+
+    def test_ik03_c_fresh_false_causes_invalid(self):
+        """IK-03-C: _check_sync_skew with fresh=False on one device → all_valid=False, that device valid=False."""
+        node = self._make_node()
+        ts = 3_000_000_000
+        inputs = [
+            self._make_device_input("esp32:aabbccddeeff", "tibia_r_imu", ts, True),
+            self._make_device_input("esp32:112233445566", "femur_r_imu", ts, False),  # NOT fresh
+        ]
+        result = node._check_sync_skew(inputs)
+        self.assertFalse(result["all_valid"])
+        self.assertFalse(result["device_validities"]["esp32:112233445566"]["valid"])
+        # Fresh device with same ts is fine
+        self.assertTrue(result["device_validities"]["esp32:aabbccddeeff"]["valid"])
+
+    # --- IK-03-D: last_ts_ns=None on any device → all_valid=False, skew_ms=None ---
+
+    def test_ik03_d_none_timestamp_causes_invalid_and_none_skew(self):
+        """IK-03-D: _check_sync_skew with last_ts_ns=None → all_valid=False, skew_ms=None."""
+        node = self._make_node()
+        ts = 4_000_000_000
+        inputs = [
+            self._make_device_input("esp32:aabbccddeeff", "tibia_r_imu", ts, True),
+            self._make_device_input("esp32:112233445566", "femur_r_imu", None, True),
+        ]
+        result = node._check_sync_skew(inputs)
+        self.assertFalse(result["all_valid"])
+        self.assertFalse(result["device_validities"]["esp32:112233445566"]["valid"])
+        self.assertIsNone(result["device_validities"]["esp32:112233445566"]["skew_ms"])
+
+    # --- IK-03-E: skewed input does NOT publish on joint_states, DOES publish validity ---
+
+    def test_ik03_e_skewed_input_suppresses_joint_states_publishes_validity(self):
+        """IK-03-E: _solve_and_publish_ik_n() with skewed timestamps publishes to input_validity but NOT joint_states."""
+        node = self._make_node()  # sync_skew_ms=50
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+
+        validity_pub = next(
+            p for p in node.publishers if p.topic == "/rehab/opensim/input_validity"
+        )
+        joint_pub = next(
+            p for p in node.publishers if p.topic == "/opensim/joint_states"
+        )
+        initial_joint_count = len(joint_pub.messages)
+
+        # Device A gets recent timestamp (2s), device B gets 100ms old (well beyond 50ms skew)
+        ts_now = 2_000_000_000
+        ts_old = ts_now - 100_000_000  # 100ms older
+
+        # Use _on_mac_imu to update entries — timestamps determine skew
+        node._on_mac_imu("esp32:aabbccddeeff", self._imu_msg(stamp_sec=2, stamp_nanosec=0))
+        node._on_mac_imu("esp32:112233445566", self._imu_msg(stamp_sec=1, stamp_nanosec=900_000_000))  # 1.9s
+
+        # After each _on_mac_imu call, _solve_and_publish_ik_n is called automatically
+        # Both calls together should produce validity messages
+        self.assertGreaterEqual(len(validity_pub.messages), 1)
+
+        # The last validity message should show all_valid=False (100ms skew > 50ms limit)
+        last_validity = json.loads(validity_pub.messages[-1].data)
+        self.assertEqual(last_validity["schema"], "rehab.n_input_validity.1")
+        self.assertFalse(last_validity["all_valid"])
+
+        # No new joint_states published via N-sensor path (IK suppressed)
+        self.assertEqual(len(joint_pub.messages), initial_joint_count)
+
+    # --- IK-03-F: all valid inputs and calib present → gate passes, no crash ---
+
+    def test_ik03_f_all_valid_with_calib_gate_passes_no_crash(self):
+        """IK-03-F: _solve_and_publish_ik_n() with all valid inputs and calib set → no crash, stub completes."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+
+        validity_pub = next(
+            p for p in node.publishers if p.topic == "/rehab/opensim/input_validity"
+        )
+
+        # Set a fake calib artifact so the second gate also passes
+        node._n_calib_artifact = {
+            "schema_version": "calib.v1",
+            "model_hash": "abc123",
+            "applied_revision": 1,
+            "device_order": ["esp32:112233445566", "esp32:aabbccddeeff"],
+            "reference_pose": {},
+        }
+
+        # Send IMU frames with same timestamp (within skew bound)
+        ts = 5_000_000_000
+        ts_sec = ts // 1_000_000_000
+        ts_ns = ts % 1_000_000_000
+
+        node._on_mac_imu("esp32:aabbccddeeff", self._imu_msg(stamp_sec=ts_sec, stamp_nanosec=ts_ns))
+        node._on_mac_imu("esp32:112233445566", self._imu_msg(stamp_sec=ts_sec, stamp_nanosec=ts_ns))
+
+        # Should have published validity at least once
+        self.assertGreaterEqual(len(validity_pub.messages), 1)
+        # The last message should show all_valid=True (both fresh and within skew)
+        last_validity = json.loads(validity_pub.messages[-1].data)
+        self.assertTrue(last_validity["all_valid"])
+
+    # --- IK-03-G: sync_skew_ms=200 allows 100ms skew to pass ---
+
+    def test_ik03_g_param_override_200ms_allows_100ms_skew(self):
+        """IK-03-G: sync_skew_ms=200 parameter allows 100ms timestamp skew to be valid."""
+        node = self._make_node(sync_skew_ms=200)
+        ts_now = 6_000_000_000
+        ts_old = ts_now - 100_000_000  # 100ms older
+        inputs = [
+            self._make_device_input("esp32:aabbccddeeff", "tibia_r_imu", ts_now, True),
+            self._make_device_input("esp32:112233445566", "femur_r_imu", ts_old, True),
+        ]
+        result = node._check_sync_skew(inputs)
+        # With 200ms limit, 100ms skew (relative to median, so 50ms per device) passes
+        self.assertTrue(result["all_valid"])
+        # All devices should be valid
+        for dev_id, validity in result["device_validities"].items():
+            self.assertTrue(validity["valid"], f"{dev_id} should be valid")
+
+    # --- IK-03-H: existing _solve_and_publish_ik() single-sensor path unaffected ---
+
+    def test_ik03_h_single_sensor_path_unaffected_by_check_sync_skew(self):
+        """IK-03-H: Existing _solve_and_publish_ik() can still be called without errors."""
+        from rehab_robotics_bridge.opensim.calibration import CalibrationController
+        fast = CalibrationController(window_s=0.3, min_samples=4)
+        node = opensim_node.OpenSimBridgeNode(
+            adapter=_FakeAdapter(),
+            monotonic_clock=self.clock,
+            calibration_controller=fast,
+            ik_solver=FakeOrientationIkSolver(),
+        )
+        # Single-sensor path requires live sensors
+        node._on_master_imu(_Imu(stamp_sec=100))
+        node._on_slave_imu(_Imu(stamp_sec=100))
+        # Call old path directly — must not raise
+        try:
+            node._solve_and_publish_ik()
+        except Exception as exc:
+            self.fail(f"_solve_and_publish_ik() raised unexpectedly: {exc}")
+
+    # --- Additional edge cases for _check_sync_skew completeness ---
+
+    def test_ik03_empty_inputs_returns_all_valid_false(self):
+        """_check_sync_skew([]) returns all_valid=False with empty device_validities."""
+        node = self._make_node()
+        result = node._check_sync_skew([])
+        self.assertFalse(result["all_valid"])
+        self.assertEqual(result["device_validities"], {})
+
+    def test_ik03_input_validity_publisher_exists_on_correct_topic(self):
+        """/rehab/opensim/input_validity publisher is created at node init."""
+        node = self._make_node()
+        validity_pubs = [
+            p for p in node.publishers if p.topic == "/rehab/opensim/input_validity"
+        ]
+        self.assertEqual(len(validity_pubs), 1)
+
+    def test_ik03_sync_skew_ms_defaults_to_50(self):
+        """sync_skew_ms parameter defaults to 50."""
+        node = self._make_node()
+        self.assertEqual(node._sync_skew_ms, 50)
+
+    def test_ik03_all_none_timestamps_returns_all_valid_false(self):
+        """_check_sync_skew with all last_ts_ns=None returns all_valid=False, skew_ms=None for all."""
+        node = self._make_node()
+        inputs = [
+            self._make_device_input("esp32:aabbccddeeff", "tibia_r_imu", None, True),
+            self._make_device_input("esp32:112233445566", "femur_r_imu", None, True),
+        ]
+        result = node._check_sync_skew(inputs)
+        self.assertFalse(result["all_valid"])
+        for dev_id, validity in result["device_validities"].items():
+            self.assertIsNone(validity["skew_ms"], f"{dev_id} skew_ms should be None")
+            self.assertFalse(validity["valid"])
+
+
 if __name__ == "__main__":
     unittest.main()
