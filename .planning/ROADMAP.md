@@ -18,7 +18,7 @@ Milestone v1.6 generalizes the existing fixed Master/Slave acquisition and OpenS
 - [x] **Phase 20: Full Identity and Confirmed Identify** - Every Master and Slave has a verified stable identity and a safely acknowledged physical Identify action. (completed 2026-07-30)
 - [x] **Phase 21: N-Route Relay and Canonical ROS Fleet** - All devices remain independently discoverable, routed, observable, and compatible with explicit legacy aliases. (completed 2026-08-05)
 - [x] **Phase 22: Model Catalog, Mapping Store, and Transactional Contracts** - Model-derived assignments are validated, revisioned, persisted, and applied atomically. (completed 2026-08-05)
-- [ ] **Phase 23: N-Sensor Calibration and Official OpenSim IK** - Applied mappings drive provenance-bound calibration and valid synchronized N-sensor OpenSim solves.
+- [x] **Phase 23: N-Sensor Calibration and Official OpenSim IK** - Applied mappings drive provenance-bound calibration and valid synchronized N-sensor OpenSim solves. (completed 2026-08-05)
 - [ ] **Phase 24: Rosbridge and Studio Mapping Workspace** - Operators manage the authoritative fleet mapping through stable, actionable device rows.
 - [ ] **Phase 25: Multi-Device Compatibility and Promotion Gate** - Deterministic and physical acceptance evidence preserves existing workflows and determines default-mode readiness.
 
@@ -146,7 +146,7 @@ Plans:
 
 **Wave 4** *(blocked on all prior plans)*
 
-- [ ] 23-05-PLAN.md — Launch wiring and integration smoke test (all IK requirements)
+- [x] 23-05-PLAN.md — Launch wiring and integration smoke test (all IK requirements)
 
 ### Phase 24: Rosbridge and Studio Mapping Workspace
 
@@ -186,7 +186,7 @@ Plans:
 | 20. Full Identity and Confirmed Identify | 6/6 | Complete   | 2026-07-30 |
 | 21. N-Route Relay and Canonical ROS Fleet | 4/6 | Gap closure in progress | 2026-07-31 |
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 0/6 | Not started | - |
-| 23. N-Sensor Calibration and Official OpenSim IK | 4/5 | In Progress|  |
+| 23. N-Sensor Calibration and Official OpenSim IK | 5/5 | Complete   | 2026-08-05 |
 | 24. Rosbridge and Studio Mapping Workspace | 0/TBD | Not started | - |
 | 25. Multi-Device Compatibility and Promotion Gate | 0/TBD | Not started | - |
 

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Multi-Sensor Bone Mapping
 status: verifying
-stopped_at: Completed 21-04-PLAN.md
-last_updated: "2026-08-05T19:49:35.801Z"
+stopped_at: Completed 23-05-PLAN.md — Phase 23 green gate (359 passed)
+last_updated: "2026-08-05T20:01:08.189Z"
 last_activity: 2026-08-05
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 23
-  completed_plans: 22
-  percent: 50
+  completed_plans: 23
+  percent: 67
 ---
 
 # Project State
@@ -30,7 +30,7 @@ Plan: 4 of 4 executed; verification 2/5
 Status: Phase complete — ready for verification
 Last activity: 2026-08-05
 
-Progress: [██████████] 96%
+Progress: [██████████] 100%
 Verification: `.planning/phases/21-n-route-relay-and-canonical-ros-fleet/21-VERIFICATION.md`
 
 ## Performance Metrics
@@ -57,6 +57,7 @@ Verification: `.planning/phases/21-n-route-relay-and-canonical-ros-fleet/21-VERI
 - Existing phase artifacts remain preserved
 
 | Phase 21 P04 | 35min | 2 tasks | 7 files |
+| Phase 23 P05 | 521 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -90,6 +91,9 @@ Decisions are logged in `PROJECT.md`. Current milestone decisions:
 - [Phase 21]: Wireless launcher starts one fleet_bridge_node with routes_json + alias_* params.
 - [Phase 21]: Relay drop_count is per-host; fleet registry/health expose drops+reconnects without counting initial configure bind as reconnect.
 - [Phase 21]: run_isolated_session_tasks is the cancel boundary so sibling session failures never stop acquisition/health/Identify/recording peers.
+- [Phase ?]: sync_skew_ms wired to opensim_bridge executable via DeclareLaunchArgument(default=50); node clamps with max(1,int(value))
+- [Phase ?]: CalibrationArtifactStoreExtendedTests adds 8 named contract methods covering corruption, schema, and edge cases
+- [Phase ?]: std_msgs stub extended with Float32MultiArray+Header+SetBool to fix pytest module-ordering isolation failure
 
 ### Pending Todos
 
@@ -115,6 +119,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-08-05T19:49:35.789Z
-Stopped at: Completed 21-04-PLAN.md
+Last session: 2026-08-05T20:01:08.180Z
+Stopped at: Completed 23-05-PLAN.md — Phase 23 green gate (359 passed)
 Resume file: None
