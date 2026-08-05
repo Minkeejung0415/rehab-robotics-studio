@@ -167,7 +167,7 @@ Plans:
 **Wave 1** *(parallel — both independent)*
 
 - [x] 24-01-PLAN.md — mappingStore.ts: Zustand store with all types, row identity, mappingStatus computation (TDD)
-- [ ] 24-02-PLAN.md — RosbridgeDataSource extensions: 5 subscriptions + 4 service call methods (TDD)
+- [x] 24-02-PLAN.md — RosbridgeDataSource extensions: 5 subscriptions + 4 service call methods (TDD)
 
 **Wave 2** *(blocked on 24-01 completion)*
 
@@ -201,7 +201,7 @@ Plans:
 | 21. N-Route Relay and Canonical ROS Fleet | 6/6 | Complete | 2026-08-05 |
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 6/6 | Complete | 2026-08-05 |
 | 23. N-Sensor Calibration and Official OpenSim IK | 5/5 | Complete | 2026-08-05 |
-| 24. Rosbridge and Studio Mapping Workspace | 1/4 | In Progress|  |
+| 24. Rosbridge and Studio Mapping Workspace | 2/4 | In Progress|  |
 | 25. Multi-Device Compatibility and Promotion Gate | 0/TBD | Not started | - |
 
 ---
