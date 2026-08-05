@@ -3,20 +3,52 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
+import socket
+import struct
 import threading
 import time
+from collections import deque
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from sensor_msgs.msg import Imu
+from std_msgs.msg import Header, String
+from rehab_robotics_interfaces.srv import IdentifyDevice
 
 from rehab_robotics_bridge.esp32_bridge_node import (
     device_topic_token,
     display_mac,
     normalize_device_id,
+    OE_HEADER,
+    OE_HEADER_SIZE,
+    NUM_CHANNELS,
+    HANDSHAKE_CONNECT,
+    HANDSHAKE_START,
+    IDENTITY_QUERY,
+    IDENTITY_PROTOCOL,
+    IDENTIFY_PROTOCOL,
+    MAX_CONTROL_LINE_BYTES,
+    CONTROL_RESPONSE_PREFIXES,
+    IDENTIFY_DURATION_MIN_MS,
+    IDENTIFY_DURATION_MAX_MS,
+    QUAT_SCALE,
+    is_valid_oe_header,
+    find_next_oe_header,
+    parse_identity_self,
+    parse_identity_peer,
+    parse_identity_inventory,
+    validate_identify_request,
+    parse_identify_reply,
 )
+
+# ICM20948 scale factors (same values as esp32_bridge_node — defined locally to avoid
+# circular import concerns if esp32_bridge_node ever imports from fleet_bridge_node).
+ACC_SCALE = 9.80665 / 16384.0       # m/s² per LSB at ±2g
+GYR_SCALE = (math.pi / 180.0) / 131.072  # rad/s per LSB at ±250 dps
 
 FLEET_REGISTRY_TOPIC = '/esp/fleet/registry'
 FLEET_REGISTRY_SCHEMA = 'oe_esp32.fleet_registry.v1'
@@ -705,6 +737,12 @@ class FleetBridgeNode(Node):
         self.declare_parameter('registry_period_s', 0.5)
         self.declare_parameter('alias_master_device_id', '')
         self.declare_parameter('alias_slave_device_id', '')
+        self.declare_parameter('reconnect_delay_s', 5.0)
+        self.declare_parameter('handshake_timeout_s', 15.0)
+        self.declare_parameter('identify_timeout_s', 3.0)
+        self._reconnect_delay_s = float(self.get_parameter('reconnect_delay_s').value)
+        self._handshake_timeout_s = float(self.get_parameter('handshake_timeout_s').value)
+        self._identify_timeout_s = float(self.get_parameter('identify_timeout_s').value)
 
         routes_raw = self.get_parameter('routes_json').value
         if not isinstance(routes_raw, str):
@@ -736,6 +774,21 @@ class FleetBridgeNode(Node):
         self._pub_registry = self.create_publisher(String, FLEET_REGISTRY_TOPIC, 10)
         period = float(self.get_parameter('registry_period_s').value)
         self._registry_timer = self.create_timer(max(0.1, period), self._publish_registry)
+
+        # Per-session live state (indexed to match self._sessions).
+        n = len(self._sessions)
+        self._active_writers: list[asyncio.StreamWriter | None] = [None] * n
+        self._session_locks: list[asyncio.Lock | None] = [None] * n
+        self._identify_queues: list[asyncio.Queue | None] = [None] * n
+        self._imu_pubs: dict[str, Any] = {}
+
+        # Typed Imu publishers for alias-bound roles (exist even if no alias is bound yet;
+        # they publish only when a session with matching alias role streams frames).
+        self._imu_pubs['master'] = self.create_publisher(Imu, '/esp32/master/imu', 10)
+        self._imu_pubs['slave'] = self.create_publisher(Imu, '/esp32/slave/imu', 10)
+
+        # IdentifyDevice service routed to the correct per-session writer.
+        self.create_service(IdentifyDevice, '/esp32/fleet/identify', self._identify_fleet_device)
 
         self.get_logger().info(
             f'fleet_bridge_node routes={len(self._sessions)} '
@@ -798,42 +851,406 @@ class FleetBridgeNode(Node):
         self._publish_registry_doc(self._manager.build_registry())
 
     async def _run_sessions(self) -> None:
-        """Supervise one isolated task per configured route (no global cancel).
-
-        Live TCP/UDP streaming continues to use Esp32BridgeNode / relay paths;
-        this fleet node owns registry + canonical publisher lifecycle. Each
-        session task reconnects independently — sibling failures must not stop
-        acquisition, health, Identify, or recording for other devices.
-        """
-
-        async def _session_loop(index: int) -> None:
-            session = self._sessions[index]
-            while rclpy.ok():
-                try:
-                    # Placeholder until live TCP sessions bind here; keep the
-                    # isolation contract under test via run_isolated_session_tasks.
-                    await asyncio.sleep(1.0)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:  # noqa: BLE001
-                    self.get_logger().warning(
-                        f'session[{index}] {session.expected_device_id} error={exc!r}; '
-                        'marking reconnecting without affecting siblings'
-                    )
-                    self._manager.on_session_reconnecting(session)
-                    await asyncio.sleep(0.5)
-
+        """Supervise one isolated TCP session task per configured route."""
         if not self._sessions:
             while rclpy.ok():
                 await asyncio.sleep(1.0)
             return
 
         await run_isolated_session_tasks(
-            [lambda i=index: _session_loop(i) for index in range(len(self._sessions))],
+            [lambda i=index: self._connect_and_stream_route(i)
+             for index in range(len(self._sessions))],
             on_session_error=lambda index, exc: self.get_logger().warning(
                 f'isolated session[{index}] exited with {exc!r}'
             ),
         )
+
+    async def _fleet_handshake(
+        self,
+        index: int,
+        session: 'FleetDeviceSession',
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> str:
+        """Perform IDENTITY?/REDPITAYA/START handshake; return 'tcp' or 'udp'."""
+        writer.write(IDENTITY_QUERY)
+        await writer.drain()
+        deadline = asyncio.get_running_loop().time() + self._handshake_timeout_s
+
+        async def _read_line() -> str:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError('identity timeout')
+            raw = await asyncio.wait_for(reader.readline(), timeout=remaining)
+            if not raw:
+                raise EOFError('stream closed during identity')
+            return raw.decode('ascii', errors='replace').rstrip('\r\n')
+
+        records = [await _read_line()]
+        self_id = parse_identity_self(records[0])
+        peer_count = int(self_id['peer_count'])
+        for _ in range(peer_count + 1):
+            records.append(await _read_line())
+        inventory = parse_identity_inventory(records)
+        reported = str(inventory['self']['device_id'])
+        if reported != session.expected_device_id:
+            raise RuntimeError(
+                f'[fleet:{index}] expected {session.expected_device_id}, got {reported}'
+            )
+        self.on_session_bound(
+            session,
+            reported,
+            configured_hz=100.0,
+            observed_hz=0.0,
+        )
+        self.get_logger().info(
+            f'[fleet:{index}] identity bound: {reported} role={session.role}'
+        )
+
+        # REDPITAYA handshake
+        writer.write(HANDSHAKE_CONNECT)
+        await writer.drain()
+        remaining = max(0.1, deadline - asyncio.get_running_loop().time())
+        await asyncio.wait_for(reader.readline(), timeout=remaining)
+
+        # START streaming
+        writer.write(HANDSHAKE_START)
+        await writer.drain()
+        started = b''
+        for _ in range(3):
+            remaining = max(0.1, deadline - asyncio.get_running_loop().time())
+            line = await asyncio.wait_for(reader.readline(), timeout=remaining)
+            if b'STARTED' in line:
+                started = line
+                break
+        if not started:
+            raise RuntimeError(f'[fleet:{index}] ESP32 did not acknowledge START')
+
+        # Consume SENSORS line if present (non-blocking peek)
+        for _ in range(5):
+            await asyncio.sleep(0.02)
+            if reader._buffer.startswith(b'SENSORS:'):  # type: ignore[attr-defined]
+                await reader.readline()
+                break
+
+        return 'udp' if b'transport=udp' in started else 'tcp'
+
+    async def _read_fleet_frames(
+        self,
+        index: int,
+        session: 'FleetDeviceSession',
+        reader: asyncio.StreamReader,
+    ) -> None:
+        """Read OE binary frames and publish via the fleet manager."""
+        buf = bytearray()
+        n_frames = 0
+        frame_times: deque[float] = deque()
+
+        while rclpy.ok():
+            # Control text scanner
+            control_offsets = [
+                offset for prefix in CONTROL_RESPONSE_PREFIXES
+                if (offset := buf.find(prefix)) >= 0
+            ]
+            if control_offsets:
+                control_offset = min(control_offsets)
+                if control_offset:
+                    del buf[:control_offset]
+                while b'\n' not in buf:
+                    chunk = await reader.read(4096)
+                    if not chunk:
+                        raise EOFError('stream closed while reading control line')
+                    buf.extend(chunk)
+                    if len(buf) > MAX_CONTROL_LINE_BYTES:
+                        raise RuntimeError('control line exceeds bound')
+                line, _, remainder = buf.partition(b'\n')
+                buf[:] = remainder
+                text = line.decode(errors='replace').strip()
+                queue = self._identify_queues[index]
+                if queue is not None and text.startswith(('IDENTIFY_ACK ', 'IDENTIFY_ERR ')):
+                    if queue.full():
+                        queue.get_nowait()
+                    queue.put_nowait(text)
+                continue
+
+            # Accumulate header
+            while len(buf) < OE_HEADER_SIZE:
+                chunk = await reader.read(4096)
+                if not chunk:
+                    raise EOFError('stream closed')
+                buf.extend(chunk)
+
+            if any(buf.find(prefix) >= 0 for prefix in CONTROL_RESPONSE_PREFIXES):
+                continue
+
+            if not is_valid_oe_header(buf):
+                sync_offset = find_next_oe_header(buf, 1)
+                if sync_offset is not None:
+                    del buf[:sync_offset]
+                    continue
+                chunk = await reader.read(4096)
+                if not chunk:
+                    raise EOFError('stream closed while resyncing')
+                buf.extend(chunk)
+                if len(buf) > 8192:
+                    del buf[:-(OE_HEADER_SIZE - 1)]
+                continue
+
+            _off, num_bytes, _bd, elem, n_ch, n_per = OE_HEADER.unpack_from(buf, 0)
+            total = OE_HEADER_SIZE + num_bytes
+            while len(buf) < total:
+                chunk = await reader.read(4096)
+                if not chunk:
+                    raise EOFError('stream closed during payload')
+                buf.extend(chunk)
+
+            payload = bytes(buf[OE_HEADER_SIZE:total])
+            del buf[:total]
+
+            if elem != 2 or n_ch < NUM_CHANNELS:
+                continue
+
+            n_frames += 1
+            frame_time = time.monotonic()
+            frame_times.append(frame_time)
+            now = frame_time
+            while frame_times and now - frame_times[0] > 5.0:
+                frame_times.popleft()
+
+            self._publish_fleet_frame(index, session, payload, n_ch, n_per, n_frames)
+
+            if n_frames % 500 == 0:
+                self.get_logger().debug(
+                    f'[fleet:{index}] {n_frames} frames published'
+                )
+
+    def _publish_fleet_frame(
+        self,
+        index: int,
+        session: 'FleetDeviceSession',
+        payload: bytes,
+        n_ch: int,
+        n_per: int,
+        frame_index: int,
+    ) -> None:
+        """Decode OE payload and publish canonical + typed Imu messages."""
+        def s16(ch: int) -> int:
+            i = ch * n_per * 2
+            return int.from_bytes(payload[i:i + 2], 'little', signed=True)
+
+        device_id = session._bound_device_id or session.expected_device_id
+        now_us = time.monotonic_ns() // 1000
+
+        raw_json = json.dumps({
+            'sample_index': frame_index,
+            'seq': frame_index,
+            'time_us': now_us,
+            'node_role': session.role,
+            'device_id': device_id,
+            'topic_schema': 'oe_esp32.raw.v1',
+            'imu': {
+                'ax': s16(0), 'ay': s16(1), 'az': s16(2),
+                'gx': s16(3), 'gy': s16(4), 'gz': s16(5),
+                'mx': s16(6), 'my': s16(7), 'mz': s16(8),
+            },
+            'quat': {
+                'qw': s16(9), 'qx': s16(10), 'qy': s16(11), 'qz': s16(12),
+            },
+            'dio': s16(13),
+        }, sort_keys=True, separators=(',', ':'))
+
+        self._manager.publish_session_raw(session, raw_json)
+
+        # Publish typed Imu when this session's role maps to an alias
+        role = session.role
+        imu_pub = self._imu_pubs.get(role)
+        alias_id = (
+            self._manager._alias_master if role == 'master'
+            else self._manager._alias_slave if role == 'slave'
+            else ''
+        )
+        if imu_pub is not None and alias_id and device_id == alias_id:
+            imu_msg = Imu()
+            imu_msg.header = Header()
+            imu_msg.header.stamp = self.get_clock().now().to_msg()
+            imu_msg.header.frame_id = f'esp32_{role}'
+            imu_msg.orientation.w = s16(9) * QUAT_SCALE
+            imu_msg.orientation.x = s16(10) * QUAT_SCALE
+            imu_msg.orientation.y = s16(11) * QUAT_SCALE
+            imu_msg.orientation.z = s16(12) * QUAT_SCALE
+            imu_msg.linear_acceleration.x = s16(0) * ACC_SCALE
+            imu_msg.linear_acceleration.y = s16(1) * ACC_SCALE
+            imu_msg.linear_acceleration.z = s16(2) * ACC_SCALE
+            imu_msg.angular_velocity.x = s16(3) * GYR_SCALE
+            imu_msg.angular_velocity.y = s16(4) * GYR_SCALE
+            imu_msg.angular_velocity.z = s16(5) * GYR_SCALE
+            imu_msg.orientation_covariance[0] = -1.0
+            imu_msg.linear_acceleration_covariance[0] = -1.0
+            imu_msg.angular_velocity_covariance[0] = -1.0
+            imu_pub.publish(imu_msg)
+
+    async def _connect_and_stream_route(self, index: int) -> None:
+        """Per-session reconnect loop with exponential backoff and drop_count propagation."""
+        session = self._sessions[index]
+        retry_delay = self._reconnect_delay_s
+        while rclpy.ok():
+            try:
+                reader, writer = await asyncio.open_connection(session.host, session.port)
+                self.get_logger().info(
+                    f'[fleet:{index}] connected to {session.host}:{session.port}'
+                )
+                try:
+                    self._active_writers[index] = writer
+                    self._session_locks[index] = asyncio.Lock()
+                    self._identify_queues[index] = asyncio.Queue(maxsize=256)
+                    await self._fleet_handshake(index, session, reader, writer)
+                    retry_delay = self._reconnect_delay_s
+                    await self._read_fleet_frames(index, session, reader)
+                finally:
+                    self._active_writers[index] = None
+                    self._session_locks[index] = None
+                    self._identify_queues[index] = None
+                    try:
+                        writer.close()
+                        await writer.wait_closed()
+                    except Exception:
+                        pass
+                    self.get_logger().info(f'[fleet:{index}] disconnected')
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Fetch latest relay drop counts and propagate to registry
+                device_id = session._bound_device_id or session.expected_device_id
+                relay_state = self._manager.registry._devices.get(device_id)
+                if relay_state is not None:
+                    self._manager.apply_udp_drop_count(device_id, relay_state.udp_drop_count)
+                self._manager.on_session_reconnecting(
+                    session,
+                    last_seen_us=time.monotonic_ns() // 1000,
+                )
+                self.get_logger().warning(
+                    f'[fleet:{index}] {session.expected_device_id} '
+                    f'error={exc!r}; retry in {retry_delay:.0f}s'
+                )
+
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2.0, 30.0)
+
+    def _identify_fleet_device(self, request, response):
+        """Route an IdentifyDevice request to the correct per-session asyncio writer."""
+        command_id = str(getattr(request, 'command_id', ''))
+        raw_target = str(getattr(request, 'target_device_id', ''))
+        duration_ms = int(getattr(request, 'duration_ms', 0))
+
+        def _fail(outcome, detail):
+            response.command_id = command_id
+            response.target_device_id = raw_target
+            response.outcome = outcome
+            response.applied_duration_ms = 0
+            response.detail = detail
+            return response
+
+        try:
+            target = normalize_device_id(raw_target)
+            if target != raw_target:
+                raise ValueError('target_device_id must be canonical')
+        except ValueError as exc:
+            return _fail('invalid_target', str(exc))
+
+        try:
+            command_id, target, duration_ms = validate_identify_request(
+                command_id, target, duration_ms
+            )
+        except ValueError as exc:
+            return _fail('rejected', str(exc))
+
+        # Find the session that owns this target MAC
+        session_index: int | None = None
+        for idx, session in enumerate(self._sessions):
+            bound = session._bound_device_id
+            if (bound == target) or (bound is None and session.expected_device_id == target):
+                session_index = idx
+                break
+
+        if session_index is None:
+            return _fail('offline', 'target device_id not in fleet routes')
+
+        writer = self._active_writers[session_index]
+        lock = self._session_locks[session_index]
+        id_queue = self._identify_queues[session_index]
+
+        if writer is None or lock is None or id_queue is None or writer.is_closing():
+            return _fail('offline', 'session is not connected')
+
+        try:
+            result = asyncio.run_coroutine_threadsafe(
+                self._send_fleet_identify_command(
+                    session_index, writer, lock, id_queue,
+                    command_id, target, duration_ms,
+                ),
+                self._loop,
+            ).result(timeout=self._identify_timeout_s + 1.0)
+        except (TimeoutError, FutureTimeoutError):
+            result = {'outcome': 'timeout', 'applied_duration_ms': 0,
+                      'detail': 'host wait timed out'}
+        except Exception as exc:
+            result = {'outcome': 'offline', 'applied_duration_ms': 0, 'detail': str(exc)}
+
+        response.command_id = command_id
+        response.target_device_id = target
+        response.outcome = str(result.get('outcome', 'rejected'))
+        response.applied_duration_ms = int(result.get('applied_duration_ms', 0))
+        response.detail = str(result.get('detail', ''))
+        return response
+
+    async def _send_fleet_identify_command(
+        self,
+        index: int,
+        writer: asyncio.StreamWriter,
+        lock: asyncio.Lock,
+        id_queue: asyncio.Queue,
+        command_id: str,
+        target: str,
+        duration_ms: int,
+    ) -> dict:
+        """Send IDENTIFY command and drain identify_queue for a correlated reply."""
+        async with lock:
+            writer.write(
+                (
+                    f'IDENTIFY protocol={IDENTIFY_PROTOCOL} '
+                    f'command_id={command_id} target={target} '
+                    f'duration_ms={duration_ms}\n'
+                ).encode('ascii')
+            )
+            await writer.drain()
+            deadline = asyncio.get_running_loop().time() + self._identify_timeout_s
+            sent_unconfirmed = None
+            while True:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    return sent_unconfirmed or {
+                        'outcome': 'timeout', 'applied_duration_ms': 0,
+                        'detail': 'timed out waiting for correlated reply',
+                    }
+                try:
+                    line = await asyncio.wait_for(id_queue.get(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    return sent_unconfirmed or {
+                        'outcome': 'timeout', 'applied_duration_ms': 0,
+                        'detail': 'timed out waiting for correlated reply',
+                    }
+                try:
+                    parsed = parse_identify_reply(
+                        line,
+                        expected_command_id=command_id,
+                        expected_target=target,
+                    )
+                except ValueError:
+                    continue
+                if parsed['outcome'] == 'sent_unconfirmed':
+                    sent_unconfirmed = parsed
+                    continue
+                return parsed
 
 
 def main(args=None):
