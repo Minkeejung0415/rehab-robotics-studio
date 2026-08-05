@@ -4,9 +4,10 @@ import { StatusStrip } from './components/chrome/StatusStrip';
 import { Toolbar } from './components/chrome/Toolbar';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { BlockLibrary } from './components/library/BlockLibrary';
+import { MappingWorkspace } from './components/mapping/MappingWorkspace';
 import { PropertiesPanel } from './components/properties/PropertiesPanel';
 
-type WorkspaceTab = 'diagram' | 'panel';
+type WorkspaceTab = 'diagram' | 'panel' | 'mapping';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('diagram');
@@ -27,6 +28,12 @@ export default function App() {
         >
           Front Panel
         </button>
+        <button
+          className={`tab${activeTab === 'mapping' ? ' is-active' : ''}`}
+          onClick={() => setActiveTab('mapping')}
+        >
+          Sensor Mapping
+        </button>
       </div>
       {activeTab === 'diagram' ? (
         <main className="workspace">
@@ -34,9 +41,13 @@ export default function App() {
           <GraphCanvas />
           <PropertiesPanel />
         </main>
-      ) : (
+      ) : activeTab === 'panel' ? (
         <main className="workspace workspace--front-panel">
           <Dashboard />
+        </main>
+      ) : (
+        <main className="workspace workspace--mapping">
+          <MappingWorkspace />
         </main>
       )}
       <StatusStrip />
