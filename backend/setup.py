@@ -35,6 +35,8 @@ setup(
             'esp_status = rehab_robotics_bridge.status_node:main',
             'processing_block_observer = rehab_robotics_bridge.processing_block_observer:main',
             'opensim_test_publisher = rehab_robotics_bridge.opensim_test_publisher:main',
+            'model_catalog_node = rehab_robotics_bridge.model_catalog_node:main',
+            'mapping_node = rehab_robotics_bridge.mapping_node:main',
         ],
     },
 )

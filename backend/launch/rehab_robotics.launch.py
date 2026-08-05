@@ -80,6 +80,9 @@ def generate_launch_description():
         DeclareLaunchArgument('alias_master_device_id', default_value=''),
         DeclareLaunchArgument('alias_slave_device_id', default_value=''),
         DeclareLaunchArgument('registry_period_s', default_value='0.5'),
+        DeclareLaunchArgument('enable_model_catalog', default_value='true', description='Start model_catalog_node'),
+        DeclareLaunchArgument('enable_mapping_node', default_value='true', description='Start mapping_node'),
+        DeclareLaunchArgument('mapping_store_path', default_value='', description='Path to mapping_store.json (empty = use default ~/.ros/rehab_robotics/mapping_store.json)'),
     ]
 
     def bridge(role, host, tcp_port, transport, udp_port, segment):
@@ -146,11 +149,27 @@ def generate_launch_description():
         name='processing_block_observer', output='screen',
         condition=IfCondition(LaunchConfiguration('enable_processing_observer')),
     )
+    model_catalog = Node(
+        package='rehab_robotics_bridge',
+        executable='model_catalog_node',
+        name='model_catalog_node',
+        output='screen',
+        parameters=[{'opensim_model_path': LaunchConfiguration('model_path')}],
+        condition=IfCondition(LaunchConfiguration('enable_model_catalog')),
+    )
+    mapping = Node(
+        package='rehab_robotics_bridge',
+        executable='mapping_node',
+        name='mapping_node',
+        output='screen',
+        parameters=[{'store_path': LaunchConfiguration('mapping_store_path')}],
+        condition=IfCondition(LaunchConfiguration('enable_mapping_node')),
+    )
     return LaunchDescription(args + [
         OpaqueFunction(function=_fleet_bridge),
         bridge('master', 'master_host', 'master_port', 'master_transport', 'master_udp_port', 'master_segment'),
         bridge('slave', 'slave_host', 'slave_port', 'slave_transport', 'slave_udp_port', 'slave_segment'),
         filter_node('master'),
         filter_node('slave'), opensim, opensim_test_publisher, recorder, status,
-        processing_observer, rosbridge,
+        processing_observer, rosbridge, model_catalog, mapping,
     ])
