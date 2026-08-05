@@ -1370,5 +1370,231 @@ class IkOneContractTests(unittest.TestCase):
         self.assertEqual(len(node._mac_inputs), 0)
 
 
+class IkTwoNodeTests(unittest.TestCase):
+    """IK-02 contract tests for OpenSimBridgeNode calibration capture service.
+
+    Covers IK-02-F through IK-02-H. All tests run offline — no live ROS,
+    no hardware. Uses _install_ros_stubs() established above.
+    """
+
+    _MAPPING_TWO_DEVICES = json.dumps({
+        "applied_revision": 1,
+        "model_hash": "abc123def456",
+        "assigned": [
+            {"device_id": "esp32:aabbccddeeff", "frame": "tibia_r_imu", "segment": "tibia"},
+            {"device_id": "esp32:112233445566", "frame": "femur_r_imu", "segment": "femur"},
+        ],
+    })
+
+    _MAPPING_DIFFERENT_DEVICES = json.dumps({
+        "applied_revision": 2,
+        "model_hash": "abc123def456",
+        "assigned": [
+            {"device_id": "esp32:aabbccddeeff", "frame": "tibia_r_imu", "segment": "tibia"},
+            {"device_id": "esp32:NEWDEVICE9999", "frame": "pelvis_imu", "segment": "pelvis"},
+        ],
+    })
+
+    _MAPPING_SAME_DEVICES_NEW_REVISION = json.dumps({
+        "applied_revision": 1,
+        "model_hash": "abc123def456",
+        "assigned": [
+            {"device_id": "esp32:aabbccddeeff", "frame": "tibia_r_imu", "segment": "tibia"},
+            {"device_id": "esp32:112233445566", "frame": "femur_r_imu", "segment": "femur"},
+        ],
+    })
+
+    def setUp(self):
+        _StubNode.parameter_overrides = {}
+        self.clock = _Clock()
+
+    def _make_node(self):
+        return opensim_node.OpenSimBridgeNode(
+            adapter=_FakeAdapter(),
+            monotonic_clock=self.clock,
+            ik_solver=UnavailableOrientationIkSolver("test_ik02"),
+        )
+
+    def _mapping_msg(self, json_str):
+        msg = _String()
+        msg.data = json_str
+        return msg
+
+    def _imu_msg(self, x=0.0, y=0.0, z=0.0, w=1.0, stamp_sec=100):
+        return _Imu(x=x, y=y, z=z, w=w, stamp_sec=stamp_sec)
+
+    def _trigger(self, node, service_name):
+        """Call a Trigger service on the node and return the response."""
+        for service in node.services:
+            if service.name == service_name:
+                return service.callback(_TriggerRequest(), _TriggerResponse())
+        raise AssertionError(f"Service not found: {service_name}")
+
+    def _feed_two_imu(self, node):
+        """Send one IMU frame for each of the two mapped devices."""
+        node._on_mac_imu("esp32:aabbccddeeff", self._imu_msg(stamp_sec=10))
+        node._on_mac_imu("esp32:112233445566", self._imu_msg(stamp_sec=10))
+
+    def test_ik02_initial_state_is_uncalibrated_with_no_artifact(self):
+        """OpenSimBridgeNode initialises with _n_calib_state='uncalibrated' and _n_calib_artifact=None."""
+        node = self._make_node()
+        self.assertEqual(node._n_calib_state, "uncalibrated")
+        self.assertIsNone(node._n_calib_artifact)
+
+    def test_ik02_capture_service_exists_with_correct_topic_and_type(self):
+        """OpenSimBridgeNode creates /rehab/calibration/capture service of type Trigger."""
+        node = self._make_node()
+        capture_services = [
+            s for s in node.services if s.name == "/rehab/calibration/capture"
+        ]
+        self.assertEqual(len(capture_services), 1)
+        self.assertIs(capture_services[0].srv_type, _Trigger)
+
+    def test_ik02_status_publisher_exists_on_correct_topic(self):
+        """/rehab/calibration/status publisher is created."""
+        node = self._make_node()
+        status_pubs = [
+            p for p in node.publishers if p.topic == "/rehab/calibration/status"
+        ]
+        self.assertEqual(len(status_pubs), 1)
+
+    def test_ik02_f_capture_with_all_inputs_sets_calibrated_state(self):
+        """IK-02-F: Capture service with all inputs sets _n_calib_state='calibrated'."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        self._feed_two_imu(node)
+
+        response = self._trigger(node, "/rehab/calibration/capture")
+
+        self.assertTrue(response.success)
+        outcome = json.loads(response.message)
+        self.assertEqual(outcome["outcome"], "captured")
+        self.assertIsNotNone(outcome["artifact_path"])
+        self.assertEqual(node._n_calib_state, "calibrated")
+        self.assertIsNotNone(node._n_calib_artifact)
+
+    def test_ik02_capture_no_mapping_returns_no_mapping_outcome(self):
+        """Capture with empty _mac_inputs returns success=False, outcome='no_mapping'."""
+        node = self._make_node()
+        # No mapping sent — _mac_inputs is empty
+        response = self._trigger(node, "/rehab/calibration/capture")
+
+        self.assertFalse(response.success)
+        outcome = json.loads(response.message)
+        self.assertEqual(outcome["outcome"], "no_mapping")
+        self.assertIsNone(outcome["artifact_path"])
+        self.assertEqual(node._n_calib_state, "uncalibrated")
+
+    def test_ik02_capture_missing_inputs_returns_missing_inputs_outcome(self):
+        """Capture with device in _mac_inputs but no IMU data returns missing_inputs."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        # Do NOT send any IMU data — last_xyzw remains None
+
+        response = self._trigger(node, "/rehab/calibration/capture")
+
+        self.assertFalse(response.success)
+        outcome = json.loads(response.message)
+        self.assertEqual(outcome["outcome"], "missing_inputs")
+        self.assertIsNone(outcome["artifact_path"])
+
+    def test_ik02_artifact_contains_correct_schema_and_device_order(self):
+        """After successful capture, artifact has schema_version='calib.v1' and sorted device_order."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        self._feed_two_imu(node)
+
+        self._trigger(node, "/rehab/calibration/capture")
+
+        artifact = node._n_calib_artifact
+        self.assertIsNotNone(artifact)
+        self.assertEqual(artifact["schema_version"], "calib.v1")
+        self.assertEqual(
+            artifact["device_order"],
+            sorted(["esp32:aabbccddeeff", "esp32:112233445566"]),
+        )
+        self.assertIn("reference_pose", artifact)
+        self.assertIn("calibrated_at_iso8601", artifact)
+
+    def test_ik02_g_remap_with_changed_devices_invalidates_artifact(self):
+        """IK-02-G: Remap changing devices invalidates artifact (_n_calib_state resets to 'uncalibrated')."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        self._feed_two_imu(node)
+        self._trigger(node, "/rehab/calibration/capture")
+        self.assertEqual(node._n_calib_state, "calibrated")
+
+        # Remap with different device set
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_DIFFERENT_DEVICES))
+
+        self.assertEqual(node._n_calib_state, "uncalibrated")
+        self.assertIsNone(node._n_calib_artifact)
+
+    def test_ik02_h_remap_with_same_devices_preserves_valid_artifact(self):
+        """IK-02-H: Remap with same devices (same revision, same model_hash) preserves artifact."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        self._feed_two_imu(node)
+        self._trigger(node, "/rehab/calibration/capture")
+        self.assertEqual(node._n_calib_state, "calibrated")
+
+        # Remap with SAME device set, same revision, same model_hash
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_SAME_DEVICES_NEW_REVISION))
+
+        self.assertEqual(node._n_calib_state, "calibrated")
+        self.assertIsNotNone(node._n_calib_artifact)
+
+    def test_ik02_status_topic_publishes_correct_schema_on_timer(self):
+        """Status topic publishes schema='rehab.n_calibration_status.1' with state/revision/model_hash."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+
+        # Trigger the status timer
+        node._on_status_timer()
+
+        status_pubs = [p for p in node.publishers if p.topic == "/rehab/calibration/status"]
+        self.assertEqual(len(status_pubs), 1)
+        self.assertGreaterEqual(len(status_pubs[0].messages), 1)
+
+        payload = json.loads(status_pubs[0].messages[-1].data)
+        self.assertEqual(payload["schema"], "rehab.n_calibration_status.1")
+        self.assertIn("state", payload)
+        self.assertIn("revision", payload)
+        self.assertIn("model_hash", payload)
+
+    def test_ik02_status_includes_schema_version_when_calibrated(self):
+        """Status payload includes schema_version='calib.v1' when state is 'calibrated'."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        self._feed_two_imu(node)
+        self._trigger(node, "/rehab/calibration/capture")
+
+        node._on_status_timer()
+        status_pubs = [p for p in node.publishers if p.topic == "/rehab/calibration/status"]
+        payload = json.loads(status_pubs[0].messages[-1].data)
+
+        self.assertEqual(payload["state"], "calibrated")
+        self.assertEqual(payload.get("schema_version"), "calib.v1")
+
+    def test_ik02_reference_pose_quaternion_format_in_artifact(self):
+        """reference_pose entries use {qw, qx, qy, qz} format derived from IMU xyzw."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        # Send non-identity quaternion
+        node._on_mac_imu("esp32:aabbccddeeff", self._imu_msg(x=0.5, y=0.5, z=0.5, w=0.5, stamp_sec=10))
+        node._on_mac_imu("esp32:112233445566", self._imu_msg(x=0.0, y=0.0, z=0.0, w=1.0, stamp_sec=10))
+
+        self._trigger(node, "/rehab/calibration/capture")
+
+        artifact = node._n_calib_artifact
+        pose = artifact["reference_pose"]["esp32:aabbccddeeff"]
+        self.assertIn("qw", pose)
+        self.assertIn("qx", pose)
+        self.assertIn("qy", pose)
+        self.assertIn("qz", pose)
+        self.assertAlmostEqual(pose["qx"], 0.5)
+        self.assertAlmostEqual(pose["qw"], 0.5)
+
+
 if __name__ == "__main__":
     unittest.main()
