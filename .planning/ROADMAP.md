@@ -138,7 +138,7 @@ Plans:
 
 **Wave 2** *(blocked on 23-01 completion — needs _DeviceInput)*
 
-- [ ] 23-03-PLAN.md — Sync-skew gate and reconnect freshness (IK-03)
+- [x] 23-03-PLAN.md — Sync-skew gate and reconnect freshness (IK-03)
 
 **Wave 3** *(blocked on 23-01, 23-02, 23-03 completion)*
 
@@ -186,7 +186,7 @@ Plans:
 | 20. Full Identity and Confirmed Identify | 6/6 | Complete   | 2026-07-30 |
 | 21. N-Route Relay and Canonical ROS Fleet | 4/6 | Gap closure in progress | 2026-07-31 |
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 0/6 | Not started | - |
-| 23. N-Sensor Calibration and Official OpenSim IK | 2/5 | In Progress|  |
+| 23. N-Sensor Calibration and Official OpenSim IK | 3/5 | In Progress|  |
 | 24. Rosbridge and Studio Mapping Workspace | 0/TBD | Not started | - |
 | 25. Multi-Device Compatibility and Promotion Gate | 0/TBD | Not started | - |
 
