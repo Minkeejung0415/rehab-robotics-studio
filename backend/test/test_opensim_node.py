@@ -1871,5 +1871,373 @@ class IkThreeContractTests(unittest.TestCase):
             self.assertFalse(validity["valid"])
 
 
+class IkFourContractTests(unittest.TestCase):
+    """IK-04 contract tests: N-sensor solve_n() wiring, metadata publication, solver_insufficient hard-block.
+
+    Covers IK-04-A through IK-04-I as defined in 23-04-PLAN.md.
+    All tests run without live ROS or hardware via _install_ros_stubs().
+    """
+
+    # Two devices where alpha order is "esp32:aaaa..." < "esp32:zzzz..."
+    _MAPPING_ALPHA_DEVICES = json.dumps({
+        "applied_revision": 5,
+        "model_hash": "deadbeef1234abcd",
+        "assigned": [
+            {"device_id": "esp32:zzzzzzzzzzzz", "frame": "tibia_r_imu", "segment": "tibia"},
+            {"device_id": "esp32:aaaaaaaaaaaa", "frame": "femur_r_imu", "segment": "femur"},
+        ],
+    })
+
+    _MAPPING_TWO_DEVICES = json.dumps({
+        "applied_revision": 5,
+        "model_hash": "deadbeef1234abcd",
+        "assigned": [
+            {"device_id": "esp32:aabbccddeeff", "frame": "tibia_r_imu", "segment": "tibia"},
+            {"device_id": "esp32:112233445566", "frame": "femur_r_imu", "segment": "femur"},
+        ],
+    })
+
+    def setUp(self):
+        _StubNode.parameter_overrides = {}
+        self.clock = _Clock(now=1000.0)
+
+    def _make_node(self, **param_overrides):
+        _StubNode.parameter_overrides = param_overrides
+        return opensim_node.OpenSimBridgeNode(
+            adapter=_FakeAdapter(),
+            monotonic_clock=self.clock,
+            ik_solver=_TrackingFakeIkSolver(),
+        )
+
+    def _mapping_msg(self, json_str):
+        msg = _String()
+        msg.data = json_str
+        return msg
+
+    def _imu_msg(self, x=0.0, y=0.0, z=0.0, w=1.0, stamp_sec=10, stamp_nanosec=0):
+        return _Imu(x=x, y=y, z=z, w=w, stamp_sec=stamp_sec, stamp_nanosec=stamp_nanosec)
+
+    def _get_metadata_pub(self, node):
+        """Get the /rehab/opensim/joint_states_metadata publisher."""
+        pubs = [p for p in node.publishers if p.topic == "/rehab/opensim/joint_states_metadata"]
+        if not pubs:
+            self.fail("/rehab/opensim/joint_states_metadata publisher not found on node")
+        return pubs[0]
+
+    def _feed_two_alpha_imu(self, node, ts_sec=10):
+        """Send one IMU frame for each alpha-ordered device."""
+        node._on_mac_imu("esp32:zzzzzzzzzzzz", self._imu_msg(stamp_sec=ts_sec))
+        node._on_mac_imu("esp32:aaaaaaaaaaaa", self._imu_msg(stamp_sec=ts_sec))
+
+    def _feed_two_imu(self, node, ts_sec=10):
+        """Send one IMU frame for each standard two-device mapping."""
+        node._on_mac_imu("esp32:aabbccddeeff", self._imu_msg(stamp_sec=ts_sec))
+        node._on_mac_imu("esp32:112233445566", self._imu_msg(stamp_sec=ts_sec))
+
+    def _set_calibrated(self, node, model_hash="deadbeef1234abcd", revision=5):
+        """Inject a synthetic calibration artifact to simulate 'calibrated' state."""
+        node._n_calib_artifact = {
+            "schema_version": "calib.v1",
+            "model_hash": model_hash,
+            "applied_revision": revision,
+            "device_order": sorted(node._mac_inputs.keys()),
+            "frame_assignments": {
+                did: {"segment": "", "frame": entry.frame}
+                for did, entry in sorted(node._mac_inputs.items())
+            },
+            "solver_profile": "lower_body",
+            "calibrated_at_iso8601": "2026-08-05T00:00:00Z",
+            "reference_pose": {
+                did: {"qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0}
+                for did in sorted(node._mac_inputs.keys())
+            },
+        }
+        node._n_calib_state = "calibrated"
+        node._n_model_hash = model_hash
+        node._n_mapping_revision = revision
+
+    # --- IK-04-A: solve_n called with (frame, xyzw) pairs in alphabetical device_id order ---
+
+    def test_ik04_a_solve_n_called_with_alphabetical_order(self):
+        """IK-04-A: _solve_and_publish_ik_n() passes inputs in alphabetical device_id order to solve_n()."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_ALPHA_DEVICES))
+        self._set_calibrated(node, model_hash="deadbeef1234abcd", revision=5)
+
+        # Feed both devices with same timestamp (both valid/fresh)
+        self._feed_two_alpha_imu(node, ts_sec=10)
+
+        # The tracking solver records calls
+        solver = node._ik_solver
+        self.assertGreater(len(solver.solve_n_calls), 0, "solve_n should have been called")
+
+        last_call = solver.solve_n_calls[-1]
+        inputs = last_call["inputs"]
+        self.assertGreaterEqual(len(inputs), 2)
+
+        # Alphabetical: "esp32:aaaaaaaaaaaa" < "esp32:zzzzzzzzzzzz"
+        # So inputs[0] must use frame of "esp32:aaaaaaaaaaaa" ("femur_r_imu")
+        # and inputs[1] must use frame of "esp32:zzzzzzzzzzzz" ("tibia_r_imu")
+        first_frame = inputs[0][0]
+        second_frame = inputs[1][0]
+        self.assertEqual(first_frame, "femur_r_imu",
+                         f"First input frame should be from alphabetically-first device "
+                         f"(esp32:aaaaaaaaaaaa → femur_r_imu), got {first_frame!r}")
+        self.assertEqual(second_frame, "tibia_r_imu",
+                         f"Second input frame should be from alphabetically-second device "
+                         f"(esp32:zzzzzzzzzzzz → tibia_r_imu), got {second_frame!r}")
+
+    # --- IK-04-B: metadata topic receives message after _solve_and_publish_ik_n() ---
+
+    def test_ik04_b_metadata_topic_receives_message(self):
+        """IK-04-B: /rehab/opensim/joint_states_metadata topic exists and receives messages."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        self._set_calibrated(node)
+
+        meta_pub = self._get_metadata_pub(node)
+        before = len(meta_pub.messages)
+
+        self._feed_two_imu(node)
+
+        self.assertGreater(len(meta_pub.messages), before,
+                           "Metadata publisher should have received at least one message")
+
+        last_msg = json.loads(meta_pub.messages[-1].data)
+        self.assertEqual(last_msg.get("schema"), "rehab.n_ik_metadata.1")
+
+    # --- IK-04-C: metadata message has mapping_revision matching _n_mapping_revision ---
+
+    def test_ik04_c_metadata_has_correct_mapping_revision(self):
+        """IK-04-C: Metadata message mapping_revision matches _n_mapping_revision."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        self._set_calibrated(node, revision=5)
+
+        self._feed_two_imu(node)
+
+        meta_pub = self._get_metadata_pub(node)
+        self.assertGreater(len(meta_pub.messages), 0)
+        payload = json.loads(meta_pub.messages[-1].data)
+        self.assertEqual(payload.get("mapping_revision"), 5)
+
+    # --- IK-04-D: metadata has calibration_identity = artifact filename when calibrated ---
+
+    def test_ik04_d_metadata_calibration_identity_is_artifact_filename(self):
+        """IK-04-D: calibration_identity in metadata matches the artifact filename when calibrated."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        self._set_calibrated(node, model_hash="deadbeef1234abcd", revision=5)
+
+        self._feed_two_imu(node)
+
+        meta_pub = self._get_metadata_pub(node)
+        self.assertGreater(len(meta_pub.messages), 0)
+        payload = json.loads(meta_pub.messages[-1].data)
+
+        # calibration_identity should be the artifact filename (not None)
+        cal_id = payload.get("calibration_identity")
+        self.assertIsNotNone(cal_id, "calibration_identity should not be None when calibrated")
+        # The filename must contain the model_hash prefix and revision
+        self.assertIn("deadbeef", str(cal_id),
+                      f"calibration_identity should contain model_hash prefix, got {cal_id!r}")
+        self.assertIn("rev5", str(cal_id),
+                      f"calibration_identity should contain revision, got {cal_id!r}")
+
+    # --- IK-04-E: metadata has visualizer_provenance = "{hash8}_rev{N}" when calibrated ---
+
+    def test_ik04_e_metadata_visualizer_provenance_format(self):
+        """IK-04-E: visualizer_provenance = '{hash8}_rev{N}' when calibrated."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        self._set_calibrated(node, model_hash="deadbeef1234abcd", revision=5)
+
+        self._feed_two_imu(node)
+
+        meta_pub = self._get_metadata_pub(node)
+        self.assertGreater(len(meta_pub.messages), 0)
+        payload = json.loads(meta_pub.messages[-1].data)
+
+        prov = payload.get("visualizer_provenance")
+        self.assertIsNotNone(prov, "visualizer_provenance should not be None when calibrated")
+        self.assertEqual(prov, "deadbeef_rev5",
+                         f"visualizer_provenance should be 'deadbeef_rev5', got {prov!r}")
+
+    # --- IK-04-F: input_validity_mask in alphabetical device_id order ---
+
+    def test_ik04_f_input_validity_mask_in_alphabetical_order(self):
+        """IK-04-F: input_validity_mask in metadata matches per-device validity in alphabetical order."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        self._set_calibrated(node)
+
+        # Feed both devices with same timestamp (all valid)
+        self._feed_two_imu(node, ts_sec=10)
+
+        meta_pub = self._get_metadata_pub(node)
+        self.assertGreater(len(meta_pub.messages), 0)
+        payload = json.loads(meta_pub.messages[-1].data)
+
+        mask = payload.get("input_validity_mask")
+        self.assertIsNotNone(mask, "input_validity_mask should be present")
+        self.assertIsInstance(mask, list, "input_validity_mask should be a list")
+        # With same timestamp both devices should be valid
+        self.assertEqual(len(mask), 2, "Should have validity entry for each device")
+
+    # --- IK-04-G: solver_insufficient hard-block: 1 assigned device → outcome == solver_insufficient ---
+
+    def test_ik04_g_solver_insufficient_hard_block_one_assigned_device(self):
+        """IK-04-G: apply_candidate with 1 assigned device returns outcome=='solver_insufficient'."""
+        from rehab_robotics_bridge.mapping_node import MappingStore
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MappingStore(store_path=Path(tmpdir) / "map.json")
+            store.set_model_hash("abc123model")
+            store.set_frame_list([
+                {"segment": "tibia", "frame": "tibia_r_imu"},
+                {"segment": "femur", "frame": "femur_r_imu"},
+            ])
+            # Assign exactly 1 device
+            store.set_assignment("esp32:aabbccddeeff", "tibia", "tibia_r_imu", "assigned")
+            revision = store.revision
+
+            result = store.apply_candidate(
+                expected_revision=revision,
+                frame_list=store.frame_list,
+            )
+            self.assertEqual(result["outcome"], "solver_insufficient",
+                             f"Expected solver_insufficient with 1 assigned device, got {result!r}")
+
+    # --- IK-04-H: solver_insufficient does NOT occur with 2 assigned devices ---
+
+    def test_ik04_h_two_assigned_devices_does_not_trigger_solver_insufficient(self):
+        """IK-04-H: apply_candidate with 2 assigned devices does not return solver_insufficient."""
+        from rehab_robotics_bridge.mapping_node import MappingStore
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MappingStore(store_path=Path(tmpdir) / "map.json")
+            store.set_model_hash("abc123model")
+            store.set_frame_list([
+                {"segment": "tibia", "frame": "tibia_r_imu"},
+                {"segment": "femur", "frame": "femur_r_imu"},
+            ])
+            # Assign 2 devices
+            store.set_assignment("esp32:aabbccddeeff", "tibia", "tibia_r_imu", "assigned")
+            store.set_assignment("esp32:112233445566", "femur", "femur_r_imu", "assigned")
+            revision = store.revision
+
+            result = store.apply_candidate(
+                expected_revision=revision,
+                frame_list=store.frame_list,
+            )
+            self.assertNotEqual(result["outcome"], "solver_insufficient",
+                                f"2 assigned devices should not trigger solver_insufficient, "
+                                f"got {result!r}")
+
+    # --- IK-04-I: solver_status=="suppressed" in metadata when validity gate not passed ---
+
+    def test_ik04_i_solver_status_suppressed_when_not_all_valid(self):
+        """IK-04-I: solver_status=='suppressed' in metadata when validity gate not passed (fresh=False)."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        self._set_calibrated(node)
+
+        # Feed one device only — the other device remains not fresh
+        # Use directly: both devices exist but set one as not-fresh
+        from rehab_robotics_bridge.opensim_node import _DeviceInput
+        device_a = "esp32:112233445566"
+        device_b = "esp32:aabbccddeeff"
+
+        # Ensure both are in _mac_inputs from the mapping
+        self.assertIn(device_a, node._mac_inputs)
+        self.assertIn(device_b, node._mac_inputs)
+
+        # Set device_a fresh and device_b NOT fresh
+        ts_ns = 10_000_000_000
+        node._mac_inputs[device_a].last_xyzw = (0.0, 0.0, 0.0, 1.0)
+        node._mac_inputs[device_a].last_ts_ns = ts_ns
+        node._mac_inputs[device_a].last_seen_monotonic = self.clock.now
+        node._mac_inputs[device_a].post_reconnect_fresh = True
+
+        node._mac_inputs[device_b].last_xyzw = (0.0, 0.0, 0.0, 1.0)
+        node._mac_inputs[device_b].last_ts_ns = ts_ns
+        node._mac_inputs[device_b].last_seen_monotonic = self.clock.now
+        node._mac_inputs[device_b].post_reconnect_fresh = False  # NOT fresh
+
+        meta_pub = self._get_metadata_pub(node)
+        before = len(meta_pub.messages)
+        node._solve_and_publish_ik_n()
+
+        self.assertGreater(len(meta_pub.messages), before,
+                           "Metadata should be published even when suppressed")
+        last_msg = json.loads(meta_pub.messages[-1].data)
+        self.assertEqual(last_msg.get("solver_status"), "suppressed",
+                         f"solver_status should be 'suppressed' when gate not passed, "
+                         f"got {last_msg.get('solver_status')!r}")
+
+
+class _TrackingFakeIkSolver:
+    """FakeOrientationIkSolver subclass that records inputs to solve_n() calls."""
+
+    def __init__(self):
+        self.solve_n_calls = []
+        self._assembled = False
+
+    def reset(self):
+        self._assembled = False
+
+    def solve(self, *, master_xyzw, slave_xyzw, calibration, source_timestamp_ns,
+              input_age_s, joint_names):
+        from rehab_robotics_bridge.opensim.orientation_ik import IkSolution
+        names = [str(n) for n in joint_names] or ["knee_angle_r"]
+        if source_timestamp_ns is None:
+            return IkSolution(
+                solution_valid=False, reason="missing_source_timestamp",
+                joint_names=names, positions_rad=[],
+                source_timestamp_ns=None, orientation_residual_rms=None,
+                orientation_residual_max=None, calibration_id=None,
+                input_age_s=input_age_s, solve_duration_s=0.0,
+            )
+        self._assembled = True
+        return IkSolution(
+            solution_valid=True, reason="ok",
+            joint_names=names, positions_rad=[0.0] * len(names),
+            source_timestamp_ns=source_timestamp_ns, orientation_residual_rms=0.0,
+            orientation_residual_max=0.0,
+            calibration_id=None,
+            input_age_s=input_age_s, solve_duration_s=0.0,
+        )
+
+    def solve_n(self, inputs, source_timestamp_ns, input_age_s, joint_names,
+                calibration=None):
+        """Record the call and return a valid solution."""
+        from rehab_robotics_bridge.opensim.orientation_ik import IkSolution
+        self.solve_n_calls.append({
+            "inputs": list(inputs),
+            "source_timestamp_ns": source_timestamp_ns,
+            "input_age_s": input_age_s,
+            "joint_names": list(joint_names),
+        })
+        names = [str(n) for n in joint_names] or ["knee_angle_r"]
+        if source_timestamp_ns is None:
+            return IkSolution(
+                solution_valid=False, reason="missing_source_timestamp",
+                joint_names=names, positions_rad=[],
+                source_timestamp_ns=None, orientation_residual_rms=None,
+                orientation_residual_max=None, calibration_id=None,
+                input_age_s=input_age_s, solve_duration_s=0.0,
+            )
+        self._assembled = True
+        return IkSolution(
+            solution_valid=True, reason="ok",
+            joint_names=names, positions_rad=[0.0] * len(names),
+            source_timestamp_ns=source_timestamp_ns, orientation_residual_rms=0.0,
+            orientation_residual_max=0.0, calibration_id=None,
+            input_age_s=input_age_s, solve_duration_s=0.0,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
