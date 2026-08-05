@@ -191,14 +191,41 @@ def _install_ros_stubs():
     std_msgs.msg = types.ModuleType("std_msgs.msg")
     std_msgs.msg.String = _String
     std_msgs.msg.Float64 = _Float64
+    # Float32MultiArray and Header are needed by esp32_bridge_node; include here
+    # so that the module-level stub install does not break test_esp32_controls.py
+    # when pytest imports this file before running that file's tests.
+    std_msgs.msg.Float32MultiArray = type("Float32MultiArray", (), {
+        "__init__": lambda self, **kw: None,
+    })
+    std_msgs.msg.Header = type("Header", (), {
+        "__init__": lambda self, **kw: None,
+    })
     sys.modules["std_msgs"] = std_msgs
     sys.modules["std_msgs.msg"] = std_msgs.msg
 
     std_srvs = types.ModuleType("std_srvs")
     std_srvs.srv = types.ModuleType("std_srvs.srv")
     std_srvs.srv.Trigger = _Trigger
+    # SetBool is needed by esp32_bridge_node; include here so the stub does not
+    # break test_esp32_controls.py when pytest collects this file first.
+    std_srvs.srv.SetBool = type("SetBool", (), {})
     sys.modules["std_srvs"] = std_srvs
     sys.modules["std_srvs.srv"] = std_srvs.srv
+
+    # rehab_robotics_interfaces is needed by esp32_bridge_node (IdentifyDevice);
+    # install a minimal stub so the package import does not fail when this stub
+    # is already in sys.modules before test_esp32_controls.py runs.
+    if "rehab_robotics_interfaces" not in sys.modules:
+        rehab_interfaces = types.ModuleType("rehab_robotics_interfaces")
+        rehab_interfaces.srv = types.ModuleType("rehab_robotics_interfaces.srv")
+        rehab_interfaces.srv.IdentifyDevice = type("IdentifyDevice", (), {})
+        sys.modules["rehab_robotics_interfaces"] = rehab_interfaces
+        sys.modules["rehab_robotics_interfaces.srv"] = rehab_interfaces.srv
+    else:
+        # Patch missing IdentifyDevice onto the existing stub if absent
+        existing_srv = sys.modules.get("rehab_robotics_interfaces.srv")
+        if existing_srv is not None and not hasattr(existing_srv, "IdentifyDevice"):
+            existing_srv.IdentifyDevice = type("IdentifyDevice", (), {})
 
 
 _install_ros_stubs()
