@@ -8,6 +8,10 @@ find_package(std_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ProcessingBlockUpdate.msg"
   "srv/IdentifyDevice.srv"
+  "srv/SetAssignment.srv"
+  "srv/ApplyMapping.srv"
+  "srv/GetMappingState.srv"
+  "srv/ResetMapping.srv"
   DEPENDENCIES std_msgs
 )
 

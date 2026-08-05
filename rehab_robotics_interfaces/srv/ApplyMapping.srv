@@ -1,0 +1,5 @@
+int32 expected_revision
+---
+string outcome
+int32 applied_revision
+string detail

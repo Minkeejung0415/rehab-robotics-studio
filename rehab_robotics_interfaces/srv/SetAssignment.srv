@@ -1,0 +1,7 @@
+string device_id
+string segment
+string frame
+string state
+---
+string outcome
+string detail
