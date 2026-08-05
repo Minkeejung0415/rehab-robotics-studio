@@ -17,7 +17,7 @@ Milestone v1.6 generalizes the existing fixed Master/Slave acquisition and OpenS
 
 - [x] **Phase 20: Full Identity and Confirmed Identify** - Every Master and Slave has a verified stable identity and a safely acknowledged physical Identify action. (completed 2026-07-30)
 - [x] **Phase 21: N-Route Relay and Canonical ROS Fleet** - All devices remain independently discoverable, routed, observable, and compatible with explicit legacy aliases. (completed 2026-08-05)
-- [ ] **Phase 22: Model Catalog, Mapping Store, and Transactional Contracts** - Model-derived assignments are validated, revisioned, persisted, and applied atomically.
+- [x] **Phase 22: Model Catalog, Mapping Store, and Transactional Contracts** - Model-derived assignments are validated, revisioned, persisted, and applied atomically. (completed 2026-08-05)
 - [ ] **Phase 23: N-Sensor Calibration and Official OpenSim IK** - Applied mappings drive provenance-bound calibration and valid synchronized N-sensor OpenSim solves.
 - [ ] **Phase 24: Rosbridge and Studio Mapping Workspace** - Operators manage the authoritative fleet mapping through stable, actionable device rows.
 - [ ] **Phase 25: Multi-Device Compatibility and Promotion Gate** - Deterministic and physical acceptance evidence preserves existing workflows and determines default-mode readiness.
@@ -93,7 +93,27 @@ Plans:
   4. Desired mappings survive restart and corruption recovery under a versioned, revisioned, atomic backend store; the same MAC reattaches under an unchanged model/revision while a different MAC remains Unassigned.
   5. Apply validates and stages the complete candidate against the expected revision, atomically swaps only on success, preserves the previous applied revision on failure, and remains blocked during calibration capture, recording, or finalization without altering that active operation.
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+
+**Wave 1**
+
+- [ ] 22-01-PLAN.md — ROS interface srv files (SetAssignment, ApplyMapping, GetMappingState, ResetMapping) + CMakeLists.txt
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 22-02-PLAN.md — model_catalog_node.py: SHA-256 identity, frame enumeration, /rehab/model/catalog publisher
+- [ ] 22-03-PLAN.md — mapping_node.py: assignment state machine, persistence, Apply + interlock, reconnect re-attach
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 22-04-PLAN.md — Offline tests for model_catalog_node (hash, frame enumeration, error cases)
+- [ ] 22-05-PLAN.md — Offline tests for mapping_node (all MAP-01–06 contracts, Apply state machine, interlock)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 22-06-PLAN.md — Launch wiring: setup.py entry points + rehab_robotics.launch.py
 
 ### Phase 23: N-Sensor Calibration and Official OpenSim IK
 
@@ -146,7 +166,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 20. Full Identity and Confirmed Identify | 6/6 | Complete   | 2026-07-30 |
 | 21. N-Route Relay and Canonical ROS Fleet | 4/6 | Gap closure in progress | 2026-07-31 |
-| 22. Model Catalog, Mapping Store, and Transactional Contracts | 0/TBD | Not started | - |
+| 22. Model Catalog, Mapping Store, and Transactional Contracts | 0/6 | Not started | - |
 | 23. N-Sensor Calibration and Official OpenSim IK | 0/TBD | Not started | - |
 | 24. Rosbridge and Studio Mapping Workspace | 0/TBD | Not started | - |
 | 25. Multi-Device Compatibility and Promotion Gate | 0/TBD | Not started | - |
