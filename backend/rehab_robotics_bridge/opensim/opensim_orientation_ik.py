@@ -346,6 +346,18 @@ class OpenSimOrientationIkSolver:
             positions.append(value)
         return positions
 
+    def _read_visualization_pose(self) -> tuple[list[str], list[float]]:
+        """Return every solved model coordinate for the separate visualizer."""
+
+        coordinate_set = self._model.getCoordinateSet()
+        names: list[str] = []
+        positions: list[float] = []
+        for index in range(int(coordinate_set.getSize())):
+            coordinate = coordinate_set.get(index)
+            names.append(str(coordinate.getName()))
+            positions.append(float(coordinate.getValue(self._state)))
+        return names, positions
+
     def _orientation_residuals(self) -> tuple[float | None, float | None]:
         solver = self._solver
         if solver is None:
@@ -437,6 +449,9 @@ class OpenSimOrientationIkSolver:
                     self._solver.assemble(self._state)
 
             positions = self._read_coordinates()
+            visualization_names, visualization_positions = (
+                self._read_visualization_pose()
+            )
             # Align published names with requested joint_names length.
             if len(positions) != len(names):
                 if len(positions) == 1 and len(names) >= 1:
@@ -457,6 +472,8 @@ class OpenSimOrientationIkSolver:
                 calibration_id=calibration.calibration_id,
                 input_age_s=input_age_s,
                 solve_duration_s=time.perf_counter() - started,
+                visualization_coordinate_names=visualization_names,
+                visualization_positions_rad=visualization_positions,
             )
         except Exception as exc:
             self._assembled = False
@@ -473,6 +490,180 @@ class OpenSimOrientationIkSolver:
                 orientation_residual_rms=None,
                 orientation_residual_max=None,
                 calibration_id=calibration.calibration_id,
+                input_age_s=input_age_s,
+                solve_duration_s=time.perf_counter() - started,
+            )
+
+    def _make_quat_table_n(
+        self,
+        inputs: list[tuple[str, Any]],
+        time_s: float,
+    ) -> Any:
+        """Build a TimeSeriesTableQuaternion from N (frame_name, wxyz) pairs."""
+        osim = self._osim
+        n = len(inputs)
+        table = osim.TimeSeriesTableQuaternion()
+        labels = [frame for frame, _ in inputs]
+        table.setColumnLabels(labels)
+        row = osim.RowVectorQuaternion(n)
+        set_ok = False
+        try:
+            for column, (_, wxyz) in enumerate(inputs):
+                target = row.updElt(0, column)
+                for component, value in enumerate(wxyz):
+                    target.set(component, float(value))
+            set_ok = True
+        except Exception:
+            pass
+
+        if not set_ok:
+            quats = [osim.Quaternion(*wxyz) for _, wxyz in inputs]
+            for setter in ("set", "setItem"):
+                if hasattr(row, setter):
+                    try:
+                        for idx, q in enumerate(quats):
+                            getattr(row, setter)(idx, q)
+                        set_ok = True
+                        break
+                    except Exception:
+                        continue
+        if not set_ok:
+            try:
+                quats = [osim.Quaternion(*wxyz) for _, wxyz in inputs]
+                table.appendRow(time_s, quats)
+                return table
+            except Exception as exc:
+                raise RuntimeError(f"quaternion_row_n_failed:{exc}") from exc
+        table.appendRow(time_s, row)
+        return table
+
+    def solve_n(
+        self,
+        inputs: list[tuple[str, Any]],
+        source_timestamp_ns: int | None,
+        input_age_s: float | None,
+        joint_names: Sequence[str],
+        calibration: Any = None,
+    ) -> IkSolution:
+        """Solve IK for N-sensor orientation table; additive to solve()."""
+        started = time.perf_counter()
+        names = [str(name) for name in joint_names] or list(self._coordinate_paths)
+
+        if not inputs:
+            return IkSolution(
+                solution_valid=False,
+                reason="no_inputs",
+                joint_names=names,
+                positions_rad=[],
+                source_timestamp_ns=source_timestamp_ns,
+                orientation_residual_rms=None,
+                orientation_residual_max=None,
+                calibration_id=None,
+                input_age_s=input_age_s,
+                solve_duration_s=time.perf_counter() - started,
+            )
+
+        if source_timestamp_ns is None:
+            return IkSolution(
+                solution_valid=False,
+                reason="missing_source_timestamp",
+                joint_names=names,
+                positions_rad=[],
+                source_timestamp_ns=None,
+                orientation_residual_rms=None,
+                orientation_residual_max=None,
+                calibration_id=None,
+                input_age_s=input_age_s,
+                solve_duration_s=time.perf_counter() - started,
+            )
+
+        try:
+            if self._solver is None:
+                self._build_solver()
+
+            # Convert each xyzw to wxyz for OpenSim
+            n_inputs = [
+                (frame, self._xyzw_to_wxyz(xyzw))
+                for frame, xyzw in inputs
+            ]
+
+            self._time_s += 0.01
+            table = self._make_quat_table_n(n_inputs, self._time_s)
+            rotations_table = self._quats_to_rotations(table)
+
+            # Rebuild OrientationsReference + solver for non-buffered N-sensor path
+            osim = self._osim
+            self._orientations_ref = osim.OrientationsReference(rotations_table)
+            markers_ref = (
+                osim.MarkersReference() if self._probe.get("MarkersReference") else None
+            )
+            coord_refs = self._empty_coordinate_refs()
+            try:
+                self._solver = osim.InverseKinematicsSolver(
+                    self._model,
+                    markers_ref,
+                    self._orientations_ref,
+                    coord_refs,
+                )
+            except Exception:
+                self._solver = osim.InverseKinematicsSolver(
+                    self._model,
+                    self._orientations_ref,
+                    coord_refs,
+                )
+            self._assembled = False
+
+            self._state.setTime(self._time_s)
+            assert self._solver is not None
+            if not self._assembled:
+                self._solver.assemble(self._state)
+                self._assembled = True
+            else:
+                try:
+                    self._solver.track(self._state)
+                except Exception:
+                    self._solver.assemble(self._state)
+
+            positions = self._read_coordinates()
+            visualization_names, visualization_positions = self._read_visualization_pose()
+
+            if len(positions) != len(names):
+                if len(positions) == 1 and len(names) >= 1:
+                    positions = [positions[0]] * len(names)
+                    names = list(names)
+                else:
+                    names = list(self._coordinate_paths[: len(positions)])
+
+            rms, residual_max = self._orientation_residuals()
+            return IkSolution(
+                solution_valid=True,
+                reason="ok",
+                joint_names=list(names),
+                positions_rad=list(positions),
+                source_timestamp_ns=int(source_timestamp_ns),
+                orientation_residual_rms=rms,
+                orientation_residual_max=residual_max,
+                calibration_id=None,
+                input_age_s=input_age_s,
+                solve_duration_s=time.perf_counter() - started,
+                visualization_coordinate_names=visualization_names,
+                visualization_positions_rad=visualization_positions,
+            )
+        except Exception as exc:
+            self._assembled = False
+            reason = f"opensim_ik_solve_n_failed:{type(exc).__name__}"
+            message = str(exc)
+            if message and len(message) < 80:
+                reason = f"{reason}:{message}"
+            return IkSolution(
+                solution_valid=False,
+                reason=reason,
+                joint_names=names,
+                positions_rad=[],
+                source_timestamp_ns=source_timestamp_ns,
+                orientation_residual_rms=None,
+                orientation_residual_max=None,
+                calibration_id=None,
                 input_age_s=input_age_s,
                 solve_duration_s=time.perf_counter() - started,
             )

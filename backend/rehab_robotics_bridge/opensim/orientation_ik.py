@@ -24,7 +24,7 @@ solver.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 import time
 from typing import Protocol, Sequence
@@ -53,6 +53,8 @@ class IkSolution:
     calibration_id: str | None
     input_age_s: float | None
     solve_duration_s: float | None
+    visualization_coordinate_names: list[str] = field(default_factory=list)
+    visualization_positions_rad: list[float] = field(default_factory=list)
 
 
 class OrientationIkSolver(Protocol):
@@ -72,6 +74,16 @@ class OrientationIkSolver(Protocol):
         joint_names: Sequence[str],
     ) -> IkSolution:
         """Solve for joint coordinates; never fabricate wall-time stamps."""
+
+    def solve_n(
+        self,
+        inputs: list[tuple[str, Sequence[float]]],
+        source_timestamp_ns: int | None,
+        input_age_s: float | None,
+        joint_names: Sequence[str],
+        calibration: CalibrationArtifact | None = None,
+    ) -> IkSolution:
+        """Solve for N-sensor input list; never fabricate wall-time stamps."""
 
 
 def ik_status_dict(solution: IkSolution, *, backend: str) -> dict[str, object]:
@@ -202,6 +214,28 @@ class UnavailableOrientationIkSolver:
             solve_duration_s=0.0,
         )
 
+    def solve_n(
+        self,
+        inputs: list[tuple[str, Sequence[float]]],
+        source_timestamp_ns: int | None,
+        input_age_s: float | None,
+        joint_names: Sequence[str],
+        calibration: CalibrationArtifact | None = None,
+    ) -> IkSolution:
+        del inputs, calibration, joint_names
+        return IkSolution(
+            solution_valid=False,
+            reason=self._reason,
+            joint_names=[],
+            positions_rad=[],
+            source_timestamp_ns=source_timestamp_ns,
+            orientation_residual_rms=None,
+            orientation_residual_max=None,
+            calibration_id=None,
+            input_age_s=input_age_s,
+            solve_duration_s=0.0,
+        )
+
 
 class FakeOrientationIkSolver:
     """Deterministic test double: relative orientation about +X → knee_angle_r."""
@@ -252,6 +286,87 @@ class FakeOrientationIkSolver:
                 input_age_s=input_age_s,
                 solve_duration_s=time.perf_counter() - started,
             )
+
+        try:
+            master_corr, slave_corr = apply_mounting_offsets(
+                master_xyzw,
+                slave_xyzw,
+                calibration,
+            )
+            q_rel = _relative_xyzw(master_corr, slave_corr)
+            angle = _signed_angle_about_axis(q_rel, _FLEXION_AXIS)
+        except (TypeError, ValueError, IndexError) as exc:
+            return IkSolution(
+                solution_valid=False,
+                reason=f"invalid_orientation:{exc}",
+                joint_names=names,
+                positions_rad=[],
+                source_timestamp_ns=source_timestamp_ns,
+                orientation_residual_rms=None,
+                orientation_residual_max=None,
+                calibration_id=calibration.calibration_id,
+                input_age_s=input_age_s,
+                solve_duration_s=time.perf_counter() - started,
+            )
+
+        self._assembled = True
+        positions = [float(angle) for _ in names]
+        return IkSolution(
+            solution_valid=True,
+            reason="ok",
+            joint_names=names,
+            positions_rad=positions,
+            source_timestamp_ns=int(source_timestamp_ns),
+            orientation_residual_rms=0.0,
+            orientation_residual_max=0.0,
+            calibration_id=calibration.calibration_id,
+            input_age_s=input_age_s,
+            solve_duration_s=time.perf_counter() - started,
+        )
+
+    def solve_n(
+        self,
+        inputs: list[tuple[str, Sequence[float]]],
+        source_timestamp_ns: int | None,
+        input_age_s: float | None,
+        joint_names: Sequence[str],
+        calibration: CalibrationArtifact | None = None,
+    ) -> IkSolution:
+        """Deterministic test double for N-sensor solve: delegates to solve() using first two frames."""
+        started = time.perf_counter()
+        names = [str(name) for name in joint_names] or [DEFAULT_JOINT_NAME]
+
+        if calibration is None:
+            return IkSolution(
+                solution_valid=False,
+                reason="calibration_required",
+                joint_names=names,
+                positions_rad=[],
+                source_timestamp_ns=source_timestamp_ns,
+                orientation_residual_rms=None,
+                orientation_residual_max=None,
+                calibration_id=None,
+                input_age_s=input_age_s,
+                solve_duration_s=time.perf_counter() - started,
+            )
+
+        if source_timestamp_ns is None:
+            return IkSolution(
+                solution_valid=False,
+                reason="missing_source_timestamp",
+                joint_names=names,
+                positions_rad=[],
+                source_timestamp_ns=None,
+                orientation_residual_rms=None,
+                orientation_residual_max=None,
+                calibration_id=calibration.calibration_id,
+                input_age_s=input_age_s,
+                solve_duration_s=time.perf_counter() - started,
+            )
+
+        identity = (0.0, 0.0, 0.0, 1.0)
+        master_xyzw = inputs[0][1] if len(inputs) >= 1 else identity
+        slave_xyzw = inputs[1][1] if len(inputs) >= 2 else identity
 
         try:
             master_corr, slave_corr = apply_mounting_offsets(
