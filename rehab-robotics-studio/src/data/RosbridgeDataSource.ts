@@ -6,6 +6,13 @@ import type {
   OpenSimStatusSnapshot,
   PairHealthSnapshot,
 } from '../types/health';
+import type {
+  ModelCatalogSnapshot,
+  MappingCurrentSnapshot,
+  FleetRegistrySnapshot,
+  NCalibrationStatusSnapshot,
+  InputValiditySnapshot,
+} from '../state/mappingStore';
 import {
   isValidRosStamp,
   normalizeLiveKneeReason,
@@ -57,6 +64,19 @@ const TRIGGER_SERVICE_TYPE = 'std_srvs/srv/Trigger';
 const SERVICE_TIMEOUT_MS = 10_000;
 const VISUALIZER_TIMEOUT_REASON = 'No response from the OpenSim service within 10 s';
 const QUAT_SCALE = 1 / 32767;
+
+// Phase 24: Mapping workspace topic constants
+const MAPPING_CATALOG_TOPIC = '/rehab/model/catalog';
+const MAPPING_CURRENT_TOPIC = '/rehab/mapping/current';
+const FLEET_REGISTRY_TOPIC = '/esp/fleet/registry';
+const CALIBRATION_STATUS_TOPIC = '/rehab/calibration/status';
+const INPUT_VALIDITY_TOPIC = '/rehab/opensim/input_validity';
+
+// Phase 24: Mapping service constants
+const MAPPING_SET_ASSIGNMENT_SERVICE = '/rehab/mapping/set_assignment';
+const MAPPING_APPLY_SERVICE = '/rehab/mapping/apply';
+const MAPPING_RESET_SERVICE = '/rehab/mapping/reset';
+const IDENTIFY_DEVICE_SERVICE = '/rehab/identify/device';
 const GRAVITY = 9.80665;
 const CALIBRATION_WINDOW_SECONDS = 0.5;
 const STILL_RANGE_RADIANS = 0.08;
@@ -350,6 +370,96 @@ function frameFromPair(
   };
 }
 
+// ── Phase 24: Guard-parse functions for new mapping topics ───────────────────
+// Each follows the parseOpenSimStatus pattern: isRecord + field-type guards.
+// Returns null on any validation failure, never throws. (D-10, T-24-05)
+
+export function parseModelCatalog(payload: unknown): ModelCatalogSnapshot | null {
+  if (!isRecord(payload)) return null;
+  if (typeof payload.model_hash !== 'string') return null;
+  if (typeof payload.model_path !== 'string') return null;
+  if (!Array.isArray(payload.frame_list)) return null;
+  const frame_list: Array<{ path: string; name: string }> = [];
+  for (const item of payload.frame_list) {
+    if (!isRecord(item)) return null;
+    if (typeof item.path !== 'string' || typeof item.name !== 'string') return null;
+    frame_list.push({ path: item.path, name: item.name });
+  }
+  return {
+    schema: typeof payload.schema === 'string' ? payload.schema : undefined,
+    model_hash: payload.model_hash,
+    model_path: payload.model_path,
+    frame_list,
+  };
+}
+
+export function parseMappingCurrent(payload: unknown): MappingCurrentSnapshot | null {
+  if (!isRecord(payload)) return null;
+  if (typeof payload.revision !== 'number') return null;
+  if (typeof payload.applied_revision !== 'number') return null;
+  if (!isRecord(payload.assignments)) return null;
+  const assignments: MappingCurrentSnapshot['assignments'] = {};
+  for (const [deviceId, assignment] of Object.entries(payload.assignments)) {
+    if (!isRecord(assignment)) return null;
+    if (typeof assignment.segment !== 'string') return null;
+    if (typeof assignment.frame !== 'string') return null;
+    if (typeof assignment.state !== 'string') return null;
+    assignments[deviceId] = {
+      segment: assignment.segment,
+      frame: assignment.frame,
+      state: assignment.state,
+    };
+  }
+  return {
+    schema: typeof payload.schema === 'string' ? payload.schema : undefined,
+    revision: payload.revision,
+    applied_revision: payload.applied_revision,
+    model_hash: typeof payload.model_hash === 'string' ? payload.model_hash : undefined,
+    assignments,
+  };
+}
+
+export function parseFleetRegistry(payload: unknown): FleetRegistrySnapshot | null {
+  if (!isRecord(payload)) return null;
+  if (!Array.isArray(payload.devices)) return null;
+  const devices: FleetRegistrySnapshot['devices'] = [];
+  for (const item of payload.devices) {
+    if (!isRecord(item)) return null;
+    if (typeof item.device_id !== 'string') return null;
+    devices.push({
+      device_id: item.device_id,
+      role: typeof item.role === 'string' ? item.role : undefined,
+      route_state: typeof item.route_state === 'string' ? item.route_state : undefined,
+      connection_state: typeof item.connection_state === 'string' ? item.connection_state : undefined,
+      rate_hz: typeof item.rate_hz === 'number' && Number.isFinite(item.rate_hz) ? item.rate_hz : undefined,
+      drop_count: typeof item.drop_count === 'number' ? item.drop_count : undefined,
+    });
+  }
+  return { devices };
+}
+
+export function parseNCalibrationStatus(payload: unknown): NCalibrationStatusSnapshot | null {
+  if (!isRecord(payload)) return null;
+  const state = payload.state;
+  if (state !== 'capturing' && state !== 'calibrated' && state !== 'uncalibrated') return null;
+  return {
+    state,
+    revision: typeof payload.revision === 'number' ? payload.revision : undefined,
+    model_hash: typeof payload.model_hash === 'string' ? payload.model_hash : undefined,
+  };
+}
+
+export function parseInputValidity(payload: unknown): InputValiditySnapshot | null {
+  if (!isRecord(payload)) return null;
+  if (!isRecord(payload.device_validities)) return null;
+  const device_validities: Record<string, boolean> = {};
+  for (const [deviceId, valid] of Object.entries(payload.device_validities)) {
+    if (typeof valid !== 'boolean') return null;
+    device_validities[deviceId] = valid;
+  }
+  return { device_validities };
+}
+
 /** Rosbridge client for the canonical JSON produced by the ROS ESP bridge. */
 export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
   private socket: WebSocket | null = null;
@@ -384,6 +494,12 @@ export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
     private readonly onOpenSimStatus?: (status: OpenSimStatusSnapshot) => void,
     private readonly onOpenSimIkStatus?: (status: OpenSimIkStatusSnapshot) => void,
     private readonly onOpenSimJointState?: (jointState: OpenSimJointStateSnapshot) => void,
+    // Phase 24: Mapping workspace callbacks (positions 12-16, all optional, appended after position 11)
+    private readonly onModelCatalog?: (catalog: ModelCatalogSnapshot) => void,
+    private readonly onMappingCurrent?: (state: MappingCurrentSnapshot) => void,
+    private readonly onFleetRegistry?: (registry: FleetRegistrySnapshot) => void,
+    private readonly onCalibrationStatus?: (status: NCalibrationStatusSnapshot) => void,
+    private readonly onInputValidity?: (validity: InputValiditySnapshot) => void,
   ) {}
 
   start(_rateHz: number): void {
@@ -410,6 +526,12 @@ export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
         [DEFAULT_OPENSIM_STATUS_TOPIC, 'std_msgs/msg/String'],
         [DEFAULT_OPENSIM_IK_STATUS_TOPIC, 'std_msgs/msg/String'],
         [DEFAULT_OPENSIM_JOINT_STATES_TOPIC, 'sensor_msgs/msg/JointState'],
+        // Phase 24: Mapping workspace subscriptions (D-09)
+        [MAPPING_CATALOG_TOPIC, 'std_msgs/msg/String'],
+        [MAPPING_CURRENT_TOPIC, 'std_msgs/msg/String'],
+        [FLEET_REGISTRY_TOPIC, 'std_msgs/msg/String'],
+        [CALIBRATION_STATUS_TOPIC, 'std_msgs/msg/String'],
+        [INPUT_VALIDITY_TOPIC, 'std_msgs/msg/String'],
       ] as const;
       for (const [topic, type] of new Map(subscriptions.map((entry) => [entry[0], entry])).values()) {
         socket.send(JSON.stringify({ op: 'subscribe', topic, type }));
@@ -612,6 +734,82 @@ export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
     };
   }
 
+  // ── Phase 24: Mapping service call methods (D-11, D-17) ─────────────────
+
+  /** Call /rehab/mapping/set_assignment — assign a device to a segment/frame. */
+  callSetAssignment(
+    deviceId: string,
+    segment: string,
+    frame: string,
+    state: string,
+  ): Promise<RecordingCommandResult> {
+    return this.callService(
+      MAPPING_SET_ASSIGNMENT_SERVICE,
+      { device_id: deviceId, segment, frame, state },
+      'rehab_robotics_interfaces/srv/SetAssignment',
+      (values) => {
+        const v = values as Record<string, unknown> | undefined;
+        const outcome = String(v?.outcome ?? '');
+        const detail = String(v?.detail ?? '');
+        return { success: outcome === 'ok', message: outcome || detail, outcome, detail } as RecordingCommandResult;
+      },
+      'Timed out waiting for SetAssignment response',
+    );
+  }
+
+  /** Call /rehab/mapping/apply — atomically apply all current assignments. */
+  callApplyMapping(expectedRevision: number): Promise<RecordingCommandResult> {
+    return this.callService(
+      MAPPING_APPLY_SERVICE,
+      { expected_revision: expectedRevision },
+      'rehab_robotics_interfaces/srv/ApplyMapping',
+      (values) => {
+        const v = values as Record<string, unknown> | undefined;
+        const outcome = String(v?.outcome ?? '');
+        const detail = String(v?.detail ?? '');
+        const appliedRevision = typeof v?.applied_revision === 'number' ? v.applied_revision : 0;
+        return {
+          success: outcome === 'applied',
+          message: outcome || detail,
+          outcome,
+          detail,
+          appliedRevision,
+        } as RecordingCommandResult;
+      },
+      'Timed out waiting for ApplyMapping response',
+    );
+  }
+
+  /** Call /rehab/mapping/reset — reset all assignments for the given model hash. */
+  callResetMapping(modelHash: string): Promise<RecordingCommandResult> {
+    return this.callService(
+      MAPPING_RESET_SERVICE,
+      { model_hash: modelHash },
+      'rehab_robotics_interfaces/srv/ResetMapping',
+      (values) => {
+        const v = values as Record<string, unknown> | undefined;
+        const outcome = String(v?.outcome ?? '');
+        return { success: outcome === 'ok', message: outcome, outcome } as RecordingCommandResult;
+      },
+      'Timed out waiting for ResetMapping response',
+    );
+  }
+
+  /** Call /rehab/identify/device — trigger LED flash on a device for physical identification. */
+  callIdentifyDevice(deviceId: string, timeoutMs = 5000): Promise<RecordingCommandResult> {
+    return this.callService(
+      IDENTIFY_DEVICE_SERVICE,
+      { device_id: deviceId, timeout_ms: timeoutMs },
+      'rehab_robotics_interfaces/srv/IdentifyDevice',
+      (values) => {
+        const v = values as Record<string, unknown> | undefined;
+        const outcome = String(v?.outcome ?? '');
+        return { success: outcome !== '', message: outcome, outcome } as RecordingCommandResult;
+      },
+      'Timed out waiting for IdentifyDevice response',
+    );
+  }
+
   private callService(
     service: string,
     args: Record<string, unknown>,
@@ -707,6 +905,50 @@ export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
       if (envelope.topic === DEFAULT_OPENSIM_JOINT_STATES_TOPIC) {
         const jointState = parseOpenSimJointState(envelope.msg, performance.now());
         if (jointState) this.onOpenSimJointState?.(jointState);
+        return;
+      }
+
+      // Phase 24: Mapping workspace topic dispatch (D-10)
+      // Each block: parse msg.data as JSON, guard with parse function, call callback only when non-null.
+      // Invalid payloads are silently dropped — never throw. (T-24-05)
+      if (envelope.topic === MAPPING_CATALOG_TOPIC) {
+        if (typeof envelope.msg.data !== 'string') return;
+        try {
+          const catalog = parseModelCatalog(JSON.parse(envelope.msg.data));
+          if (catalog) this.onModelCatalog?.(catalog);
+        } catch { /* malformed JSON silently dropped */ }
+        return;
+      }
+      if (envelope.topic === MAPPING_CURRENT_TOPIC) {
+        if (typeof envelope.msg.data !== 'string') return;
+        try {
+          const mapping = parseMappingCurrent(JSON.parse(envelope.msg.data));
+          if (mapping) this.onMappingCurrent?.(mapping);
+        } catch { /* malformed JSON silently dropped */ }
+        return;
+      }
+      if (envelope.topic === FLEET_REGISTRY_TOPIC) {
+        if (typeof envelope.msg.data !== 'string') return;
+        try {
+          const registry = parseFleetRegistry(JSON.parse(envelope.msg.data));
+          if (registry) this.onFleetRegistry?.(registry);
+        } catch { /* malformed JSON silently dropped */ }
+        return;
+      }
+      if (envelope.topic === CALIBRATION_STATUS_TOPIC) {
+        if (typeof envelope.msg.data !== 'string') return;
+        try {
+          const status = parseNCalibrationStatus(JSON.parse(envelope.msg.data));
+          if (status) this.onCalibrationStatus?.(status);
+        } catch { /* malformed JSON silently dropped */ }
+        return;
+      }
+      if (envelope.topic === INPUT_VALIDITY_TOPIC) {
+        if (typeof envelope.msg.data !== 'string') return;
+        try {
+          const validity = parseInputValidity(JSON.parse(envelope.msg.data));
+          if (validity) this.onInputValidity?.(validity);
+        } catch { /* malformed JSON silently dropped */ }
         return;
       }
 
