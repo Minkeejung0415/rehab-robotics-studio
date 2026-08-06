@@ -185,6 +185,7 @@ def _install_ros_stubs():
     rclpy.init = lambda args=None: None
     rclpy.spin = lambda node: None
     rclpy.try_shutdown = lambda: None
+    rclpy.ok = lambda: True
     sys.modules["rclpy"] = rclpy
     sys.modules["rclpy.node"] = rclpy.node
     sys.modules["rclpy.qos"] = rclpy.qos
@@ -245,26 +246,45 @@ def _install_ros_stubs():
 
 _install_ros_stubs()
 
-from rehab_robotics_bridge import opensim_node  # noqa: E402
-from rehab_robotics_bridge.opensim.orientation_ik import FakeOrientationIkSolver  # noqa: E402
-
-
 # ---------------------------------------------------------------------------
-# Load mapping_node via importlib (avoids double-import conflicts)
+# Load modules via importlib (isolated names to avoid polluting sys.modules)
 # ---------------------------------------------------------------------------
+
+def _load_opensim_module():
+    """Load opensim_node.py under an isolated name.
+
+    Using a unique spec name avoids registering under
+    'rehab_robotics_bridge.opensim_node', which would bake this file's
+    _Imu stub class and break test_opensim_node.py's identity checks.
+    __package__ = 'rehab_robotics_bridge' is inferred from the spec name,
+    so relative imports (from .opensim.calibration import ...) still work.
+    """
+    path = Path(__file__).parents[1] / "rehab_robotics_bridge" / "opensim_node.py"
+    spec = importlib.util.spec_from_file_location(
+        "rehab_robotics_bridge.opensim_node_compat_test", path
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
 
 def _load_mapping_module():
     path = Path(__file__).parents[1] / "rehab_robotics_bridge" / "mapping_node.py"
     spec = importlib.util.spec_from_file_location("mapping_node_legacy_test", path)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
-    # Register before exec so circular-import lookups find it
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
+_opensim = _load_opensim_module()
 _mapping = _load_mapping_module()
+
+# FakeOrientationIkSolver from production module (safe — no Imu binding)
+from rehab_robotics_bridge.opensim.orientation_ik import FakeOrientationIkSolver  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +320,7 @@ def _make_opensim_node():
         "model_path": "",
     }
     try:
-        node = opensim_node.OpenSimBridgeNode(
+        node = _opensim.OpenSimBridgeNode(
             adapter=_FakeAdapter(),
             ik_solver=FakeOrientationIkSolver(),
         )
