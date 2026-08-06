@@ -20,7 +20,7 @@ Milestone v1.6 generalizes the existing fixed Master/Slave acquisition and OpenS
 - [x] **Phase 22: Model Catalog, Mapping Store, and Transactional Contracts** - Model-derived assignments are validated, revisioned, persisted, and applied atomically. (completed 2026-08-05)
 - [x] **Phase 23: N-Sensor Calibration and Official OpenSim IK** - Applied mappings drive provenance-bound calibration and valid synchronized N-sensor OpenSim solves. (completed 2026-08-05)
 - [x] **Phase 24: Rosbridge and Studio Mapping Workspace** - Operators manage the authoritative fleet mapping through stable, actionable device rows. (completed 2026-08-05)
-- [ ] **Phase 25: Multi-Device Compatibility and Promotion Gate** - Deterministic and physical acceptance evidence preserves existing workflows and determines default-mode readiness.
+- [x] **Phase 25: Multi-Device Compatibility and Promotion Gate** - Deterministic and physical acceptance evidence preserves existing workflows and determines default-mode readiness. (completed 2026-08-05)
 
 ## Phase Details
 
@@ -182,14 +182,28 @@ Plans:
 **Goal**: Operators can rely on both dynamic and legacy workflows within a measured hardware envelope before dynamic mode is promoted.
 **Depends on**: Phase 24
 **Requirements**: COMP-01, COMP-02, COMP-03
+
+> **Gate status:** Gate OPEN — hardware evidence pending.
+
+**Plans**: 3 plans
+
+Plans:
+
+**Wave 1** *(parallel — independent files)*
+
+- [x] 25-01-PLAN.md — test_compat_legacy.py: legacy two-sensor workflow regression tests (COMP-01, TDD)
+- [x] 25-02-PLAN.md — test_acceptance.py: all 9 COMP-02 edge-case categories (COMP-02, TDD)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 25-03-PLAN.md — hardware-acceptance-report.md + acceptance_gate.py + conditional use_fleet_bridge default flip (COMP-03)
+
 **Success Criteria** (what must be TRUE):
 
   1. Existing two-sensor startup, pair health, frequency/range controls, recording, calibration, joint-state, graph, and visualizer workflows remain functional through explicit aliases and rollback mode.
   2. Deterministic acceptance tests reproduce and pass full-MAC collision, arbitrary ordering, DHCP/reconnect, Identify failure, partial-Apply rollback, corrupt persistence, stale/skewed input, interlock, and repeated-cleanup cases.
   3. Hardware acceptance states the supported fleet size and rates from Master-plus-multiple-Slave evidence covering Identify safety, acquisition and recording continuity, reconnect, radio/relay load, and OpenSim solve latency.
   4. Dynamic mode becomes the default only when the documented acceptance gate passes; otherwise the tested legacy mode remains available with the unmet evidence visible.
-
-**Plans**: TBD
 
 ## Progress
 
@@ -202,7 +216,7 @@ Plans:
 | 22. Model Catalog, Mapping Store, and Transactional Contracts | 6/6 | Complete | 2026-08-05 |
 | 23. N-Sensor Calibration and Official OpenSim IK | 5/5 | Complete | 2026-08-05 |
 | 24. Rosbridge and Studio Mapping Workspace | 4/4 | Complete   | 2026-08-05 |
-| 25. Multi-Device Compatibility and Promotion Gate | 0/TBD | Not started | - |
+| 25. Multi-Device Compatibility and Promotion Gate | 3/3 | Complete | 2026-08-05 |
 
 ---
 *Roadmap created: 2026-07-30 for milestone v1.6*
