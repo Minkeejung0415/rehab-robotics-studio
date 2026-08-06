@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Multi-Sensor Bone Mapping
-status: verifying
-stopped_at: Completed 24-01-PLAN.md
-last_updated: "2026-08-05T22:31:22.017Z"
+status: complete
+stopped_at: Completed 25-03-PLAN.md — Phase 25 VERIFIED
+last_updated: "2026-08-05T00:00:00.000Z"
 last_activity: 2026-08-05
 progress:
   total_phases: 6
-  completed_phases: 5
-  total_plans: 27
-  completed_plans: 27
-  percent: 83
+  completed_phases: 6
+  total_plans: 30
+  completed_plans: 30
+  percent: 100
 ---
 
 # Project State
@@ -21,17 +21,17 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-07-30)
 
 **Core value:** Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline into usable filtered, biomechanical, and recorded outputs.
-**Current focus:** Phase 21 — N-Route Relay and Canonical ROS Fleet
+**Current focus:** Milestone v1.6 complete — all phases 20-25 done
 
 ## Current Position
 
-Phase: 22 — COMPLETE
-Plan: 4 of 4 executed; verification 2/5
-Status: Phase complete — ready for verification
+Phase: 25 — COMPLETE (milestone v1.6 complete)
+Plan: 3 of 3 executed; verified inline
+Status: Milestone complete — all 6 phases done
 Last activity: 2026-08-05
 
 Progress: [██████████] 100%
-Verification: `.planning/phases/21-n-route-relay-and-canonical-ros-fleet/21-VERIFICATION.md`
+Verification: `.planning/phases/25-multi-device-compatibility-and-promotion-gate/25-VERIFICATION.md`
 
 ## Performance Metrics
 
