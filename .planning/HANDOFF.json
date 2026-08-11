@@ -1,0 +1,78 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-08-11T23:51:42.369Z",
+  "phase": "debug",
+  "phase_name": "ESP32 TCP client lifecycle and full-stack wireless verification",
+  "phase_dir": ".planning/debug",
+  "plan": null,
+  "task": 4,
+  "total_tasks": 5,
+  "status": "paused",
+  "completed_tasks": [
+    {
+      "id": 1,
+      "name": "Identify premature TCP client closure and queued connection causes",
+      "status": "done"
+    },
+    {
+      "id": 2,
+      "name": "Remove duplicate relay/fleet identity exchange and repair launcher routing",
+      "status": "done"
+    },
+    {
+      "id": 3,
+      "name": "Compile and flash 30-second idle-grace firmware to COM3 and COM4",
+      "status": "done"
+    },
+    {
+      "id": 4,
+      "name": "Run physical reconnect and UDP matrix",
+      "status": "done",
+      "progress": "JSON result ok=true; 12/12 identity reconnect cases and UDP START/SENSORS/frame/STOP passed across both boards. A serial teardown thread exception made the process exit nonzero after the successful result."
+    }
+  ],
+  "remaining_tasks": [
+    {
+      "id": 5,
+      "name": "Run final ROS/OpenSim/GUI full cycle with the newly flashed firmware",
+      "status": "not_started"
+    }
+  ],
+  "blockers": [
+    {
+      "description": "Final post-flash ROS/OpenSim/GUI end-to-end verification has not been run yet.",
+      "type": "technical",
+      "workaround": "Start from the exact launcher command and verification sequence in .planning/.continue-here.md."
+    }
+  ],
+  "human_actions_pending": [],
+  "decisions": [
+    {
+      "decision": "Use a 30000 ms firmware TCP idle grace.",
+      "rationale": "The real WSL/ROS startup measured about 5.5 seconds between connection and the next control command, crossing the former 5000 ms boundary.",
+      "phase": "debug"
+    },
+    {
+      "decision": "The Windows relay owns the physical IDENTITY exchange and returns its bounded verified inventory to fleet_bridge_node.",
+      "rationale": "Forwarding a second IDENTITY query caused duplicate and interleaved inventory fragments.",
+      "phase": "debug"
+    },
+    {
+      "decision": "Keep one validated ESP socket for identity and control instead of opening a fresh post-probe socket.",
+      "rationale": "The fresh-socket experiment intermittently lost REDPITAYA/START commands; the single-socket relay-only handshake completed normally.",
+      "phase": "debug"
+    }
+  ],
+  "uncommitted_files": [
+    ".planning/debug/esp32-tcp-client-lifecycle.md",
+    "firmware/step_node/step_node.ino",
+    "firmware/step_node_slave/step_node_slave.ino",
+    "scripts/stepesp_tcp_udp_relay.py",
+    "scripts/start_stepesp_wireless.ps1",
+    "scripts/test_stepesp_reconnect_matrix.py",
+    "backend/rehab_robotics_bridge/fleet_bridge_node.py",
+    "backend/test/test_stepesp_udp_relay.py"
+  ],
+  "next_action": "Run the complete hotspot launcher with the verified master/slave routes, wait at least 30 seconds, then verify relay/fleet logs, both ROS IMU rates, fleet registry, OpenSim fresh/ready status, and the GUI at port 5173.",
+  "context_notes": "Both boards are flashed and the physical matrix passed. All STEP ESP relay, ROS, OpenSim, serial-drain, and workspace Vite processes were stopped for the pause. The repository was already broadly dirty; preserve unrelated user changes."
+}
