@@ -28,6 +28,8 @@ Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline 
 - [ ] Keep rendering responsive through bounded buffering and display downsampling while preserving the full-rate recording path.
 - [ ] Prove displayed channel identity, exported data columns, full MAC, and applied body-part mapping remain consistent across remap and reconnect.
 - [ ] Prove on physical hardware that an applied Studio segment swap changes which OpenSim 3D model segment responds after recalibration.
+- [ ] Provide a compatible full-body OpenSim model and sensor-frame catalog spanning head, torso, pelvis, and bilateral upper and lower limbs.
+- [ ] Scale fleet routing, calibration, official OpenSim IK, joint output, and native visualization to the required simultaneous full-body sensor set.
 
 ### Out of Scope
 
@@ -52,6 +54,7 @@ Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline 
 - Bounded browser buffers and display downsampling that do not reduce the full-rate recording path.
 - Recording/export provenance that retains channel, full-MAC, and applied body-part identity.
 - Hardware-backed calibrated 3D remap validation proving the UI assignment changes the responding OpenSim segment.
+- Full-body mapping and simultaneous calibrated IK for head, torso, pelvis, and bilateral arms and legs using a compatible full-body `.osim` model.
 
 ## Context
 
@@ -92,6 +95,8 @@ v1.6 generalized the prior fixed Master/Slave path into stable full-MAC fleet ro
 | Require calibrated physical 3D remap UAT | Topic and subscription checks alone do not prove the operator sees the intended model segment move | Active |
 | Include validated magnetometer sensitivity/calibration and microtesla display | The user selected full 9-axis SI support; uncalibrated counts must not be mislabeled as physical units | Active |
 | Export full-rate provenance independently from the viewer | Display decimation must never reduce or relabel recorded evidence | Active |
+| Deliver full-body mapping and simultaneous official OpenSim IK, not only lower-body selection | The user explicitly requires the mapping workflow to control the complete body | Active |
+| Treat the supported full-body sensor count as a measured capacity contract | The existing six-route cap and lower-body solver profile cannot be assumed sufficient | Active |
 
 ## Evolution
 

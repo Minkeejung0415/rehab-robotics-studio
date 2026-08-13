@@ -6,7 +6,7 @@ status: ready_to_plan
 last_updated: "2026-08-13"
 last_activity: 2026-08-13
 progress:
-  total_phases: 5
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-08-13)
 
 **Core value:** Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline into usable filtered, biomechanical, and recorded outputs.
-**Current focus:** Phase 26 - Signal Contract and Provenance
+**Current focus:** Phase 26 - Signal Contract and Provenance (full-body v1.7 roadmap)
 
 ## Current Position
 
-Phase: 26 of 30 (Signal Contract and Provenance)
+Phase: 26 of 32 (Signal Contract and Provenance)
 Plan: Not planned
 Status: Ready to plan
-Last activity: 2026-08-13 - Created the v1.7 roadmap with all 20 requirements mapped across Phases 26-30
+Last activity: 2026-08-13 - Expanded v1.7 to full-body IK with all 27 requirements mapped across Phases 26-32
 
 Progress: [----------] 0%
 
@@ -36,13 +36,13 @@ Progress: [----------] 0%
 **Current milestone:**
 
 - Plans completed: 0
-- Phases completed: 0/5
+- Phases completed: 0/7
 - Average duration: -
 - Total execution time: -
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 26-30 | 0 | - | - |
+| 26-32 | 0 | - | - |
 
 **Prior milestone reference:** v1.6 Phases 20-25 completed on 2026-08-05; detailed execution artifacts remain preserved.
 

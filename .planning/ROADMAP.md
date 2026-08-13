@@ -2,7 +2,7 @@
 
 ## Overview
 
-Milestone v1.7 turns the corrected multi-sensor fleet path into an operator-grade signal inspection and validation workflow. Work proceeds from trustworthy signal/provenance contracts through identity-safe ingestion, a bounded responsive viewer, independent full-rate export evidence, and finally a calibrated physical remap test that proves the same full-MAC identity agrees across Studio, recording, and the native OpenSim visualizer.
+Milestone v1.7 turns the corrected multi-sensor fleet path into an operator-grade full-body signal inspection and OpenSim workflow. Work proceeds from trustworthy signal/provenance contracts through a compatible full-body model and mapping vocabulary, measured fleet-scale ingestion, a bounded Open Ephys-style viewer, independent full-rate export, simultaneous full-body calibration/official IK, and retained physical acceptance evidence.
 
 ## Milestones
 
@@ -12,15 +12,17 @@ Milestone v1.7 turns the corrected multi-sensor fleet path into an operator-grad
 - **v1.4 OpenSim Quaternion Live Link** - Phase 15 implemented.
 - **v1.5 OpenSim IK + Calibration + Visualizer Control** - Phases 16-19 completed.
 - **v1.6 Multi-Sensor Bone Mapping** - Phases 20-25 completed on 2026-08-05.
-- **v1.7 Multi-Sensor Signal Viewer & 3D Mapping Validation** - Phases 26-30 active.
+- **v1.7 Multi-Sensor Signal Viewer & Full-Body 3D Mapping Validation** - Phases 26-32 active.
 
 ## Phases
 
-- [ ] **Phase 26: Signal Contract and Provenance** - Every sample has trustworthy identity, timing, capability, units, and applied-mapping meaning.
-- [ ] **Phase 27: Identity-Safe Multi-Sensor Ingestion** - Every known ESP reaches the viewer independently with stable identity and explicit reconnect/remap boundaries.
-- [ ] **Phase 28: Bounded Signal Viewer and Controls** - Operators can inspect and compare responsive stacked traces without affecting acquisition, recording, or OpenSim.
-- [ ] **Phase 29: Full-Rate Export Integrity** - Recorded evidence retains full-rate values and provenance independently of all display behavior.
-- [ ] **Phase 30: Calibrated 3D Remap Acceptance** - Physical evidence proves full-MAC mappings follow applied swaps and reconnects into the expected native OpenSim segments.
+- [ ] **Phase 26: Signal Contract and Provenance** - Every channel sample has trustworthy identity, timing, capability, units, and applied-mapping meaning.
+- [ ] **Phase 27: Full-Body Model and Mapping Vocabulary** - Studio exposes exact compatible Frames for all required head, trunk, arm, and leg segments.
+- [ ] **Phase 28: Fleet-Scale Identity-Safe Ingestion** - The required full-body sensor fleet reaches the viewer independently with measured capacity and explicit reconnect/remap boundaries.
+- [ ] **Phase 29: Bounded Signal Viewer and Controls** - Operators can inspect and compare responsive stacked traces without affecting authoritative data paths.
+- [ ] **Phase 30: Full-Rate Export Integrity** - Recorded evidence retains full-rate values and provenance independently of all display behavior.
+- [ ] **Phase 31: Full-Body Calibration and Official OpenSim IK** - One complete synchronized mapped sensor set drives provenance-bound full-body joint output and native visualization.
+- [ ] **Phase 32: Full-Body Physical Acceptance** - Physical evidence proves full-MAC mappings, remaps, reconnects, exports, and simultaneous full-body 3D response agree.
 
 ## Phase Details
 
@@ -29,86 +31,118 @@ Milestone v1.7 turns the corrected multi-sensor fleet path into an operator-grad
 **Goal**: Operators can trust the identity, timing, validity, units, capabilities, and applied mapping attached to every displayed or exported sample.
 **Depends on**: Phase 25
 **Requirements**: SIG-01, SIG-02, SIG-03, SIG-04, SIG-05
-**Success Criteria** (what must be TRUE):
+**Success Criteria**:
 
-  1. Operator can inspect lossless raw accel, gyro, and magnetometer counts whose samples retain full MAC, acquisition time or sequence, reconnect epoch, and channel capabilities.
-  2. Operator can switch accel and gyro channels to validated SI values while raw counts remain available and unchanged.
-  3. Operator sees magnetometer values labelled in microtesla only when sensor sensitivity and calibration provenance validate; otherwise SI is explicitly unavailable.
-  4. Live and historical labels reflect only the authoritative applied mapping revision, exact segment, and frame, never a draft assignment.
-  5. Quaternion channels appear only for sources declaring valid quaternion capability, and missing or invalid orientation is visibly unavailable rather than fabricated.
+1. Raw accel, gyro, and magnetometer samples retain full MAC, acquisition time/sequence, reconnect epoch, and channel capabilities.
+2. Accel and gyro switch between lossless raw counts and validated SI values.
+3. Magnetometer values show microtesla only with validated sensitivity/calibration provenance; otherwise SI is explicitly unavailable.
+4. Labels use the authoritative applied revision and exact segment/frame, never drafts, while invalid quaternion data remains unavailable rather than fabricated.
 
 **Plans**: TBD
 **UI hint**: yes
 
-### Phase 27: Identity-Safe Multi-Sensor Ingestion
+### Phase 27: Full-Body Model and Mapping Vocabulary
 
-**Goal**: Operators can discover and follow every saved or connected ESP as an independent, stable signal source across reconnect and remap boundaries.
+**Goal**: Operators can map sensors to a compatible model-derived full-body Frame set without lower-body hard-coding.
 **Depends on**: Phase 26
-**Requirements**: VIEW-01, VIEW-06
-**Success Criteria** (what must be TRUE):
+**Requirements**: BODY-01, BODY-02
+**Success Criteria**:
 
-  1. Operator sees connected and saved ESP sources populate automatically with full MAC, role, connection state, rate/errors, and applied body part, including stable offline entries.
-  2. Reconnecting a device produces an explicit visible gap and begins a new reconnect epoch instead of joining old and new samples silently.
-  3. Applying a remap begins a new provenance epoch, and already buffered samples retain their original applied labels rather than being relabelled.
+1. A bundled compatible full-body `.osim` model loads with exact sensor Frames for head, torso, pelvis, and bilateral upper arms, forearms, hands, thighs, shanks, and feet.
+2. Every compatible full-body segment/frame appears in Studio directly from the active model catalog.
+3. Operators can assign, save, apply, restore, and atomically swap full-body assignments by full MAC while invalid or duplicate candidates fail closed.
 
 **Plans**: TBD
 **UI hint**: yes
 
-### Phase 28: Bounded Signal Viewer and Controls
+### Phase 28: Fleet-Scale Identity-Safe Ingestion
 
-**Goal**: Operators can responsively inspect and compare all available IMU channels while display choices remain isolated from authoritative data paths.
+**Goal**: Operators can discover and follow the complete supported full-body ESP fleet as stable independent sources across reconnect and remap boundaries.
 **Depends on**: Phase 27
-**Requirements**: VIEW-02, VIEW-03, VIEW-04, VIEW-05, PERF-01, PERF-02
-**Success Criteria** (what must be TRUE):
+**Requirements**: BODY-03, VIEW-01, VIEW-06
+**Success Criteria**:
 
-  1. Operator can view one ESP as stacked scrolling traces for all nine IMU components and any valid quaternion components, with synchronized time axes and persistent full-MAC/body-part labels.
-  2. Operator can compare selected ESPs or the same channel across devices without losing device identity or time alignment.
-  3. Operator can change group/channel visibility, raw or SI presentation, time window, local pause, vertical zoom/scale, and autoscale without interrupting incoming data.
-  4. Viewer pause, visibility, scaling, and display reduction leave acquisition, health/services, recording, and OpenSim input counts and behavior unchanged.
-  5. At the tested fleet/channel envelope, long-running memory stays bounded and extrema remain visible while the display sustains a responsive 20-30 FPS and exposes backlog, drops, freshness, and effective-rate diagnostics.
+1. Connected and saved sources populate automatically with full MAC, role, state, rate/errors, and applied body part, including stable offline entries.
+2. The required full-body sensor count operates within a measured rate/drop/reconnect/synchronization envelope rather than the previous assumed six-route limit.
+3. Reconnect produces an explicit gap and new reconnect epoch without silently joining samples.
+4. Apply/remap produces a new provenance epoch while buffered historical samples retain their original labels.
 
 **Plans**: TBD
 **UI hint**: yes
 
-### Phase 29: Full-Rate Export Integrity
+### Phase 29: Bounded Signal Viewer and Controls
 
-**Goal**: Operators can retain authoritative full-rate multi-sensor evidence whose identity and values reconcile with the displayed traces.
+**Goal**: Operators can responsively inspect and compare all available IMU channels while display choices remain isolated from authoritative paths.
 **Depends on**: Phase 28
-**Requirements**: EXP-01, EXP-02, EXP-03
-**Success Criteria** (what must be TRUE):
+**Requirements**: VIEW-02, VIEW-03, VIEW-04, VIEW-05, PERF-01, PERF-02
+**Success Criteria**:
 
-  1. Operator can record and export every configured canonical source at full received rate regardless of browser buffering, frame rate, visibility, pause, or display downsampling.
-  2. Exported samples preserve timestamp or sequence, full MAC, role, channel, raw and applicable SI values/units, mapping revision, segment, frame, and provenance epoch.
-  3. Automated reconciliation confirms that displayed trace identity, value, and time correspond to the authoritative export while allowing the display to render fewer points than were recorded.
+1. One selected ESP renders stacked synchronized traces for nine IMU components and valid quaternion components with persistent MAC/body labels.
+2. Selected ESPs or the same channel across devices can be compared on synchronized axes without losing identity.
+3. Group/channel visibility, raw/SI, time window, local pause, vertical scale/zoom, and autoscale work without interrupting incoming data.
+4. Viewer behavior leaves acquisition, health/services, recording, and OpenSim input unchanged.
+5. At the supported full-body fleet envelope, memory remains bounded, extrema remain visible, and display sustains 20-30 FPS with backlog/drop/freshness/effective-rate diagnostics.
+
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 30: Full-Rate Export Integrity
+
+**Goal**: Operators can retain authoritative full-rate full-body evidence whose identity and values reconcile with displayed traces.
+**Depends on**: Phase 29
+**Requirements**: EXP-01, EXP-02, EXP-03
+**Success Criteria**:
+
+1. Every configured canonical source records/exports at full received rate regardless of viewer state or display downsampling.
+2. Export preserves time/sequence, full MAC, role, channel, raw/applicable SI values and units, mapping revision, segment, frame, and provenance epoch.
+3. Automated reconciliation proves displayed trace identity/value/time corresponds to full-rate export while allowing fewer rendered points.
 
 **Plans**: TBD
 
-### Phase 30: Calibrated 3D Remap Acceptance
+### Phase 31: Full-Body Calibration and Official OpenSim IK
 
-**Goal**: Operators have retained physical evidence that applied full-MAC mappings determine which calibrated native OpenSim segment responds.
-**Depends on**: Phase 29
-**Requirements**: UAT-01, UAT-02, UAT-03, UAT-04
-**Success Criteria** (what must be TRUE):
+**Goal**: Operators can calibrate one complete mapped full-body sensor set and receive official synchronized full-body OpenSim joint output and visualization.
+**Depends on**: Phase 30
+**Requirements**: BODY-04, BODY-05, BODY-06
+**Success Criteria**:
 
-  1. Operator can Identify each physical ESP, apply a baseline mapping, recalibrate, move one sensor at a time, and retain evidence that the expected native OpenSim segment responds.
-  2. Operator can atomically swap two segment assignments in Studio, recalibrate, and retain evidence that the responding native OpenSim segments swap with the full-MAC devices.
-  3. After remap and reconnect, the same full MAC regains the expected applied label, export provenance, and observed 3D segment response without depending on role, route, or discovery order.
-  4. The acceptance evidence clearly limits its conclusion to routing and visual segment correspondence for the tested configuration and makes no clinical, anatomical-accuracy, or biomechanical-validity claim.
+1. Calibration captures the exact model hash, applied mapping revision, ordered full-MAC/frame set, solver profile, and per-sensor mounting offsets.
+2. Official OpenSim IK consumes the complete synchronized full-body set and publishes all configured full-body joint coordinates.
+3. Missing, stale, pre-reconnect, or skewed required sensors suppress new full-body IK output with actionable per-device status while acquisition/recording continue.
+4. Native visualization responds across head, trunk, bilateral arms, and bilateral legs with mapping/calibration/solver provenance visible in Studio.
+
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 32: Full-Body Physical Acceptance
+
+**Goal**: Operators have retained physical evidence that full-MAC mappings determine the expected native OpenSim regions before and after remap/reconnect.
+**Depends on**: Phase 31
+**Requirements**: UAT-01, UAT-02, UAT-03, UAT-04, UAT-05
+**Success Criteria**:
+
+1. Each physical ESP is Identified, mapped, calibrated, and moved independently with evidence that its expected model segment responds.
+2. Two assignments can be atomically swapped, recalibrated, and shown to swap their responding native OpenSim segments with the full-MAC devices.
+3. Remap/reconnect restores the same MAC's applied label, trace identity, export provenance, and observed 3D response independent of role/route/order.
+4. A complete supported full-body configuration produces retained simultaneous joint-output and native 3D response evidence by body region.
+5. Acceptance explicitly limits conclusions to routing and visual correspondence and makes no clinical/anatomical/biomechanical accuracy claim.
 
 **Plans**: TBD
 **UI hint**: yes
 
 ## Progress
 
-**Execution Order:** Phase 26 -> Phase 27 -> Phase 28 -> Phase 29 -> Phase 30
+**Execution Order:** Phase 26 -> Phase 27 -> Phase 28 -> Phase 29 -> Phase 30 -> Phase 31 -> Phase 32
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 26. Signal Contract and Provenance | 0/TBD | Not started | - |
-| 27. Identity-Safe Multi-Sensor Ingestion | 0/TBD | Not started | - |
-| 28. Bounded Signal Viewer and Controls | 0/TBD | Not started | - |
-| 29. Full-Rate Export Integrity | 0/TBD | Not started | - |
-| 30. Calibrated 3D Remap Acceptance | 0/TBD | Not started | - |
+| 27. Full-Body Model and Mapping Vocabulary | 0/TBD | Not started | - |
+| 28. Fleet-Scale Identity-Safe Ingestion | 0/TBD | Not started | - |
+| 29. Bounded Signal Viewer and Controls | 0/TBD | Not started | - |
+| 30. Full-Rate Export Integrity | 0/TBD | Not started | - |
+| 31. Full-Body Calibration and Official OpenSim IK | 0/TBD | Not started | - |
+| 32. Full-Body Physical Acceptance | 0/TBD | Not started | - |
 
 ---
-*Roadmap created: 2026-08-13 for milestone v1.7*
+*Roadmap revised: 2026-08-13 after full-body IK scope expansion*

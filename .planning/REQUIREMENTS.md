@@ -23,6 +23,15 @@
 - [ ] **VIEW-05**: Viewer pause, visibility, scaling, and downsampling never pause acquisition, suppress health or service responses, alter recording, or change OpenSim input.
 - [ ] **VIEW-06**: Reconnects render explicit gaps and remaps create a new provenance epoch; buffered samples are never silently joined or relabelled across either boundary.
 
+### Full-Body Mapping and IK
+
+- [ ] **BODY-01**: Operator can load a bundled compatible full-body `.osim` model whose catalog exposes exact sensor Frames for head, torso, pelvis, and bilateral upper arms, forearms, hands, thighs, shanks, and feet.
+- [ ] **BODY-02**: Operator can assign any known ESP to every supported full-body segment using exact model-derived segment/frame choices without lower-body hard-coding.
+- [ ] **BODY-03**: Fleet routing and diagnostics support the simultaneous sensor count required by the selected full-body solver profile, with measured rate, drop, reconnect, and synchronization limits.
+- [ ] **BODY-04**: Operator can capture one provenance-bound full-body calibration artifact containing the exact model hash, applied revision, ordered full-MAC/frame set, and per-sensor mounting offsets.
+- [ ] **BODY-05**: Official OpenSim IK consumes the complete synchronized full-body sensor set and publishes all configured full-body joint coordinates while suppressing output when required inputs are incomplete, stale, or skewed.
+- [ ] **BODY-06**: Native OpenSim visualization visibly responds across mapped head, trunk, bilateral arm, and bilateral leg segments, with solver/input validity and mapping provenance available to Studio.
+
 ### Performance
 
 - [ ] **PERF-01**: Long-running viewer memory remains bounded through fixed-capacity typed rings and extrema-preserving display projection rather than unbounded arrays or shift/copy buffers.
@@ -40,6 +49,7 @@
 - [ ] **UAT-02**: Operator can swap two segment assignments in Studio, Apply, recalibrate, and retain evidence that the responding native OpenSim segments swap with the full-MAC devices.
 - [ ] **UAT-03**: After remap and device reconnect, applied mapping, viewer labels, export provenance, and observed 3D segment response reattach to the same full MAC.
 - [ ] **UAT-04**: Acceptance reports only routing and visual segment correspondence; it makes no clinical, anatomical-accuracy, or biomechanical-validity claim.
+- [ ] **UAT-05**: A complete supported full-body sensor configuration is Identified, mapped, calibrated, moved by body region, and retained as evidence that all required full-body joint outputs and native 3D regions respond simultaneously.
 
 ## Future Requirements
 
@@ -59,6 +69,7 @@
 | Display settings that modify acquisition or recording | The viewer is observational; control and full-rate data paths remain independent. |
 | Fabricated magnetometer SI or quaternion values | Values must remain raw/unavailable until their capability and calibration contracts validate them. |
 | WebGL, OffscreenCanvas, or worker architecture by default | Research found Canvas/uPlot plus typed rings sufficient; add complexity only if measured capacity requires it. |
+| Partial-sensor output presented as complete full-body IK | Missing required sensors must be explicit and suppress the selected full-body profile rather than producing misleading output. |
 
 ## Traceability
 
@@ -71,27 +82,34 @@ Traceability is populated during roadmap creation.
 | SIG-03 | Phase 26 | Pending |
 | SIG-04 | Phase 26 | Pending |
 | SIG-05 | Phase 26 | Pending |
-| VIEW-01 | Phase 27 | Pending |
-| VIEW-02 | Phase 28 | Pending |
-| VIEW-03 | Phase 28 | Pending |
-| VIEW-04 | Phase 28 | Pending |
-| VIEW-05 | Phase 28 | Pending |
-| VIEW-06 | Phase 27 | Pending |
-| PERF-01 | Phase 28 | Pending |
-| PERF-02 | Phase 28 | Pending |
-| EXP-01 | Phase 29 | Pending |
-| EXP-02 | Phase 29 | Pending |
-| EXP-03 | Phase 29 | Pending |
-| UAT-01 | Phase 30 | Pending |
-| UAT-02 | Phase 30 | Pending |
-| UAT-03 | Phase 30 | Pending |
-| UAT-04 | Phase 30 | Pending |
+| VIEW-01 | Phase 28 | Pending |
+| VIEW-02 | Phase 29 | Pending |
+| VIEW-03 | Phase 29 | Pending |
+| VIEW-04 | Phase 29 | Pending |
+| VIEW-05 | Phase 29 | Pending |
+| VIEW-06 | Phase 28 | Pending |
+| BODY-01 | Phase 27 | Pending |
+| BODY-02 | Phase 27 | Pending |
+| BODY-03 | Phase 28 | Pending |
+| BODY-04 | Phase 31 | Pending |
+| BODY-05 | Phase 31 | Pending |
+| BODY-06 | Phase 31 | Pending |
+| PERF-01 | Phase 29 | Pending |
+| PERF-02 | Phase 29 | Pending |
+| EXP-01 | Phase 30 | Pending |
+| EXP-02 | Phase 30 | Pending |
+| EXP-03 | Phase 30 | Pending |
+| UAT-01 | Phase 32 | Pending |
+| UAT-02 | Phase 32 | Pending |
+| UAT-03 | Phase 32 | Pending |
+| UAT-04 | Phase 32 | Pending |
+| UAT-05 | Phase 32 | Pending |
 
 **Coverage:**
-- v1.7 requirements: 20 total
-- Mapped to phases: 20
+- v1.7 requirements: 27 total
+- Mapped to phases: 27
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-08-13*
-*Last updated: 2026-08-13 after v1.7 scope approval*
+*Last updated: 2026-08-13 after full-body IK scope expansion*
