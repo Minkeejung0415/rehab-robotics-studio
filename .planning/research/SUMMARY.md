@@ -1,298 +1,292 @@
 # Project Research Summary
 
-**Project:** Rehab Robotics Studio — v1.6 Multi-Sensor Bone Mapping
-**Domain:** Local multi-ESP-NOW wearable IMU discovery, model-aware sensor placement, and dynamic ROS 2/OpenSim orientation IK
-**Researched:** 2026-07-30
-**Confidence:** HIGH overall; MEDIUM where physical hardware, multi-peer transport, and pinned OpenSim runtime-frame behavior still require validation
+**Project:** Rehab Robotics Studio — v1.7 Multi-Sensor Signal Viewer & 3D Mapping Validation
+**Domain:** Local React/TypeScript + ROS 2 instrument viewer for multi-ESP IMU acquisition, recording provenance, and OpenSim mapping validation
+**Researched:** 2026-08-13
+**Confidence:** HIGH on architecture, identity, and isolation requirements; MEDIUM on target-hardware capacity, time synchronization, and magnetometer SI semantics
 
 ## Executive Summary
 
-Rehab Robotics Studio v1.6 is a lab-instrument configuration and preflight milestone, not a generic IoT dashboard. Experts build this kind of system by separating immutable hardware identity from mutable role, IP route, model assignment, and liveness; by keeping acquisition independent from mapping and recording; and by allowing OpenSim to consume only a complete, fresh, synchronized orientation set. The present repository already has the right core stack and a working two-sensor OpenSim path, but fixed `master`/`slave` assumptions collapse the Master plus multiple ESP-NOW peers at the relay, ROS, Studio, calibration, and solver boundaries.
+v1.7 is an operator-grade signal inspection and identity-validation milestone, not a dashboard chart enhancement. Experts build this class of system as parallel data planes: a full-rate authoritative ROS path feeds recording and OpenSim, while a deliberately bounded and lossy browser path feeds visualization. The viewer must discover every ESP by canonical full MAC, consume the per-MAC raw stream, retain exact raw counts in fixed-capacity typed-array rings, and project only the visible window into spike-preserving pixel buckets for synchronized canvas plots. React and Zustand should own controls and low-rate metadata, never per-sample data.
 
-The recommended approach is an additive six-phase generalization. Carry a verified full 48-bit device identity through firmware, the Windows relay, ROS, rosbridge, persistence, and Studio. Publish canonical per-MAC acquisition topics while retaining explicit legacy pair aliases. Make the OpenSim backend authoritative for the loaded model hash, model-derived segment/frame catalog, desired and applied mapping revisions, calibration provenance, dynamic subscriptions, and IK validity. Studio owns only an editable draft and request state. Mapping changes are full-candidate, optimistic-revision transactions: stage the new routes and solver, swap once, and retain the last known-good applied revision on failure.
+The recommended implementation adds only `uplot@1.6.32` to the existing React 18/TypeScript/Vite stack. Extend the existing single rosbridge connection with dynamic `/esp/raw/mac_<12hex>` subscriptions and a strict `FleetRawSample` contract; keep the legacy pair-derived `Frame` path untouched for existing panels. Build provenance around full MAC, reconnect generation, sequence/time semantics, sensor configuration, model hash, and authoritative **applied** mapping revision. Draft assignments must never relabel traces or exports. Raw/SI switching is a presentation transform over retained raw counts, and magnetometer SI must remain unavailable until its scale and calibration contract is verified.
 
-The principal risks are wrong-device identity after DHCP/reconnect, false Identify confirmation, partial Apply, stale or skewed N-sensor solves, invalid calibration reuse, recording crossed by a mapping change, and leaked dynamic subscriptions or queues. Mitigate them with application-level Identify acknowledgement, SHA-256 model identity, exact component/frame paths, backend validation, recording/calibration interlocks, bounded generation-aware freshness gates, explicit lifecycle teardown, legacy compatibility gates, deterministic failure fixtures in every phase, and a final multi-device hardware matrix before dynamic mode becomes the default.
+The largest risks are false identity, false continuity, false units, and accidental coupling of display load or pause to acquisition. Prevent them with explicit identity/provenance epochs, visible gaps, strict validation, display-only pause, bounded O(1) buffers, extrema-preserving display projection, backend-owned full-rate recording, and count-based isolation tests. The milestone closes only with physical calibrated segment-remap UAT: LED-identify the hardware, capture applied revisions and calibration IDs, perform isolated motion before and after an atomic remap and recalibration, then verify the same MAC trace/export identity drives the newly assigned native OpenSim segment. This evidence proves mapping-to-visualizer correspondence under the tested configuration; it does **not** prove clinical or biomechanical accuracy.
 
 ## Key Findings
 
 ### Recommended Stack
 
-Extend the existing stack in place. No database, frontend framework, `roslibjs`, ROS dynamic-type package, separate `.osim` parser, new ESP-NOW/LED library, or OpenSim upgrade is needed. The material stack changes are local contracts and collection-based refactors, not third-party dependencies.
+Use the current application and ROS stack, adding one focused plotting dependency. The high-rate sample plane should be project-owned TypeScript using preallocated typed arrays and pure projection functions. This minimizes integration risk and makes the safety-critical separation between visualization and recording testable.
 
 **Core technologies:**
 
-- **React 18.3.1 + TypeScript 5.9.3:** stable MAC-keyed mapping rows, discriminated device/mapping states, strict transport parsers, and conflict/preflight UX.
-- **Zustand 4.5.7:** normalized live UI state and optional versioned draft cache. It must not be the authority for applied routing.
-- **ROS 2 Humble + Python 3.10 + `rclpy`:** one fleet bridge, versioned state snapshots, confirmed command services, and runtime-created/destroyed `sensor_msgs/msg/Imu` subscriptions.
-- **rosbridge server 2.0.7:** retain the existing raw WebSocket client, correlated service calls, unique subscription IDs, and explicit unsubscribe lifecycle.
-- **OpenSim Python 4.5.2:** authoritative `.osim` load, SHA-256 model identity, `BodySet`/Frame catalog, calibration, one N-column official orientation IK solve, and native visualizer integration.
-- **Arduino ESP32 core 3.3.10 / existing firmware 1.8.0:** add full identity, peer inventory, bounded Identify request/ack, exact packet version/size handling, and non-blocking LED deadlines.
-- **Python standard library JSON/filesystem primitives:** backend mapping persistence with write-temp, flush, atomic replace, bounded backup, and corruption quarantine.
+- `uplot@1.6.32`: imperative canvas time-series rendering — accepts aligned typed arrays and supports data, scale, visibility, size, cursor, and lifecycle updates without React reconciliation.
+- React / React DOM `18.3.1`: controls, layout, accessibility, and chart lifecycle — retain the existing version; do not upgrade as part of v1.7.
+- TypeScript `5.6.3`: versioned channel, unit, validity, capability, timing, and provenance contracts — fixed channel types reduce ordering and unit mistakes.
+- ROS 2 Humble + existing native rosbridge WebSocket: authoritative transport and services — dynamically add canonical per-MAC raw subscriptions on the existing socket; do not add `roslib` or one socket per sensor.
+- Zustand `4.5.5`: low-rate viewer preferences only — source/group/channel visibility, window, pause, unit mode, and scale preferences; never store samples per update.
+- Native typed arrays: `Float64Array` timestamps and `Int16Array` raw counts in fixed-capacity circular buffers — O(1) writes and memory bounded independently of session duration.
+- Project-owned min/max envelope projector: time/pixel buckets with aligned per-group extrema — preserves spikes and gaps while bounding rendered points; its output is display-only.
+- `requestAnimationFrame`, `ResizeObserver`, and optional `useSyncExternalStore`: cap repaint around 20–30 fps, resize plots, and expose immutable low-rate snapshots while full-rate ingestion continues.
+- Existing Node `--test` + `tsx` and Playwright `1.61.1`: deterministic contract/buffer/projection tests plus browser interaction and performance regression tests; no new test framework is needed.
 
-**Required local interfaces and schemas:**
+**Critical version and implementation requirements:**
 
-- Versioned full fleet, model catalog, mapping, and solver snapshots on existing `std_msgs/msg/String` JSON topics.
-- Typed local ROS services for Identify, setting a complete desired mapping, and applying an expected revision atomically.
-- Canonical per-device acquisition topics such as `/esp32/mac_aabbccddeeff/imu`; body segment names never belong in acquisition topic names.
-- A canonical device key such as `esp32:aabbccddeeff`, plus display MAC `AA:BB:CC:DD:EE:FF`. Preserve stable base MAC and ESP-NOW/AP/STA transport MACs separately until their actual-board relationship is verified.
+- Import `uplot` directly with its bundled stylesheet and TypeScript declarations; do not add `@types/uplot` or a React wrapper.
+- Start capacity planning around 30 seconds at a 200 Hz design ceiling (6,000 samples per device plus explicit margin), but treat this as a profiling hypothesis rather than an accepted product limit.
+- Keep chart data aligned on original timestamps. For each pixel bucket, use the sorted union of visible channels' extrema indices so narrow events in any channel survive.
+- Add a Web Worker only if target-hardware profiling proves projection/conversion causes unacceptable long tasks. Recording and OpenSim remain unchanged if workerization is needed.
 
-#### Stack Deltas and Resolved Research Tensions
-
-1. **Persistence authority:** [STACK.md](./STACK.md) proposes Zustand `persist`/`localStorage`, while [FEATURES.md](./FEATURES.md) and [ARCHITECTURE.md](./ARCHITECTURE.md) require restart-safe, multi-tab-consistent backend authority. Adopt the backend `MappingStore` as the source of truth. Browser persistence, if retained, is only a non-authoritative draft convenience and can never prove that a mapping is applied.
-2. **Stable versus transport MAC:** persist one verified full stable hardware/base MAC as `device_id`; expose the current ESP-NOW interface MAC separately for peer targeting and diagnostics. Hardware acceptance must confirm whether they coincide on deployed boards.
-3. **Missing model IMU frames:** prefer exact model-authored `<body>_imu` Frames. Runtime-only deterministic frames are acceptable only after a Phase 3 spike proves safe creation/connection before `initSystem()` under OpenSim 4.5.2. Until then, fail closed with `sensor_ready=false`; never silently rewrite the source model or choose a similarly named joint/frame.
-4. **High-rate Slave transport:** the preferred shape is one Master host stream carrying peer MAC with every sample and ROS fan-out by MAC. If firmware forwarding cannot preserve acquisition timing, retain independent Slave TCP/UDP streams and generalize the relay to N identity-confirmed routes. Decide this in Phase 2 through throughput evidence.
-5. **Compatibility:** keep fixed Master/Slave topics, pair status, launch parameters, services, and `JointState` contract as aliases/rollback paths for v1.6. Bind the legacy Slave alias to an explicit persisted `legacy_slave_id`, never discovery order.
+Detailed rationale: [STACK.md](./STACK.md).
 
 ### Expected Features
 
-The table stakes form one safety contract. A frontend-only mapping table is insufficient because discovery, identity, routes, model frames, calibration, and solve validity are authoritative upstream.
+The viewer should behave like an instrument monitor: stable source identity, synchronized traces, explicit state and units, and observational controls that cannot alter acquired data.
 
-**Must have (table stakes):**
+**Must have (v1.7 table stakes):**
 
-- **Master plus every visible Slave:** one stable MAC-keyed registry with separate ESP-NOW visibility, transport readiness, ROS topic readiness, orientation freshness, synchronization, rate, and actionable errors.
-- **Stable full identity and rows:** use all 48 MAC bits; retain saved/offline rows; same-MAC reconnect updates in place; a different MAC at the old IP is a new Unassigned sensor.
-- **Targeted Identify:** exactly one verified MAC, bounded non-blocking blink, command correlation, and distinct confirmed, sent-unconfirmed, timeout, offline, unsupported, and rejected outcomes.
-- **Authoritative model catalog:** load through OpenSim, hash exact bytes, enumerate `BodySet` component paths excluding Ground, and resolve an exact compatible IMU Frame.
-- **Explicit placement decisions:** every known device is Assigned, Not used, or Unassigned; Unassigned remains incomplete. Master participates as a wearable orientation source.
-- **Uniqueness and solver preflight:** reject duplicate segments in Studio and backend; validate exact frame resolution, identity, route, at least one included sensor, and a declared solver/profile minimum.
-- **Draft, Saved, Applied, Runtime Ready:** keep these four facts distinct. Saving does not change live routing, and an Apply response is not authoritative until the backend publishes the matching revision.
-- **Per-model durable mapping:** backend persistence keyed by exact model hash and full device ID, with schema/revision, atomic writes, backup, corruption handling, reconnect reattachment, and no cross-hash auto-apply.
-- **Transactional Apply:** submit and validate the whole candidate, stage all subscriptions/model frames/solver/visualizer, atomically swap, or leave the previous revision intact.
-- **Quiescent interlocks:** allow draft editing/saving during acquisition, but block Apply during calibration capture, SD recording, and recording finalization. Never auto-stop recording.
-- **Dynamic OpenSim path:** applied device-to-frame mappings drive MAC-keyed subscriptions, N-sensor calibration artifacts, deterministic N-column quaternion tables, official OpenSim IK, health, and visualizer labels.
-- **Freshness and calibration hard gates:** one stale, invalid, skewed, missing, or pre-reconnect input suppresses new `JointState` while acquisition, recording, health, and Identify continue. Semantic model/mapping/frame/profile changes invalidate calibration.
-- **Reason-coded observability and deterministic verification:** layered per-device/global errors, bounded payloads/queues, and fixture coverage for arbitrary order, collisions, reconnect, rollback, corrupt persistence, skew, cleanup, and recording interlocks.
+- Stable source catalog keyed by canonical full MAC, merged from live fleet and saved mapping state; known offline, unassigned, and `Not used` devices remain visible and clearly labelled.
+- Authoritative labels in the form `applied body part — full MAC`, including applied revision, health, reconnect status, and capability state. Draft mapping is editor state, not runtime truth.
+- Independent ax/ay/az, gx/gy/gz, mx/my/mz, and capability-gated qw/qx/qy/qz traces for each source; missing or invalid channels produce gaps/reasons, never invented zeros.
+- Source → group → axis visibility with stable ordering, readable persistent labels, shared time navigation, and separate numeric scales for acceleration, gyro, magnetometer, and quaternion dimensions.
+- Explicit Raw/SI presentation with units on axes, cursor values, and exports. Accel/gyro conversions use captured versioned configuration; magnetometer remains raw-only until a verified sensitivity/calibration contract exists; quaternion is unitless and validity/norm aware.
+- Bounded browser history, O(1) rings, shape-preserving display downsampling, visible reduction/overflow/lag counters, and responsive behavior at the declared maximum fleet/rate/window.
+- Display-only pause, time-window control, paused history navigation, vertical range, predictable autoscale, zoom, and responsive/keyboard-accessible controls. The UI must say that acquisition and recording continue while display is paused.
+- Honest discontinuities across invalid samples, missing timestamps, reconnect generations, and remap epochs; no interpolation or line bridging.
+- Full-rate backend recording/export with full MAC, canonical channel identity, raw value and units/conversion metadata, timing and sequence semantics, reconnect generation, applied segment/frame/revision, model hash, and calibration/session provenance.
+- Remap epoch handling: draft edits do nothing to live labels; a successful Apply creates a new applied provenance epoch, invalidates prior calibration, and clears or visibly partitions old display history.
+- Hardware-backed calibrated remap/reconnect/export UAT using the existing native OpenSim visualizer and a retained evidence bundle.
 
-**Should have after core validation:**
+**Should have after the core path is validated (v1.x):**
 
-- Guided placement mode and a one-screen readiness matrix.
-- Optional placement labels/notes that never hide or replace MAC identity.
-- Applied mapping/calibration provenance in session metadata and bounded mapping audit history.
-- Review-only model revision reconciliation and mapping profile import/export.
-- Offline preconfiguration for known MACs while runtime readiness remains Waiting.
+- Cross-source synchronized cursor with keyboard nudge and numeric identity/unit readout.
+- Viewer-only operator presets such as placement check, raw integrity, and motion/IK views.
+- Rich clipping, dropout, timestamp-gap, quaternion-norm, and transport-quality annotations.
+- Intentional linked-scale compare mode for compatible channels across mapped segments.
 
-**Defer beyond v1.6:**
+**Defer (v2+ or separate scope):**
 
-- Partial-sensor/degraded IK profiles until observability and accuracy are explicitly validated.
-- Explicit derived-model export for generated Frames; never modify source `.osim` silently.
-- Per-sensor orientation weights and advanced biomechanical placement calibration.
-- Fleet management, OTA, battery analytics, cloud/remote operation, generic Wi-Fi provisioning, and unrelated neural/motor/EtherCAT functions.
-- Clinical or biomechanical validity claims without an external-reference protocol.
+- Offline recording playback and file/session indexing.
+- User event annotations until the timestamp/event export contract is settled.
+- Embedded OpenSim rendering; native OpenSim is the v1.7 validation surface.
+- Recording-channel selection; if added later, it requires a separate strongly confirmed recorder workflow.
+- Generic neural-acquisition functions, firmware protocol redesign, motor/EtherCAT integration, and clinical or biomechanical accuracy claims.
+
+Detailed feature analysis: [FEATURES.md](./FEATURES.md).
 
 ### Architecture Approach
 
-The architecture follows five rules: stable identity with mutable metadata; canonical acquisition separated from segment mapping; backend authority with Studio projection; desired versus applied configuration; and newest complete bounded-skew orientation sets. Device discovery flows from firmware identity through an identity-confirmed route registry into canonical ROS fleet topics. Mapping flows from an OpenSim-generated catalog and backend store through a full-candidate transaction into dynamic subscriptions, calibration, and one model-wide IK solve. Reconnect joins by exact device ID without changing mapping revision, while a different device remains Unassigned.
+Branch the authoritative data at ROS publication into three independent consumers: backend recording consumes full-rate canonical raw messages, OpenSim consumes full-rate typed per-MAC `sensor_msgs/Imu` under applied mapping and calibration, and rosbridge feeds a bounded display-only browser branch. Add a new `FleetRawSample` / `FleetSignalBus` path beside the legacy `Frame` / `SignalBus`; never extend the pair-derived frame into the fleet viewer because it has already lost independent identity, raw values, magnetometer channels, and timing. Treat `(websocket generation, full MAC, reconnect generation)` as stream identity and `(model hash, applied revision, applied segment/frame)` as mapping identity. Every generation/revision transition starts a visible epoch.
 
 **Major components:**
 
-1. **Master and Slave firmware** — report full base/transport identity, role/capabilities, peer visibility, and application-acknowledged non-blocking Identify without disturbing acquisition or recording.
-2. **Windows STEP_ESP relay registry** — reconcile DHCP endpoints only after `IDENTITY?`, retain stable per-device local routes, isolate per-route failures/queues, and never own mapping.
-3. **ROS `esp32_fleet_bridge`** — own device sessions, canonical per-MAC publishers, fleet/per-device health, Identify service forwarding, recording/control services, and canonical-to-legacy aliases.
-4. **OpenSim bridge and modules** — own model hash/catalog, backend mapping store, desired/applied revisions, validation, transactional subscription/solver staging, calibration provenance, N-sensor freshness gates, IK validity, and native visualizer.
-5. **rosbridge and React Studio** — consume bounded fleet/mapping/OpenSim snapshots, maintain an ephemeral draft, invoke correlated services, render stable rows and layered errors, and wait for authoritative revisions.
+1. **Fleet registry and mapping contracts** — preserve registry revision/topic token/reconnect generation and keep editable assignments distinct from authoritative applied assignments, model hash, and applied revision.
+2. **`RosbridgeDataSource` dynamic fleet seam** — use the existing single socket to diff canonical topics, fence stale callbacks, validate topic/payload MAC agreement, parse once, and fan out lossless samples without owning history.
+3. **`fleetSampleContract.ts`** — strict channel, validity, capability, unit/conversion, timestamp, sequence, and generation normalization. Invalid data is rejected or marked unavailable, never defaulted to zero.
+4. **`FleetSignalBus`** — per-device fixed-capacity rings, gap/remap epochs, viewport state, display-only pause, overflow counters, and rate-limited immutable snapshots; it has no control edge to ROS acquisition, recorder, OpenSim, or service handling.
+5. **`TraceProjector`** — pure visible-window extraction and shared time/pixel min/max projection with first/last, gap, and epoch preservation. Reduced output is never a recording/export source.
+6. **`viewerStore` + `SignalViewer`** — low-rate preferences and accessible controls around synchronized uPlot group charts; high-rate numeric arrays remain external and imperative.
+7. **Backend recorder/export** — dynamically record canonical per-MAC raw topics at full rate and emit rows plus an immutable provenance manifest and reconciliation counters.
+8. **OpenSim mapping/calibration path** — continue consuming typed per-MAC IMU from the authoritative applied snapshot; reconnect generation and applied/model changes reset freshness and invalidate calibration as appropriate.
+9. **Physical remap evidence procedure** — joins LED-identified physical sensors, full MACs, applied revisions, calibration IDs, trace/export identities, joint-state metadata, native visualizer observations, and operator sign-off.
 
-**Authoritative data flow:**
+**Architectural invariants:**
 
-```text
-Firmware full identity + peer status
-  -> Relay device_id-to-current-route registry
-  -> ROS fleet bridge canonical topics and health
-  -> OpenSim backend mapping join by device_id
+- Display settings — pause, visibility, unit mode, time window, scale, autoscale, FPS, and downsampling — cannot alter ROS QoS, source subscriptions used by recording/OpenSim, firmware recording, backend sample counts, or OpenSim update counts.
+- The browser ring is bounded, lossy, reloadable, and non-authoritative. Only the backend full-rate path can support recording/export completeness claims.
+- Mapping labels and provenance come from applied state only. A draft edit must not change viewer labels, recorder metadata, or OpenSim subscriptions.
+- Sequence numbers are compared only within a reconnect epoch. Clock fields retain their domains; bridge receipt time must not be advertised as device acquisition time.
+- Raw counts are canonical for viewer history. SI values are derived through named, versioned conversions; config changes create provenance boundaries.
 
-OpenSim-loaded model bytes
-  -> SHA-256 model_id + BodySet/Frame catalog
-  -> Backend desired mapping + atomic applied revision
-  -> Dynamic per-MAC subscriptions + complete orientation set
-  -> Revision-bound calibration + official N-sensor IK
-  -> JointState/status/visualizer provenance
-
-Studio draft
-  -> Set complete candidate with expected revision
-  -> Backend validation/persistence
-  -> Apply staged transaction
-  -> Authoritative mapping status returned to Studio
-```
+Detailed boundaries and flows: [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ### Critical Pitfalls
 
-1. **Wrong or mutable identity** — carry a normalized full 48-bit base identity end to end, keep transport MAC/IP/role separate, quarantine malformed or changing identities, and test low-32-bit collisions.
-2. **Reconnect by order or IP** — reconcile MAC-keyed records, preserve offline rows/routes, flush old generations, and use an explicit `legacy_slave_id`.
-3. **Partial Apply or stale model mapping** — hash model bytes, use complete candidates and optimistic revisions, stage off-line, atomically swap, and keep the previous applied solver on every failure.
-4. **Ambiguous placement/frame semantics** — distinguish Unassigned from Not used, reject duplicate segments and fuzzy frame matches, use absolute component paths, and enforce solver-specific minimums.
-5. **Stale/skewed solve and calibration reuse** — require complete fresh monotonic bounded-skew sets, invalidate pre-reconnect cache generations, bind calibration to model/mapping/frame/profile provenance, and suppress rather than restamp stale output.
-6. **False Identify or unsafe LED behavior** — application acknowledgement with command ID, reason-coded results, verified board pin/active level, bounded duration, and no blocking callback code.
-7. **Recording crossed by mapping changes** — block Apply during recording/finalization/capture, never auto-stop, and keep recording result independent from mapping status.
-8. **Unbounded dynamic lifecycle** — exactly one route/session/publisher per MAC and subscription per applied sensor; bounded queues/latest-set policy, explicit destroy/unsubscribe, generation guards, and repeated-cycle leak tests.
+1. **Building on the legacy Master/Slave `Frame`** — avoids only short-term work but permanently loses per-MAC identity, raw components, magnetometer channels, and independent timing. Add a separate canonical per-MAC fleet sample seam.
+2. **Coupling pause or overload to the shared data/control plane** — the current whole-message-handler pause can suppress health, mapping, and service responses. Make pause projection-only; prioritize state/control work and shed only display work with visible counters.
+3. **Confusing bounded count with bounded cost or using naive decimation** — `shift()`, full-window copies, per-sample React updates, and every-Nth sampling create GC stalls and hide transients. Use preallocated O(1) rings, capped snapshot cadence, and shared pixel-time extrema buckets tested with impulses, alternating samples, irregular timestamps, gaps, and reconnects.
+4. **Treating units, time, quaternion, and channel availability as cosmetic** — silent time fallbacks, missing-to-zero parsing, unverified magnetometer SI, or quaternion renormalization create plausible false data. Version and validate these semantics at the contract boundary; surface uncertainty and invalidity explicitly.
+5. **Late-binding export or mapping labels** — joining samples to the current UI state rewrites history. Persist immutable applied mapping/model/calibration/configuration events and generation-tagged sample identity as recording occurs.
+6. **Using rendered points as recording evidence** — browser history is intentionally lossy and downsampled. Reconcile backend-received and recorded full-rate counts independently of plotted point counts and browser state.
+7. **Overclaiming physical validation** — a moving model or correct topic proves neither physical identity nor accuracy. Require LED identification, isolated movement, atomic remap, calibration invalidation/recalibration, before/after/reconnect evidence, and narrowly worded mapping-correspondence acceptance.
+
+Detailed failure modes and tests: [PITFALLS.md](./PITFALLS.md).
 
 ## Implications for Roadmap
 
-Research supports six dependency-ordered phases. Each phase should ship deterministic contract tests with its implementation; hardware scarcity is not a reason to postpone state-machine, rollback, or freshness verification.
+The research supports five dependency-ordered phases. Contract and identity work must land before performance/UI work; recording integrity must consume the settled identity contract; physical validation is a final release gate over the complete live chain.
 
-### Phase 1: Full Identity and Confirmed Identify
+### Phase 1: Signal, Time, Capability, and Provenance Contract
 
-**Rationale:** Persistence, routing, reconnect, and physical placement are unsafe until every layer has one verified immutable identity.
+**Rationale:** Every downstream component depends on stable definitions of device identity, channel order, validity, units, time domains, generations, and applied mapping. Deferring these decisions would force rewrites and invalidate visual/export evidence.
 
-**Delivers:** Full base/transport MAC schemas; canonical normalization; Master and Slave identity/peer status; targeted non-blocking Identify packet and application ACK; mixed-version/packet-size checks; board capability reporting.
+**Delivers:**
 
-**Addresses:** Stable hardware identity, Master inclusion, targeted Identify, reason-coded command outcomes.
+- Versioned `FleetRawSample`, fleet descriptor, applied identity, conversion/capability, and recording manifest contracts.
+- Strict validation rules for finite signed counts, topic/payload MAC agreement, optional quaternion, magnetometer availability, sequence, and clock-domain fields.
+- Separate draft and applied mapping snapshots in frontend state.
+- Explicit reconnect and remap epoch semantics plus calibration invalidation keys.
+- Declared product bounds to benchmark: maximum sensors, rate, visible channels, retained window, and acceptable display/control latency.
 
-**Avoids:** Truncated identity, broadcast/wrong-device blink, link-layer false success, blocking LED callbacks, and unsafe guessed LED pins.
+**Addresses:** stable full-MAC/applied-body labels, complete channel schema, raw/SI semantics, remap provenance, trustworthy export metadata.
 
-**Verification:** Low-32-bit collision fixtures; malformed/changed MAC rejection; Master plus two Slave identities; per-device ACK/timeout/unsupported/offline; unchanged sample and recording timing.
+**Avoids:** legacy composite identity loss, receipt-time ambiguity, false magnetometer units, invalid quaternion-as-zero, draft-state relabelling, and end-state export joins.
 
-### Phase 2: N-Route Relay and Canonical ROS Fleet
+**Requirement implications:**
 
-**Rationale:** Discovery must become an identity-keyed data plane before mapping or Studio work can be authoritative.
+- SI magnetometer display is conditional on verified hardware sensitivity/range, axes, and calibration provenance; otherwise v1.7 must explicitly ship raw counts with SI unavailable.
+- Cross-device synchronization claims must state the available timebase. Bridge receipt timing is insufficient for device-level synchronization claims without firmware/protocol evidence.
+- Applied mapping revision, model hash, and calibration identity are mandatory acceptance data, not optional diagnostics.
 
-**Delivers:** N-route registry; reusable isolated device sessions; canonical per-MAC IMU/raw/status topics; full fleet snapshots; reconnect generations; per-route bounded queues/drop metrics; explicit legacy aliases and rollback mode; final choice of Master-demultiplexed versus independent Slave high-rate transport.
+### Phase 2: Identity-Safe Multi-Sensor Ingestion and Epoch Handling
 
-**Addresses:** All-device discovery, layered readiness, stable rows/topics, route health, same-MAC reconnect, independent failure containment.
+**Rationale:** The viewer cannot be built reliably until every discovered device reaches the browser independently with stable identity and control-plane isolation. Reconnect semantics must also be consistent across bridge, Studio, and OpenSim before buffers or exports consume them.
 
-**Avoids:** IP/order identity, arbitrary first Slave, one route cancelling all streams, alias divergence, unbounded queues, and stale pre-reconnect samples.
+**Delivers:**
 
-**Verification:** Master plus at least two Slaves in arbitrary DHCP order; same topic after power cycle; different MAC at old IP remains new; one failed route does not stop others; canonical and alias data match; existing pair/record/frequency/range tests pass.
+- Dynamic canonical `/esp/raw/mac_<12hex>` subscriptions on the existing rosbridge socket.
+- Lossless parse/fan-out path keyed by full MAC and fenced by websocket and reconnect generations.
+- Registry revision/topic-token retention, stable offline rows, same-MAC preference restoration, and explicit gaps.
+- Standard reconnect-generation comparison in bridge, Studio, and OpenSim freshness handling.
+- Display sample ingestion independent of legacy pair frames, global `DataSource.pause()`, service callbacks, health/mapping state, recording, and OpenSim.
+- Diagnostic counters for invalid samples, sequence gaps, stale generations, display lag, and overload.
 
-### Phase 3: Model Catalog, Mapping Store, and Transactional Contracts
+**Addresses:** automatic fleet discovery, independent 9/13-channel sources, reconnect continuity without false continuity, visible health/failure state.
 
-**Rationale:** OpenSim-derived vocabulary, exact model identity, backend persistence, and atomic mapping revisions are prerequisites for dynamic calibration and UI Apply semantics.
+**Avoids:** role/order/IP identity, old-socket mutation, missing-to-zero data, false continuity, whole-socket pause, and display load starving state/control processing.
 
-**Delivers:** Typed mapping services; SHA-256 model catalog; exact segment/frame metadata; backend atomic mapping store with backup/corruption quarantine; complete-candidate validation; optimistic revisions; desired/applied state; staged Apply scaffold with fake adapter/solver; recording/calibration interlock contract.
+**Verification:** arbitrary registry order, multiple MACs, malformed payloads, topic/payload mismatch, device reconnect, websocket reconnect, draft/apply divergence, and paused display must not cross-contaminate buffers or delay service/state updates beyond the accepted threshold.
 
-**Addresses:** Model-derived segment choices, Assigned/Not used/Unassigned decisions, uniqueness, solver preflight, durable exact-hash restore, Draft/Saved/Applied distinctions, rollback.
+### Phase 3: Bounded Viewer, Projection, and Operator Controls
 
-**Avoids:** Filename identity, browser-only authority, row-by-row partial Apply, duplicate/fuzzy frames, stale model reuse, corrupt-store overwrite, and mapping changes during recording/finalization.
+**Rationale:** UI interaction and performance behavior should be built over a settled, independently testable ingestion seam. Buffering and projection correctness precede chart polish because pause, history, zoom, cursor, and autoscale all depend on them.
 
-**Verification:** Exact same-name/different-bytes hashes; existing and missing IMU-frame models; duplicates/incomplete/unknown IDs; stale expected revision; failure at every staging step; atomic file recovery; exact-hash restart restore; changed model cannot silently reuse mapping.
+**Delivers:**
 
-### Phase 4: N-Sensor Calibration and Official OpenSim IK
+- Fixed-capacity typed-array rings with O(1) writes, one time axis per device, explicit overflow policy, and epoch/gap markers.
+- Pure aligned min/max pixel projection retaining endpoints, extrema, invalid gaps, and reconnect/remap boundaries.
+- Direct uPlot group charts for accel, gyro, magnetometer, and capability-gated quaternion, with synchronized time navigation and dimension-safe scales.
+- Source/group/axis selection, raw/SI mode, display-only pause, windows, paused pan/zoom, manual scale, explicit autoscale, active range, responsive layout, and keyboard/non-color accessibility.
+- Long-soak and max-envelope performance evidence on the target browser/Jetson-class environment, including hidden-tab recovery and simultaneous recording/control activity.
 
-**Rationale:** The current two-value calibration and quaternion table cannot safely consume dynamic mappings; generalize only after authoritative revisions and canonical topics exist.
+**Addresses:** stacked traces, visibility/grouping, bounded display history, display reduction, pause/zoom/scale/autoscale, responsive accessible controls.
 
-**Delivers:** MAC-keyed latest-sample cache with source time/arrival/generation; complete-set skew/freshness gate; deterministic orientation ordering; revision-bound N-sensor calibration artifact; N-column official OpenSim 4.5.2 IK; mapping provenance in status; visualizer labels; teardown of obsolete subscriptions.
+**Avoids:** React sample state, `Array.shift()`, full-window copies, background-tab catch-up, naive stride sampling, mixed-unit scaling, pumping autoscale, invisible reduction, and accidental upstream throttling.
 
-**Addresses:** Dynamic mapped inputs, calibration, official IK, stale/offline gating, deterministic solver behavior, reconnect recovery.
+**Verification:** ring wrap/capacity, exact raw retention, invalid/gap handling, one-sample impulse, alternating values, irregular timestamps, aligned multi-channel extrema, stable heap, bounded projected point count, render cadence, long tasks, service latency, and unchanged backend/OpenSim counts.
 
-**Avoids:** Plausible but unsynchronized poses, stale output restamping, unbounded solve queues, partial calibration updates, reused offsets after remap, duplicate callbacks.
+### Phase 4: Full-Rate Recording and Export Integrity
 
-**Verification:** Preserve two-sensor numerical tolerance; deterministic 3+ sensor labels; fake-clock stale/skew/generation cases; one missing input stops `JointState` only; mapping/model/frame/profile changes invalidate calibration; repeated remap keeps handle counts bounded; profile solve latency as N grows.
+**Rationale:** Recording is not a browser feature. Once identity, generations, time semantics, units, and applied provenance are stable, the backend recorder can be upgraded from fixed aliases to canonical fleet topics and verified independently of every display control.
 
-### Phase 5: Rosbridge and Studio Mapping Workspace
+**Delivers:**
 
-**Rationale:** The UI should project stable backend contracts, not drive architecture decisions ahead of them.
+- Dynamic backend recording of every configured canonical per-MAC raw stream at full received rate.
+- Session manifest and rows containing full MAC, topic/schema, channel/raw values, unit/conversion config, sequence and epoch, time fields/domains, gaps/validity, applied segment/frame/revision, model hash, calibration/session identity, and software/firmware versions as available.
+- Per-device source-versus-recorder count, sequence-gap, and reconnect reconciliation.
+- Explicit labelling for any later display-window export as reduced/non-authoritative, including algorithm and parameters.
+- Automated non-contamination tests across pause, visibility, unit mode, window, scale, autoscale, browser visibility, and display overload.
 
-**Delivers:** Strict bounded JSON parsers; fleet/mapping subscriptions; correlated Identify/set/apply calls; stable device rows; model-derived selectors; immediate conflict/incomplete feedback; Draft/Saved/Applied/Runtime Ready display; request and stale-revision handling; explicit recording/capture guidance; subscription cleanup.
+**Addresses:** recording independence, identity-safe export, unit/provenance integrity, remap/reconnect segmentation.
 
-**Addresses:** Dedicated mapping panel, physical identification workflow, explicit Not used, reconnect visibility, reason-coded layered errors, authoritative revision display.
+**Avoids:** browser snapshots as recorder input, alias/role-based recording, current-state joins, silent omissions, and assuming plotted count equals acquired count.
 
-**Avoids:** React array-index identity, one generic Online state, local validation as authority, browser-only applied state, row disappearance, duplicate rosbridge listeners, and Apply silently stopping recording.
+**Verification:** inject N canonical frames per MAC and reconcile backend/recorder counts independent of rendered points; deliberately exercise reconnect/config boundaries; confirm mapping Apply remains interlocked during active/finalizing recording and next-session provenance uses the new applied revision.
 
-**Verification:** Arbitrary status order and dropout retention; Identify correlation to one row; local and forged-backend duplicate rejection; stale-revision multi-tab scenario; reload from backend; recording/capture interlocks; existing graph, Run/Rec/Calibrate/Clear/visualizer/live-angle regressions.
+### Phase 5: Physical Calibrated Segment-Remap Acceptance
 
-### Phase 6: Multi-Device Hardware Compatibility and Promotion Gate
+**Rationale:** Software fixtures prove contracts but cannot prove physical sensor identity, placement, calibration, or native OpenSim segment response. This is the milestone release gate after all observable identities and provenance are available.
 
-**Rationale:** Electrical LED behavior, MAC-interface relationships, radio load, route throughput, and 3+ sensor OpenSim performance cannot be proven solely with fixtures.
+**Delivers:**
 
-**Delivers:** Supported fleet-size statement; measured peer/status/sample load; validated board LED configuration; dynamic and legacy startup acceptance; failure/recovery matrix; documented default-mode decision.
+- A scripted before-swap, after-swap, and after-reconnect hardware procedure using two LED-identified physical ESPs.
+- Baseline applied mapping revision/model hash, full-MAC placement record, reconnect generations, calibration ID, fresh/synchronized OpenSim status, isolated movement trace, export manifest, joint-state metadata, and native visualizer evidence.
+- Atomic A/B segment swap performed outside active recording, followed by proof that viewer labels change only after Apply, old calibration becomes invalid, and a new required-pose calibration is captured.
+- Repeated isolated motion proving the same physical MAC retains its trace/export identity while the newly mapped native OpenSim segment responds; a reconnect repeat proves restoration by MAC rather than route/order.
+- Retained machine-readable logs, screenshots/video as supporting evidence, and operator sign-off in one evidence bundle.
 
-**Addresses:** Real multi-peer discovery, physical Identify, full acquisition/recording continuity, dynamic calibration/IK, reconnect, and operator readiness.
+**Addresses:** end-to-end identity ribbon, remap epoch/calibration behavior, exported column identity, and physical 3D mapping validation.
 
-**Avoids:** Advertising theoretical peer capacity, promoting an unvalidated dynamic default, mixed-firmware surprises, radio congestion, and loss of the legacy recovery path.
+**Avoids:** topic-only or screenshot-only proof, stale calibration, both-sensor motion, hand-authored fixture bypass, and overclaiming accuracy.
 
-**Verification:** Master plus the lab-required Slave maximum at supported rate; recording start/stop/finalization; DHCP reorder/reconnect; lost ACK; malformed/mixed firmware; relay restart; capacity overflow; stale sensor; corrupt mapping store; model mismatch; calibration/IK/visualizer; bounded CPU/memory/queue/solve latency.
+**Acceptance boundary:** A pass establishes that the tested physical sensor's full-MAC identity, applied Studio segment mapping, recording/export provenance, recalibrated OpenSim input, and responding native visualizer segment agree for the tested hardware/software/model configuration. It does not establish clinical validity, biomechanical angle accuracy, general sensor fusion accuracy, or performance outside the declared test envelope. Those claims require a separate external-reference protocol and are out of scope for v1.7.
 
 ### Phase Ordering Rationale
 
-- Identity precedes routing because no route, mapping, persistence key, or physical command is safe without a verified full device ID.
-- Canonical fleet routing precedes model mapping because discovery and stream readiness are upstream facts, not UI constructs.
-- Model catalog and revisioned persistence precede dynamic OpenSim because calibration and solver objects must bind to an authoritative applied model/mapping revision.
-- Dynamic OpenSim precedes Studio completion so the UI exposes actual backend capabilities and statuses rather than simulated applied state.
-- Compatibility aliases remain throughout; Phase 6, not implementation completion, decides when dynamic mode becomes the startup default.
-- Tests are part of every phase. Phase 6 is hardware acceptance and promotion, not the first time failures are exercised.
+- Contract decisions precede ingestion because identity, validity, units, time, and provenance must survive every later transform.
+- Ingestion precedes UI because buffer and renderer tests need a canonical independent per-MAC stream, not the pair-derived legacy frame.
+- Bounded buffer/projection foundations precede interaction polish; pause/history/zoom/autoscale are projections over retained data, not acquisition controls.
+- Recorder/export work follows settled identity contracts but remains parallel to and independent from the browser implementation. Phase 4 acceptance explicitly proves this separation.
+- Physical UAT comes last because meaningful evidence requires applied-revision labels, calibration invalidation, full-rate provenance, reconnect epochs, and native OpenSim freshness to be observable together.
+
+### Scope Boundaries
+
+- **Display plane:** bounded, lossy, downsampled, repaint-capped, and safe to pause. It may discard display work under overload with visible counters.
+- **Recording plane:** backend/ROS-owned, full received rate, provenance-bearing, and unaffected by all viewer controls or browser lifecycle. It never consumes reduced display points.
+- **OpenSim plane:** full-rate typed per-MAC `Imu`, authoritative applied mapping, generation-aware freshness, and calibration gated. It never consumes viewer buffers or raw/SI UI choices.
+- **Legacy panels:** retain the existing pair-derived `Frame` / `SignalBus`; the new fleet viewer is a separate data product.
+- **3D validation:** uses the existing native OpenSim visualizer. Embedded rendering and accuracy validation against external reference systems are explicitly deferred.
+- **Future viewer capabilities:** offline playback, annotations, presets, compare/cursor enhancements, and recorder channel selection must not expand the v1.7 critical path.
 
 ### Research Flags
 
-Phases likely needing deeper research or a focused spike during planning:
+Phases likely needing deeper research during planning:
 
-- **Phase 1:** verify the safe XIAO ESP32S3 LED pin/active level and actual base/AP/STA/ESP-NOW MAC relationships on every deployed board revision.
-- **Phase 2:** choose and benchmark the multi-peer high-rate sample transport; measure six-peer status airtime, relay throughput, and failure isolation.
-- **Phase 3:** exercise deterministic runtime `PhysicalOffsetFrame` creation/connection before `initSystem()` in the pinned OpenSim 4.5.2 Python environment; fail closed if unreliable. Define solver/profile minimum sensor rules.
-- **Phase 4:** measure official OpenSim IK accuracy and latency for three or more sensors, including the static-reference fallback.
-- **Phase 6:** hardware research is intrinsic: tested capacity, electrical behavior, radio load, and timing are evidence gates.
+- **Phase 1:** targeted hardware/firmware research is required for magnetometer capability, sensitivity/range, axes, hard/soft-iron calibration provenance, and whether device acquisition timestamps exist. Do not infer these contracts from current JSON keys.
+- **Phase 3:** target-hardware profiling is mandatory to set accepted fleet/rate/window, memory, point-count, render-cadence, long-task, and service-latency thresholds and to decide whether a Worker or viewport virtualization is needed.
+- **Phase 4:** inspect and lock the actual recorder container/schema and firmware/software provenance sources before finalizing manifest layout and reconciliation rules.
+- **Phase 5:** plan the exact physical fixture, calibration pose, discriminating motion, expected OpenSim segments, reconnect behavior, and evidence retention/sign-off protocol with the available hardware.
 
-Phases with standard patterns that can skip broad research-phase:
+Phases with well-documented patterns (skip broad research-phase):
 
-- **Phase 5:** React keyed rows, Zustand normalized state, rosbridge correlation, schema parsing, and explicit subscription cleanup are established repository patterns once backend contracts are fixed.
-- **Phase 3 persistence mechanics:** atomic JSON write/replace, backup, schema versioning, and optimistic revision checks are standard; only OpenSim frame semantics need a spike.
-
-## Requirement Recommendations for v1.6
-
-Translate the research into atomic, testable requirements rather than one broad “multi-sensor mapping” requirement:
-
-1. **ID/Fleet:** Every assignable Master/Slave has a unique verified full 48-bit stable ID; discovery, liveness, route readiness, and orientation freshness are distinct; reconnect preserves identity and canonical topic.
-2. **Identify:** One target at a time receives a bounded non-blocking blink; success requires application ACK and reason-coded failure behavior.
-3. **Model Catalog:** Exact `.osim` bytes define `model_id`; selectable segments and resolved sensor frames come only from the loaded OpenSim model; unsupported/ambiguous frames fail closed.
-4. **Mapping Decisions:** Each known device is Assigned, Not used, or Unassigned; segment assignments are unique and meet declared solver rules.
-5. **Persistence/Revisions:** Desired mappings persist authoritatively in the backend by model hash/device ID with schema, atomic recovery, and optimistic revision conflict handling.
-6. **Apply/Interlocks:** Apply is a whole-candidate transaction that preserves the previous revision on failure and is blocked during calibration capture and recording/finalization without altering recording.
-7. **Dynamic OpenSim:** Applied mappings construct deterministic N-sensor subscriptions, calibration artifacts, orientation tables, status, visualizer mappings, and official IK inputs.
-8. **Runtime Validity:** IK publishes only from complete fresh valid bounded-skew input under matching calibration provenance; degraded input suppresses new output without stopping acquisition/recording/health.
-9. **Studio UX:** Stable MAC rows and authoritative Draft/Saved/Applied/Runtime Ready states expose actionable per-layer errors and never treat browser state as applied truth.
-10. **Compatibility/Promotion:** Canonical and legacy paths share accepted data; an explicit legacy Slave remains stable; dynamic mode becomes default only after deterministic and hardware acceptance matrices pass.
-
-## Testing Implications
-
-Testing should be layered around contract boundaries and include cleanup/resource assertions, not only visible outcomes.
-
-- **Firmware/parser fixtures:** known packet versions/sizes, full-MAC normalization/collisions, capability/ACK correlation, timeout, and non-blocking timing.
-- **Relay/fleet fixtures:** arbitrary discovery order, identity changes, DHCP rebind, per-route failure, queue bounds/drops, stable aliases, and 0/1/3+/capacity cases.
-- **Model/mapping fixtures:** fake `.osim` files with identical names/different bytes, existing/missing/ambiguous Frames, duplicate/incomplete candidates, revision conflicts, corrupt store/backup recovery, and staged rollback at every failure point.
-- **OpenSim fixtures:** preserve current two-sensor numerical result, deterministic N-column labels, fake-clock age/skew/generation gates, calibration invalidation, stale-output suppression, subscription teardown, and solver-latency budgets.
-- **Studio fixtures:** stable row identity/order, explicit Not used, layered state/error presentation, service correlation, stale-revision review, reconnect/reload, payload bounds, and unsubscribe/disposal.
-- **Hardware acceptance:** physical LED safety and acknowledgement, actual MAC relationships, supported simultaneous peers, radio/relay throughput, recording/finalization, dropout/reconnect timing, and end-to-end dynamic IK/visualizer.
+- **Phase 2:** dynamic topic subscription, full-MAC keys, websocket/reconnect generations, strict parsing, and control/display isolation are already well supported by repository contracts and ROS/browser documentation. Use focused implementation validation rather than broad ecosystem research.
+- **Phase 3 rendering primitives:** uPlot lifecycle, typed rings, `requestAnimationFrame`, `ResizeObserver`, and `useSyncExternalStore` are established. Research should be limited to measured capacity decisions, not chart-library selection.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Repository versions and extension points were inspected; existing dependencies provide all required capabilities. Multi-peer sample transport remains MEDIUM until benchmarked. |
-| Features | HIGH | Operator state semantics and safety behavior align across project requirements, ESP-NOW semantics, OpenSense expectations, and repository constraints. |
-| Architecture | HIGH | Ownership boundaries, additive migration, canonical topic strategy, and six-phase dependency order are strongly supported by repository evidence. Runtime Frame generation is MEDIUM. |
-| Pitfalls | HIGH | Failure modes follow directly from current pair assumptions and documented ESP-NOW/ROS/OpenSim behavior; hardware-specific limits remain MEDIUM. |
+| Stack | HIGH | uPlot's official API and existing package versions directly fit aligned typed arrays and imperative canvas updates. Capacity and Worker thresholds remain measurement-dependent. |
+| Features | HIGH | MVP behavior follows explicit v1.7 requirements, current mapping/recording decisions, Open Ephys operator conventions, OpenSense calibration semantics, and accessibility standards. Export layout and hardware limits remain open. |
+| Architecture | HIGH | Repository evidence confirms canonical per-MAC raw and typed streams, legacy pair collapse, applied mapping revisions, recorder upgrade point, and the required fan-out/isolation boundaries. |
+| Pitfalls | HIGH | Most critical failures are visible in current code/contracts and supported by authoritative ROS, WebSocket, React/browser, and OpenSim semantics. Quantitative thresholds remain MEDIUM until tested. |
 
-**Overall confidence:** HIGH for roadmap structure and contracts; MEDIUM for the few hardware/runtime decisions explicitly gated above.
+**Overall confidence:** HIGH for roadmap structure and non-negotiable invariants; MEDIUM for quantitative acceptance limits and unresolved sensor/time metadata.
 
 ### Gaps to Address
 
-- **Persistence conflict:** confirm backend authoritative persistence as the milestone decision; treat Zustand persistence only as an optional draft cache.
-- **Canonical identity semantics:** verify base, AP, STA, and observed ESP-NOW MAC relationships on actual boards and document which is persisted versus targeted.
-- **Multi-peer sample transport:** choose Master-demultiplexed or N-route host ingress based on measured acquisition integrity and throughput.
-- **Identify hardware:** establish safe LED pin, active level, capability advertisement, timeout, and application ACK packet contract.
-- **OpenSim missing-frame behavior:** prove runtime-only frame creation in OpenSim 4.5.2 or require model-authored frames for v1.6.
-- **Solver sufficiency:** define model/profile-specific required and optional sensor sets; the GUI must not infer biomechanical observability from a count.
-- **Fleet capacity and rates:** validate the actual lab maximum, status cadence, radio airtime, relay queues, and OpenSim solve latency before publishing support claims.
-- **Auto-restore semantics:** same-MAC reconnect under an unchanged applied revision should reattach automatically; exact-hash backend restart restore may reapply only after full validation and quiescent interlocks, and must never imply calibration validity.
+- **Magnetometer SI contract:** identify the deployed sensor, configured range/sensitivity, axis convention, raw availability bit, and calibration provenance. Until confirmed, require raw counts and mark SI unavailable.
+- **Clock and synchronization semantics:** determine whether firmware exposes device acquisition time. Preserve bridge monotonic, ROS, browser receipt, sequence, and epoch separately; do not claim device-level synchronization from receipt time.
+- **Maximum supported envelope:** select and test maximum connected/visible sensors, 9–13 channels each, maximum sample rate, longest retained window, canvas width, memory ceiling, render cadence, and acceptable state/service latency on target hardware.
+- **Recorder format:** decide JSONL/CSV/binary/sidecar details only after preserving the invariant manifest/row fields and full-rate count reconciliation described above.
+- **Quaternion policy:** lock availability/norm tolerances, component order, display-only sign continuity, invalid handling, and any normalized derived path without altering recorded raw components.
+- **Applied snapshot frontend contract:** verify Studio retains `applied_assignments`/`assigned` separately from draft `assignments` and labels only on Apply acknowledgement/current applied snapshot.
+- **Reconnect contract consistency:** standardize nested generation comparison across FleetBridge, Studio, recorder, and OpenSim; transient event flags alone are insufficient.
+- **Physical evidence protocol:** define hardware labels, isolated motions, expected segments, calibration artifact keys, evidence filenames/manifest, operator sign-off, and pass/fail language before execution.
 
 ## Sources
 
 ### Primary (HIGH confidence)
 
-- Repository evidence in [STACK.md](./STACK.md), [FEATURES.md](./FEATURES.md), [ARCHITECTURE.md](./ARCHITECTURE.md), and [PITFALLS.md](./PITFALLS.md), including firmware, relay, ROS bridge, OpenSim, Studio, package-lock, build logs, and live WSL runtime inspection.
-- Espressif ESP-NOW API — full peer MAC targeting, interface identity, peer behavior, and the limitation of MAC-layer send acknowledgement.
-- ROS 2 Humble documentation — topics versus services, parameters, and `rclpy` runtime subscription lifecycle.
-- Rosbridge v2 protocol — correlated service calls, subscription IDs, and unsubscribe semantics.
-- OpenSim/OpenSense documentation and API guidance — IMUs as model Frames, `<bodyname>_imu` conventions, model/component enumeration, calibration, and orientation IK.
-- Zustand persistence documentation — versioning, migration, and partialization for any non-authoritative browser draft cache.
+- [PROJECT.md](../PROJECT.md) — active v1.7 scope, display/recording separation, full-MAC/applied-body provenance, and physical calibrated remap requirement.
+- Repository implementation: `fleet_bridge_node.py`, `mapping_node.py`, `opensim_node.py`, `recorder_node.py`, `RosbridgeDataSource.ts`, `signalBus.ts`, and `mappingStore.ts` — current topic schemas, generation fields, pair collapse, pause behavior, draft/applied state, buffer costs, and integration seams.
+- [uPlot official repository](https://github.com/leeoniya/uPlot), [API declarations](https://github.com/leeoniya/uPlot/blob/master/dist/uPlot.d.ts), and [documentation](https://github.com/leeoniya/uPlot/blob/master/docs/README.md) — aligned typed-array data, imperative updates, scales, series visibility, size, and lifecycle.
+- [React `useSyncExternalStore`](https://react.dev/reference/react/useSyncExternalStore) — external-store snapshot contract.
+- [MDN `requestAnimationFrame`](https://developer.mozilla.org/en-US/docs/Web/API/Window/requestAnimationFrame) and [WebSocket API](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/index.html) — repaint scheduling/background behavior and lack of receive backpressure.
+- [ROS 2 Clock and Time design](https://design.ros2.org/articles/clock_and_time.html) and [Humble QoS guidance](https://docs.ros.org/en/humble/Concepts/Intermediate/About-Quality-of-Service-Settings.html) — time domains and bounded sensor-data delivery semantics.
+- [ROS `sensor_msgs/Imu`](https://docs.ros.org/en/humble/p/sensor_msgs/msg/Imu.html) and [MagneticField](https://docs.ros.org/en/ros2_packages/rolling/api/sensor_msgs/msg/MagneticField.html) definitions — SI fields, validity conventions, and the absence of magnetometer data from `Imu`.
+- [Open Ephys LFP Viewer](https://open-ephys.github.io/gui-docs/User-Manual/Plugins/LFP-Viewer.html), [recording guidance](https://open-ephys.github.io/gui-docs/User-Manual/Recording-data.html), and [binary format](https://open-ephys.github.io/gui-docs/User-Manual/Data-formats/Binary-format.html) — instrument-viewer controls, display/record separation, channel metadata, conversions, timestamps, and sample numbers.
+- [OpenSim OpenSense kinematics](https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53084203/OpenSense+-+Kinematics+with+IMU+Data), [IMU Placer settings](https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53112999), and [OpenSense FAQ](https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53084548/Frequently+Asked+Questions) — physical placement identity, calibration pose, model-frame labels, and native visual inspection.
+- [WCAG 2.2](https://www.w3.org/TR/WCAG22/) — keyboard operation, visible focus, non-color cues, dragging alternatives, and target size.
 
-### Secondary (MEDIUM confidence)
+### Secondary (MEDIUM confidence / validation required)
 
-- OpenSense real-time architecture as precedent for variable sensor counts; useful architecturally but not a drop-in repository contract.
-- Inferences about runtime-only `PhysicalOffsetFrame` creation and three-plus-sensor latency under the pinned OpenSim 4.5.2 Python binding, pending focused execution tests.
-
-### Validation-Only Gaps
-
-- XIAO ESP32S3 board-revision LED wiring/active level, actual MAC-interface relationships, maximum reliable peer load, current 100 Hz status airtime, and multi-device stream throughput.
+- Recommended 30-second, 200 Hz, 6,000-sample-per-device starting capacity — engineering starting point from stack research; replace with measured accepted bounds.
+- Main-thread parsing/projection sufficiency and 20–30 fps render target — credible for the expected scale, but must be proven on the target browser/Jetson-class environment.
+- Magnetometer SI availability and device-level synchronization — unresolved until firmware/hardware metadata and timing evidence are inspected.
+- [SciPy decimation reference](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.decimate.html) — authoritative for formal filtered decimation; the recommended min/max visual envelope is an engineering choice for transient-preserving diagnostic display, not an analysis transform.
 
 ---
-*Research completed: 2026-07-30*
+*Research completed: 2026-08-13*
 *Ready for roadmap: yes*

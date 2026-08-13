@@ -1,1023 +1,455 @@
 # Architecture Research
 
-**Domain:** Multi-sensor ESP-NOW discovery, stable hardware identity, model-derived OpenSim segment mapping, and dynamic ROS 2 routing
-**Researched:** 2026-07-30
-**Confidence:** HIGH for repository integration boundaries and migration strategy; MEDIUM for exact OpenSim runtime-frame construction until exercised against the pinned OpenSim 4.5.2 Python bindings
+**Domain:** Open Ephys-style multi-sensor live IMU traces integrated with ROS 2, rosbridge, recording, mapping, and OpenSim
+**Researched:** 2026-08-13
+**Confidence:** HIGH for integration boundaries and existing contracts; MEDIUM for the exact browser rendering primitive, which should be benchmarked with the target fleet size
 
-## Recommendation
+## Executive Recommendation
 
-Generalize around immutable hardware identity, not the current `master`/`slave` role labels or DHCP addresses.
+Add a dedicated **fleet raw-sample stream** beside the existing derived `Frame`/`SignalBus` path. The fleet viewer must consume the canonical per-MAC JSON topics (`/esp/raw/mac_<12hex>`) because they are the only existing stream containing all accel, gyro, magnetometer, and quaternion components together with full device identity and raw counts. Keep the existing typed per-MAC `sensor_msgs/Imu` topics (`/esp/imu/mac_<12hex>`) as the OpenSim input and keep recording in ROS/firmware, upstream of rosbridge and all browser buffering.
 
-Use the ESP32 base MAC as the device identity, normalized as `esp32:<12 lowercase hex>` (for example, `esp32:aabbccddeeff`). Preserve role as mutable metadata (`master` or `slave`) and preserve IP only as a transport route. Publish canonical per-device ROS topics under `/esp32/mac_<12hex>/...`; never put segment names into acquisition topic names. A segment assignment can change without changing the sensor's identity or breaking rosbag, health, and reconnect behavior.
+Extend the existing `RosbridgeDataSource` rather than opening one WebSocket per sensor. It should dynamically subscribe/unsubscribe canonical raw topics based on `/esp/fleet/registry`, parse each raw message once into a lossless browser sample, and publish those samples through a new non-React `FleetSignalBus`. `FleetSignalBus` owns bounded display history and produces pixel-width downsampled snapshots at animation-frame cadence. It must never feed recording, OpenSim, the graph executor, or control services.
 
-Make the backend OpenSim process the authoritative owner of:
-
-- the loaded model fingerprint and model-derived segment catalog;
-- the persisted desired mapping for each model;
-- the currently applied mapping revision;
-- mapping validation and one-device-per-segment enforcement;
-- calibration artifacts bound to a model and mapping revision;
-- dynamic subscriptions and construction of the orientation set used by IK.
-
-Studio owns only an editable draft and request state. It renders backend status and sends transactional set/apply requests; it does not use `localStorage` as the source of truth for mappings. The Windows relay owns only host/IP/port routing. The ROS fleet bridge owns connection and stream health. Firmware owns hardware identity and the physical Identify LED behavior.
-
-Migrate additively. Keep the existing `/esp32/master/*`, `/esp32/slave/*`, `/esp/raw/master`, `/esp/raw/slave`, `/esp/status/pair`, OpenSim services, `/opensim/joint_states`, and the current two-input launch parameters as compatibility aliases until the fleet path passes end-to-end hardware validation. Do not choose a "first slave" nondeterministically when several slaves exist: persist an explicit `legacy_slave_id`.
-
-## Current Architecture and Where It Collapses
-
-| Layer | Repository evidence | Current fixed assumption | Required change |
-|---|---|---|---|
-| ESP-NOW master firmware | `firmware/step_node/step_node.ino:654-743` | The master already stores six slave status slots keyed by source MAC, but commands are broadcast/unicast to every active slot and status is represented as "slave" aggregate data. | Promote MAC to a versioned identity contract, add targeted Identify with application acknowledgement, and expose peer inventory without disturbing streaming. |
-| ESP-NOW slave firmware | `firmware/step_node_slave/step_node_slave.ino:628-718`, `1226-1285` | Status carries a truncated 32-bit `slave_id`; no full stable identity or Identify capability exists. | Carry full base/transport MAC identity, capabilities, and Identify acknowledgement in a backward-compatible status version. |
-| Windows relay | `scripts/stepesp_tcp_udp_relay.py:220-233` | Exactly one master and optional one slave; UDP is demultiplexed by DHCP source IP. | Discover/register N routes, bind IP to MAC only after firmware identity confirmation, and expose a local route registry for the ROS fleet manager. |
-| Startup | `scripts/start_stepesp_wireless.ps1:112-141`, `173-193` | More than one responding station is treated as an error; exactly two ROS bridge processes and two OpenSim topics are launched. | Discover all candidates, launch one fleet bridge manager, and start OpenSim in mapping mode. |
-| ROS ESP bridge | `backend/rehab_robotics_bridge/esp32_bridge_node.py:167-235` | `node_id` is `master` or `slave`; topics and health keys derive from that role; pair health subscribes to one slave. | Extract a reusable device session and add a fleet manager that publishes per-MAC topics and fleet health while retaining aliases. |
-| Raw schema | `backend/rehab_robotics_bridge/esp32_bridge_node.py:915-936` | `node_role`, `node_id`, and `body_segment` are startup parameters and therefore conflate source identity with mapping. | Add immutable `device_id` and full MAC; remove mapping authority from the acquisition bridge. Keep deprecated fields for v1 compatibility. |
-| OpenSim node | `backend/rehab_robotics_bridge/opensim_node.py:49-166`, `262-298` | `_ROLES = ("master", "slave")`; two subscriptions and two frame parameters are constructed once. | Replace role dictionaries with device-ID dictionaries and transactional dynamic subscriptions derived from an applied mapping. |
-| Calibration | `backend/rehab_robotics_bridge/opensim/calibration.py` | Artifact and capture buffers have `master_xyzw` and `slave_xyzw`. | Store offsets and capture samples by device ID/model frame, and bind artifacts to `model_id` + `mapping_revision`. |
-| Official orientation IK | `backend/rehab_robotics_bridge/opensim/opensim_orientation_ik.py` | Tables, labels, offsets, and `solve()` take exactly two orientations. | Build N-column quaternion tables in deterministic segment order and accept a mapping-keyed orientation set. |
-| Visualizer adapter | `backend/rehab_robotics_bridge/opensim_adapter.py:228-240`, `318-337` | The adapter already accepts an arbitrary `frame_mappings` dictionary; the ROS caller limits it to two. | Keep the adapter boundary and pass the applied N-device mapping. Generalize labels/status, not the process boundary. |
-| Rosbridge source | `rehab-robotics-studio/src/data/RosbridgeDataSource.ts:48-55`, `353-387`, `406-416` | Static master/slave raw subscriptions, pair health, and two cached frames. | Preserve this legacy stream for the graph while adding fleet/mapping subscriptions and custom mapping/Identify service calls. |
-| Studio state/UI | `rehab-robotics-studio/src/state/systemStore.ts`, `types/health.ts`, `components/dashboard/HealthPanel.tsx` | Pair-shaped types and hard-coded MASTER/SLAVE rows. | Add normalized device/mapping stores and a dedicated mapping panel keyed by device ID. |
+Treat source identity as `(deviceId, reconnectGeneration)` and displayed mapping identity as `(modelHash, appliedRevision, applied segment/frame)`. A reconnect-generation change starts a new trace epoch. An applied-mapping change starts a new provenance epoch and must clear or visibly split old display history; it must never silently relabel old samples. Draft assignments are not labels. The current browser mapping contract must therefore be extended to retain `applied_assignments` (or authoritative `assigned`) separately from editable `assignments`.
 
 ## Standard Architecture
 
 ### System Overview
 
 ```text
-  ESP32 master                          ESP32 slaves (0..6 current limit)
-  base MAC + AP/ESP-NOW MAC             base MAC + STA/ESP-NOW MAC
-  local Identify LED                    local Identify LED
-        |                                      |
-        +-------- versioned ESP-NOW -----------+
-        |  sync + existing commands + status + targeted Identify/ack
+ESP32 fleet (full-rate packets)
         |
-  STEP_ESP32 TCP/UDP endpoints (DHCP is transport only)
-        |
-  Windows STEP_ESP relay
-  - probes IDENTITY? before registering a route
-  - routes UDP by current source IP
-  - maintains device_id -> current IP -> stable local relay endpoint
-  - exposes bounded local registry API to WSL
-        |
-  ROS 2 esp32_fleet_bridge
-  - one reusable session per route
-  - canonical topics /esp32/mac_<hex>/{imu,raw}
-  - raw JSON /esp/raw/mac_<hex>
-  - status /esp/status/mac_<hex> and /esp/status/fleet
-  - compatibility aliases master/slave + pair
-        |
-        +---------------------+-------------------------+
-        |                     |                         |
-   rosbag/other users   opensim_bridge            rosbridge_server
-                       - model catalog                  |
-                       - mapping store                  |
-                       - dynamic subscriptions          |
-                       - N-sensor calibration           |
-                       - N-sensor orientation IK        |
-                       - native visualizer              |
-                              |                         |
-                       existing OpenSim topics/services |
-                              +------------+------------+
-                                           |
-                                    React Studio
-                                    - backend fleet status
-                                    - model segment choices
-                                    - draft + apply controls
-                                    - Identify action
+        v
+FleetBridgeNode ---------------------------------------------------------------+
+  | canonical raw String/JSON: /esp/raw/mac_<MAC>                              |
+  | typed SI Imu:            /esp/imu/mac_<MAC>                                |
+  | registry:                /esp/fleet/registry                               |
+  | legacy aliases:          /esp/raw/{master,slave}, /esp32/{master,slave}/imu|
+  |                                                                            |
+  +--> Backend recorder/export (FULL RATE, canonical raw + provenance)          |
+  |                                                                            |
+  +--> OpenSimNode (FULL RATE typed Imu, applied mapping + calibration)         |
+  |                                                                            |
+  +--> rosbridge single WebSocket                                               |
+          |                                                                     |
+          +--> existing Frame path --> SignalBus --> existing dashboard         |
+          |                                                                     |
+          +--> FleetRawSample path --> FleetSignalBus --> trace projection      |
+                                            |                  |                 |
+                                   bounded raw display      min/max/LTTB-like    |
+                                   history per device       pixel projection     |
+                                                               |                |
+                                                               v                |
+                                                        React viewer/canvas      |
 ```
 
-### Authoritative State Ownership
-
-| State | Authoritative owner | Cached/derived copies | Rule |
-|---|---|---|---|
-| Hardware ID | Firmware base MAC | relay, ROS, Studio | Use `esp_read_mac(..., ESP_MAC_BASE)` or an equivalent full 48-bit base MAC API. Never derive identity from IP, slot, role, or the current 32-bit `slave_id`. |
-| ESP-NOW destination MAC | Master firmware peer table | relay/ROS status for diagnostics | Keep separate from base MAC because AP/STA interface MACs can differ. |
-| Device role/capabilities/firmware version | Firmware identity response | relay and fleet status | Role is metadata, not identity and not a topic key. |
-| Current IP and local relay endpoint | Windows relay route registry | ROS fleet bridge | Route may change on reconnect; it must never rewrite `device_id`. |
-| Stream connection/freshness/rate | ROS fleet bridge | `/esp/status/*`, Studio | Compute from accepted frames and connection events, not from UI timers. |
-| Loaded model | `opensim_bridge` | mapping status and Studio | Identify with SHA-256 of model bytes plus schema version; path/name are descriptive. |
-| Selectable segment catalog | `opensim_bridge` model catalog | Studio mapping store | Enumerate the loaded model's `BodySet`; resolve each body to an existing compatible IMU frame or a deterministic runtime frame before `initSystem()`. |
-| Desired per-model mapping | backend `MappingStore` inside `opensim_bridge` | Studio draft | Persist atomically by `model_id`; disconnected devices remain in the mapping. |
-| Applied mapping | `opensim_bridge` | mapping status and Studio | One monotonically increasing revision; only swap after complete validation and successful solver/adapter staging. |
-| Calibration | backend calibration controller | status/UI | Bind to `model_id`, mapping revision, exact device-to-frame set, and convention version. Any applied mapping/model change invalidates it. |
-| IK validity and outputs | `opensim_bridge` | rosbridge/Studio | Continue the existing hard gate: no new `JointState` unless mapping is ready, every required input is fresh, calibration matches, and solve is valid. |
-| UI selections/busy state | Studio | none | Ephemeral. A reload rehydrates from backend mapping status. |
-
-## Identity and Topic Strategy
-
-### Canonical Identity
-
-```text
-display_mac:     AA:BB:CC:DD:EE:FF
-mac_hex:         aabbccddeeff
-device_id:       esp32:aabbccddeeff
-ros_token:       mac_aabbccddeeff
-canonical topic: /esp32/mac_aabbccddeeff/imu
-canonical node:  esp_bridge_mac_aabbccddeeff
-```
-
-Normalize and validate at every trust boundary:
-
-- exactly 48 bits / 12 hexadecimal digits;
-- lowercase for keys and ROS names;
-- colon-separated uppercase only for display;
-- reject all-zero, broadcast, malformed, or duplicate IDs;
-- compare normalized values, never user-provided display strings.
-
-The master must report both `base_mac` and the MAC used by its AP/ESP-NOW interface. Each slave must report `base_mac`, `sta_mac`, and the master-observed `espnow_mac`. In the usual case the slave base and STA MAC match; the architecture must not require that assumption.
-
-### ROS Topics
-
-| Topic | Type | Purpose |
-|---|---|---|
-| `/esp32/mac_<hex>/imu` | `sensor_msgs/msg/Imu` | Canonical typed orientation/accel/gyro stream for one immutable device ID. |
-| `/esp32/mac_<hex>/raw` | `std_msgs/msg/Float32MultiArray` | Canonical normalized raw stream. |
-| `/esp/raw/mac_<hex>` | `std_msgs/msg/String` | Rosbridge-friendly existing raw schema extended with identity. |
-| `/esp/status/mac_<hex>` | `std_msgs/msg/String` | Per-device connection, freshness, recording, capability, and Identify state. |
-| `/esp/status/fleet` | `std_msgs/msg/String` | Versioned full inventory and topology health. Publish on change and heartbeat. |
-| `/esp32/master/*`, `/esp/raw/master`, `/esp/status/master` | existing types | Compatibility alias to the one device whose firmware role is master. |
-| `/esp32/slave/*`, `/esp/raw/slave`, `/esp/status/slave` | existing types | Compatibility alias to persisted `legacy_slave_id`, never an arbitrary first device. |
-| `/esp/status/pair` | existing String JSON | Existing pair view constructed from master + `legacy_slave_id`. |
-
-Do not create segment-named sensor topics such as `/femur/imu`. Segment assignment is model state and may change; encoding it in the acquisition namespace produces stale subscribers and ambiguous recordings. OpenSim subscribes to hardware topics and maps those streams to model frames internally.
-
-### Fleet Status Schema
-
-Publish `rehab.esp_fleet.2` on `/esp/status/fleet`:
-
-```json
-{
-  "schema": "rehab.esp_fleet.2",
-  "revision": 17,
-  "timestamp_us": 123456789,
-  "legacy_slave_id": "esp32:112233445566",
-  "devices": [
-    {
-      "device_id": "esp32:aabbccddeeff",
-      "mac": "AA:BB:CC:DD:EE:FF",
-      "role": "master",
-      "connection_state": "connected",
-      "espnow_state": "local",
-      "last_frame_age_ms": 8.2,
-      "observed_stream_rate_hz": 99.9,
-      "capabilities": ["stream", "record", "identify"],
-      "identify": {"state": "idle", "command_id": null, "until_ms": null}
-    }
-  ],
-  "issues": []
-}
-```
-
-Connected, ESP-NOW-visible, and stream-routable are separate states:
-
-- `espnow_state=visible` but `connection_state=transport_unreachable` means the master sees the peer but the Windows relay cannot reach its TCP endpoint;
-- a TCP route without recent ESP-NOW status is `espnow_state=stale`;
-- only accepted data frames make a stream `connected/live`.
-
-This distinction is necessary because the existing master can see up to six ESP-NOW status slots even when a slave DHCP/TCP route is unhealthy.
-
-## Firmware Integration
-
-### Modify: Both Sketches
-
-Modify:
-
-- `firmware/step_node/step_node.ino`
-- `firmware/step_node_slave/step_node_slave.ino`
-- `backend/test/test_stepesp_firmware_topology.py`
-
-Add a small protocol header inside each Arduino sketch directory (Arduino builds do not reliably include a sibling shared directory):
-
-- `firmware/step_node/step_espnow_protocol.h`
-- `firmware/step_node_slave/step_espnow_protocol.h`
-
-The regression test should require the two headers to be byte-identical.
-
-### Additive Firmware Contracts
-
-1. `IDENTITY?` TCP command, valid before or during streaming.
-   - Reply is one bounded ASCII line:
-     `IDENTITY_OK schema=device-v1 device_id=esp32:aabb... base_mac=AA:... transport_mac=AA:... role=master capabilities=stream,record,identify firmware=<version>`
-   - The bridge/relay rejects a route whose response is missing, malformed, or changes identity during a connection.
-
-2. `PEERS?` master TCP command.
-   - Reply begins with `PEERS_BEGIN revision=<n> count=<n>`, contains one bounded line per active/stale slot, and ends with `PEERS_END`.
-   - Each line includes full base/ESP-NOW MAC, status age, stream/SD/sync flags, and last Identify acknowledgement.
-   - The ROS fleet manager polls at a low rate (for example 1 Hz) only through the wireless master session. Do not reuse the very large `REC STATUS` response as fleet discovery.
-
-3. Targeted Identify command.
-   - Host command: `IDENTIFY target=<device_id> duration_ms=<bounded> command_id=<u32>`.
-   - For the master target, blink locally.
-   - For a slave target, send a new versioned ESP-NOW `IdentifyCmdPacket` directly to that peer's observed ESP-NOW MAC.
-   - Slave status v3 echoes `last_command_id`, `last_command_result`, and `identify_active`.
-   - The master returns `IDENTIFY_OK` only after seeing the matching application-level status acknowledgement; otherwise return a bounded timeout/error code.
-
-ESP-NOW send callbacks are not an application acknowledgement. Espressif documents send success at the MAC layer and explicitly does not guarantee application receipt; therefore the status echo is required before Studio reports success.
-
-### LED Safety
-
-No LED pin is currently defined in either sketch. Add compile-time board settings:
-
-```c
-#define IDENTIFY_LED_PIN ...
-#define IDENTIFY_LED_ACTIVE_LEVEL LOW_OR_HIGH
-#define IDENTIFY_MAX_DURATION_MS 5000
-```
-
-Identify must be non-blocking and driven from `millis()` state in the main loop. Never call `delay(duration_ms)` in the receive callback or acquisition loop. Restore the prior LED state after timeout. If the board has no safe user LED configuration, advertise no `identify` capability and return `identify_unavailable`; do not guess a pin that could conflict with SPI, DIO, or SD.
-
-### Backward Compatibility
-
-- Master accepts existing status v2 and new v3 by checking `version` and `packet_size`.
-- Slave continues accepting legacy 2-byte commands, current `CmdPacket` v2, `FreqCmdPacket`, and `CfgCmdPacket`.
-- Existing recording, scheduled start/stop, frequency, filter, and range packet layouts do not change.
-- New Identify uses its own packet type and length so it cannot be misread as `SyncPacket` or `CmdPacket`.
-- Keep `MAX_SLAVE_STATUS_SLOTS=6` for this milestone; surface `capacity_exceeded` instead of overwriting slot 0 when full. The current `rememberSlaveStatus()` fallback to slot 0 must be removed.
-
-## Windows Relay and Startup Integration
-
-### Modify: Relay
-
-Modify `scripts/stepesp_tcp_udp_relay.py` from a dual-route object into:
-
-- `DeviceRoute`: immutable `device_id`, current ESP host/port, stable local relay port, role, last identity confirmation, connection state;
-- `RouteRegistry`: reconciles subnet scan candidates and identity replies, preserves stable local ports by device ID, and publishes registry revisions;
-- `UdpRouter`: continues demultiplexing UDP by current source IP but resolves IP through `RouteRegistry`;
-- `RegistryServer`: bounded localhost/WSL-facing NDJSON request/response API for `LIST` and change notifications.
-
-Keep `StepEspRelay` as the per-device TCP forwarder. Its transport translation (`STARTED ... udp` to downstream TCP plus appended UDP records) remains valid.
-
-Recommended local registry response:
-
-```json
-{"schema":"stepesp.relay_registry.1","revision":9,"routes":[
-  {"device_id":"esp32:aabbccddeeff","role":"master","listen_port":5100,"state":"ready"},
-  {"device_id":"esp32:112233445566","role":"slave","listen_port":5101,"state":"ready"}
-]}
-```
-
-The registry must not expose a route as ready until `IDENTITY?` confirms it. Port assignment must persist for the relay process lifetime and remain attached to `device_id` if DHCP changes. A disconnected route remains in the registry as `unreachable`, allowing the ROS session and UI row to retain identity.
-
-### Modify: Startup
-
-Modify:
-
-- `scripts/start_stepesp_wireless.ps1`
-- `scripts/stop_stepesp_wireless.ps1`
-- `scripts/run_opensim_live_link.ps1`
-- `scripts/run_opensim_live_link_wsl.sh`
-- `backend/launch/opensim_live_link.launch.py`
-
-Remove the current "multiple stations is an error" branch. Start one relay registry and one `esp32_fleet_bridge` ROS process. Start OpenSim with `mapping_mode:=dynamic`, `model_path:=...`, and a configurable mapping-store path.
-
-Retain a `-LegacyPairMode` switch for one milestone. It invokes the existing two-route arguments and two `esp32_bridge_node` processes unchanged. This is the rollback path for hardware sessions while fleet routing is validated.
-
-### Relay Failure Containment
-
-- One device connection task failing must not cancel `asyncio.gather()` for other routes.
-- Use per-route bounded UDP queues and per-route drop counters.
-- An unknown UDP source is quarantined and triggers identity reconciliation; it is never attached to an existing device based only on IP.
-- A changed identity on a known IP closes that route and creates a new registry entry.
-- Registry API failure leaves already-connected streams running; the fleet bridge reports discovery degraded.
-- Relay discovery never sends recording or acquisition commands.
-
-## ROS 2 Fleet Bridge
-
-### New and Modified Components
-
-Add:
-
-- `backend/rehab_robotics_bridge/device_identity.py`
-- `backend/rehab_robotics_bridge/esp32_transport.py`
-- `backend/rehab_robotics_bridge/esp32_fleet_node.py`
-- `backend/test/test_device_identity.py`
-- `backend/test/test_esp32_fleet_node.py`
-- `backend/test/test_stepesp_relay_registry.py`
-
-Modify:
-
-- `backend/rehab_robotics_bridge/esp32_bridge_node.py`
-- `backend/setup.py`
-- `backend/package.xml`
-- `backend/launch/rehab_robotics.launch.py`
-- existing ESP bridge/control tests
-
-Refactor the current handshake, mixed text/binary scanner, range confirmation, frame conversion, and recording response logic into `Esp32DeviceSession`. Keep `Esp32BridgeNode` as a thin single-device legacy wrapper. `Esp32FleetNode` owns a dictionary of sessions keyed by `device_id`, watches relay registry revisions, and constructs/destroys sessions independently.
-
-The fleet node:
-
-- publishes canonical per-MAC topics;
-- includes `device_id`, `mac`, and `role` in raw schema v2;
-- publishes fleet and per-device health;
-- owns the master recording/control services;
-- forwards Identify to the master control session and returns only confirmed results;
-- publishes legacy aliases from master and explicit `legacy_slave_id`.
-
-Never put `body_segment` in this layer's authoritative state. Keep it only as a deprecated v1 compatibility field on alias raw messages until Studio no longer depends on it.
-
-### Custom ROS Interfaces
-
-Add to `rehab_robotics_interfaces`:
-
-```text
-msg/SensorSegmentMapping.msg
-  string device_id
-  string segment_id
-
-srv/SetSensorMapping.srv
-  string model_id
-  uint64 expected_revision
-  SensorSegmentMapping[] assignments
-  bool persist_draft
-  ---
-  bool success
-  string code
-  string message
-  uint64 revision
-  string state
-
-srv/ApplySensorMapping.srv
-  string model_id
-  uint64 expected_revision
-  ---
-  bool success
-  string code
-  string message
-  uint64 applied_revision
-
-srv/IdentifySensor.srv
-  string device_id
-  uint16 duration_ms
-  ---
-  bool success
-  string code
-  string message
-  uint32 command_id
-```
-
-Use services because set/apply/identify are short request/response operations that require confirmation. Use topics for fleet, mapping, model, and solver status because they are continuous state streams. This matches ROS 2's documented interface semantics and the existing rosbridge `call_service` correlation flow.
-
-Services:
-
-- `/esp/identify`
-- `/opensim/mapping/set`
-- `/opensim/mapping/apply`
-
-Existing `/esp/recording/set`, parameter services, calibration services, and visualizer service remain.
-
-## Model Catalog and Mapping Ownership
-
-### New Backend Modules
-
-Add:
-
-- `backend/rehab_robotics_bridge/opensim/model_catalog.py`
-- `backend/rehab_robotics_bridge/opensim/mapping_store.py`
-- `backend/rehab_robotics_bridge/opensim/orientation_set.py`
-- `backend/test/test_opensim_model_catalog.py`
-- `backend/test/test_opensim_mapping_store.py`
-- `backend/test/test_opensim_orientation_set.py`
-
-Modify:
-
-- `backend/rehab_robotics_bridge/opensim_node.py`
-- `backend/rehab_robotics_bridge/opensim/calibration.py`
-- `backend/rehab_robotics_bridge/opensim/orientation_ik.py`
-- `backend/rehab_robotics_bridge/opensim/opensim_orientation_ik.py`
-- `backend/rehab_robotics_bridge/opensim_adapter.py`
-- OpenSim launch and tests
-
-### Model Identity and Segment Catalog
-
-Compute:
-
-```text
-model_id = "sha256:" + sha256(exact .osim bytes)
-```
-
-The catalog enumerates `BodySet`, excluding Ground. A segment ID is the absolute component path, for example `/bodyset/femur_r`, not only the display name. This avoids collisions in more complex component trees.
-
-For each body:
-
-1. Prefer an existing IMU `PhysicalFrame`/`PhysicalOffsetFrame` attached to that body, especially the OpenSense convention `<bodyname>_imu`.
-2. If absent, stage a deterministic identity-offset runtime `PhysicalOffsetFrame` before `initSystem()` and expose its path as the orientation frame.
-3. If the pinned Python binding cannot add and connect that frame safely before initialization, mark the body `sensor_ready=false` and require a model-authored IMU frame in this milestone. Do not silently map to a joint offset frame.
-
-The current demo model already contains `femur_r_imu` and `tibia_r_imu` attached to `/bodyset/femur_r` and `/bodyset/tibia_r`, so compatibility mappings resolve without generated frames.
-
-OpenSense documentation treats each IMU as a Frame in the model and expects names such as `<bodyname>_imu`. The mapping catalog should show body/segment labels to the operator but give the solver the resolved IMU frame path.
-
-Publish `/opensim/mapping/status` as versioned JSON `rehab.opensim_mapping.1`:
-
-```json
-{
-  "schema": "rehab.opensim_mapping.1",
-  "model": {
-    "model_id": "sha256:...",
-    "name": "rehab_lower_limb_skeleton_live_link",
-    "path": "/home/.../model.osim"
-  },
-  "revision": 12,
-  "applied_revision": 11,
-  "state": "incomplete",
-  "segments": [
-    {
-      "segment_id": "/bodyset/femur_r",
-      "name": "femur_r",
-      "sensor_frame": "/femur_r_imu",
-      "sensor_ready": true
-    }
-  ],
-  "assignments": [
-    {
-      "device_id": "esp32:aabbccddeeff",
-      "segment_id": "/bodyset/femur_r",
-      "connected": true,
-      "valid": true
-    }
-  ],
-  "issues": [
-    {"code": "connected_device_unassigned", "device_id": "esp32:112233445566"}
-  ]
-}
-```
-
-Publish on startup, model/mapping/topology changes, and a low-rate heartbeat so current Humble rosbridge clients do not depend on transient-local QoS support.
-
-### Mapping Validation
-
-`SetSensorMapping` accepts the entire desired assignment set, not incremental row mutations. The backend validates it as one candidate:
-
-- request `model_id` matches the loaded model;
-- `expected_revision` matches to prevent two browser tabs from overwriting each other;
-- every device ID is normalized and unique;
-- every segment ID exists and is `sensor_ready`;
-- every segment occurs at most once;
-- unknown disconnected device IDs may be retained only if already present in persisted history; arbitrary new IDs are rejected;
-- every currently connected fleet device is assigned before state can be `ready`;
-- at least the model/solver-required minimum number of sensors is assigned;
-- no mapping mutation occurs while recording finalization is being controlled only if it would interfere with the shared control session; acquisition itself remains independent.
-
-Incomplete, non-conflicting candidates may be persisted as drafts so operator work is not lost. Conflicting/invalid candidates are rejected and never replace the persisted last valid draft.
-
-`ApplySensorMapping` is transactional:
-
-1. Revalidate desired mapping against current model and fleet.
-2. Stage subscriptions, model frames, visualizer adapter, and N-sensor IK solver.
-3. If staging fails, keep the prior applied mapping, solver, and calibration active; publish `apply_failed`.
-4. If staging succeeds, atomically swap the applied mapping.
-5. Clear calibration because the device-to-frame set changed.
-6. Increment `applied_revision` and publish status.
-
-### Persistence
-
-Default to a configurable backend path such as:
-
-```text
-~/.rehab_robotics/sensor_mappings.json
-```
-
-Tests always inject a temporary path. Store:
-
-```json
-{
-  "schema": "rehab.sensor_mapping_store.1",
-  "models": {
-    "sha256:...": {
-      "model_name": "rehab_lower_limb_skeleton_live_link",
-      "revision": 12,
-      "legacy_slave_id": "esp32:112233445566",
-      "assignments": {
-        "esp32:aabbccddeeff": "/bodyset/femur_r",
-        "esp32:112233445566": "/bodyset/tibia_r"
-      }
-    }
-  }
-}
-```
-
-Write to a sibling temporary file, flush/fsync where available, and atomically replace. Keep the previous file as a bounded `.bak`. On corrupt JSON, report `mapping_store_corrupt`, preserve the file for recovery, and start with an empty in-memory draft; do not overwrite corruption automatically.
-
-Loading a model restores that model's candidate. If all segment paths still resolve, connected devices match, and no duplicates exist, auto-apply it. Reconnecting a device with the same MAC reattaches automatically without changing revision. A changed `.osim` file has a new hash, preventing stale segment mappings from silently crossing model revisions.
-
-## Dynamic OpenSim Calibration and Solver
-
-### Orientation Set Aggregation
-
-Do not attempt an N-way `message_filters` synchronizer with one callback signature per sensor. Maintain one bounded latest-value cache per applied device ID:
-
-```text
-device_id -> {xyzw, source_timestamp_ns, arrival_monotonic, generation}
-```
-
-On a fixed-rate solve timer or after an input update:
-
-- require every applied device to have a valid quaternion;
-- require every device state to be live;
-- require each generation to have advanced since the prior solve;
-- require `max(source_timestamp) - min(source_timestamp) <= max_sensor_skew`;
-- require every arrival age below `stale_timeout`;
-- build an immutable orientation set ordered by resolved model frame path;
-- stamp the solved pose with the oldest contributing source timestamp, preserving the current conservative behavior.
-
-One stale/missing mapped sensor closes the IK output gate but does not stop acquisition, recording, other ROS topics, or Identify.
-
-### Calibration Generalization
-
-Change `CalibrationArtifact` from:
-
-```text
-master_xyzw
-slave_xyzw
-```
-
-to:
-
-```text
-model_id
-mapping_revision
-known_pose
-offsets_xyzw: device_id -> quaternion
-frame_paths: device_id -> model frame path
-sample_count_by_device
-captured source interval
-mean/max dispersion by device
-```
-
-The capture controller accepts complete immutable orientation sets. It performs antipode-aware means and dispersion checks independently for every mapped sensor. If any required sensor moves, becomes stale, or exceeds skew during capture, the candidate fails transactionally and a prior valid artifact remains active only if it matches the still-applied mapping revision.
-
-Calibration capture is rejected while mapping state is not `active/ready`. Applying any different mapping clears the calibration and the existing `/opensim/joint_states` hard gate remains closed until a new capture succeeds.
-
-### Official Orientation IK Generalization
-
-Modify `OpenSimOrientationIkSolver` to accept:
-
-```python
-solve(
-    orientations_xyzw: Mapping[str, Sequence[float]],  # keyed by device_id
-    frame_paths: Mapping[str, str],
-    calibration: CalibrationArtifact | None,
-    ...
-)
-```
-
-Build `TimeSeriesTableQuaternion` columns in deterministic applied mapping order, labeled by the resolved OpenSim IMU frame names/paths. Generalize `_make_quat_table()` and mounting-offset application from two values to N values. Keep one OpenSim Model/State/Solver owner in the dedicated `opensim_bridge` process.
-
-The current Python fallback reconstructs a static `OrientationsReference` when buffered binding support is unavailable. Preserve that fallback for compatibility, but profile solve duration as sensor count grows. Do not fork one solver per sensor: orientation IK is one model-wide solve.
-
-### Status Compatibility
-
-Keep:
-
-- `/opensim/joint_states`
-- `/opensim/ik_status`
-- `/opensim/calibration_status`
-- `/opensim/status`
-- `/opensim/calibration/capture`
-- `/opensim/calibration/clear`
-- `/opensim/visualizer/open`
-
-Extend `/opensim/status` additively:
-
-- keep `sensors.master` and `sensors.slave` compatibility aliases;
-- add `mapped_sensors[]` keyed by `device_id`;
-- add `model_id`, `mapping_revision`, `mapping_state`, and `required_sensor_count`;
-- preserve visualization/calibration objects so the current Studio parser continues working.
-
-Extend IK status with mapping provenance and skew, but do not change the existing validity fields. Existing JointState consumers need no change.
-
-## React Studio Integration
-
-### Add
-
-- `rehab-robotics-studio/src/types/sensorMapping.ts`
-- `rehab-robotics-studio/src/state/sensorMappingStore.ts`
-- `rehab-robotics-studio/src/components/mapping/SensorMappingPanel.tsx`
-- `rehab-robotics-studio/src/components/mapping/SensorRow.tsx`
-- `rehab-robotics-studio/src/components/mapping/mappingValidation.ts`
-- corresponding unit/component tests
-
-### Modify
-
-- `rehab-robotics-studio/src/data/RosbridgeDataSource.ts`
-- `rehab-robotics-studio/src/data/DataSource.ts`
-- `rehab-robotics-studio/src/data/appDataSource.ts`
-- `rehab-robotics-studio/src/state/systemStore.ts`
-- `rehab-robotics-studio/src/types/health.ts`
-- `rehab-robotics-studio/src/components/dashboard/HealthPanel.tsx`
-- `rehab-robotics-studio/src/components/dashboard/Dashboard.tsx`
-- `rehab-robotics-studio/src/App.tsx`
-- `rehab-robotics-studio/src/styles/app.css`
-
-Add a dedicated `Sensor Mapping` workspace tab. Rows are keyed by `device_id`, never array index, IP, or role. Each row shows:
-
-- role + shortened MAC;
-- connected/ESP-NOW/stream health;
-- assigned model segment;
-- persisted-but-disconnected state;
-- Identify busy/success/failure state.
-
-Segment options come only from `/opensim/mapping/status.segments`. Disable a segment already selected by another row and still validate again in the backend. Show explicit global states: `loading model`, `incomplete`, `conflict`, `ready to apply`, `applying`, `active`, and `apply failed`.
-
-The store separates:
-
-```text
-backendSnapshot   # authoritative desired/applied mapping and catalog
-draftAssignments  # ephemeral UI edits
-dirty             # draft differs from backend revision
-requestState      # set/apply/identify pending results
-```
-
-On stale-revision rejection, replace `backendSnapshot`, preserve the user's draft separately, and ask them to review differences. Never report applied until the backend status publishes the returned revision.
-
-### Rosbridge Contracts
-
-Subscribe to:
-
-- `/esp/status/fleet`
-- `/opensim/mapping/status`
-- existing OpenSim and legacy acquisition topics
-
-Call:
-
-- `/esp/identify` with `rehab_robotics_interfaces/srv/IdentifySensor`
-- `/opensim/mapping/set`
-- `/opensim/mapping/apply`
-
-Use the existing request ID/pending-call mechanism in `RosbridgeDataSource`. Add strict runtime parsers for every JSON status boundary. Cap array lengths, string lengths, and issue counts so malformed ROS JSON cannot allocate unbounded browser state.
-
-Keep the current master/slave raw frame path and `frameFromPair()` for graph compatibility. The mapping panel does not subscribe to every raw sensor stream; it consumes fleet health. Product OpenSim output continues to come from `/opensim/joint_states`, not browser quaternion math.
-
-## Key Data Flows
-
-### Discovery and Reconnect
-
-```text
-Slave sends ESP-NOW status with full identity
-  -> master peer inventory marks MAC visible
-  -> relay subnet scan receives IDENTITY? from current DHCP host
-  -> relay binds device_id to route and stable local endpoint
-  -> fleet bridge opens/reopens one device session
-  -> canonical per-MAC topics and fleet status resume
-  -> mapping store finds same device_id
-  -> OpenSim cache reattaches it to the saved segment
-  -> once all mapped inputs are fresh, calibration/IK gate may reopen
-```
-
-Reconnect does not rewrite the mapping revision. A device with a different MAC is a new device and remains unassigned even if it appears at the old IP.
-
-### Identify
-
-```text
-Studio Identify click
-  -> rosbridge call_service(id, device_id, duration)
-  -> fleet bridge validates connected/capable target
-  -> master TCP IDENTIFY command
-  -> master local blink OR targeted ESP-NOW packet
-  -> slave starts non-blocking blink and echoes command_id in status
-  -> master replies only after matching status ack
-  -> ROS service response correlated by rosbridge id
-  -> Studio shows success/timeout for that row only
-```
-
-### Mapping Apply
-
-```text
-Studio edits draft
-  -> SetSensorMapping(full candidate, expected revision)
-  -> backend validates and atomically persists desired mapping
-  -> mapping status says incomplete/ready
-  -> ApplySensorMapping(expected revision)
-  -> backend stages subscriptions + model frames + solver + visualizer
-  -> atomic applied mapping swap
-  -> calibration invalidated
-  -> mapping status active, calibration UNCALIBRATED
-  -> operator captures calibration
-  -> N-sensor orientation sets feed official OpenSim IK
-```
-
-### Model Change
-
-```text
-new .osim loaded
-  -> compute model_id and catalog
-  -> stop publishing new IK solutions
-  -> restore candidate for this exact model hash
-  -> validate segment paths and connected device set
-  -> auto-apply only if fully valid
-  -> always require matching calibration
-```
-
-## Failure Containment
-
-| Failure | Contained behavior | Recovery |
-|---|---|---|
-| One slave disappears | Its session/status becomes stale; other streams and SD recording continue; mapping is retained; IK gate closes if it was required. | Same MAC reconnect reattaches automatically. |
-| New unassigned device appears | Fleet acquisition continues; mapping state becomes `incomplete`; no silent assignment. | Operator assigns and applies. |
-| Duplicate segment request | Backend rejects whole candidate; prior desired/applied mapping remains. | Correct draft and retry. |
-| Mapping store corruption | Publish explicit error and keep corrupt file; start empty without overwriting. | Restore `.bak` or save a reviewed new mapping. |
-| Model segment removed/renamed | Restored candidate reports `segment_missing`; no auto-apply or calibration reuse. | Reassign against new catalog. |
-| Apply-stage OpenSim error | Old applied solver/visualizer remains active; candidate reports failure. | Fix mapping/model and retry. |
-| Identify packet lost | Service times out for that row; no false success; acquisition is untouched. | Retry; inspect ESP-NOW health. |
-| LED unavailable/misconfigured | Firmware omits capability or returns explicit error. | Correct board configuration and reflash. |
-| Relay registry down | Existing sessions remain; discovery status degrades. | Restart registry/relay without changing saved mapping. |
-| DHCP address changes | Relay re-identifies and moves route; device ID/topic stay unchanged. | Automatic session reconnect. |
-| Malformed firmware identity | Quarantine route; do not publish under guessed identity. | Firmware/transport repair. |
-| One invalid quaternion | Drop for that device, mark mapping input invalid, stop new IK output; other acquisition remains. | Resume after valid complete orientation sets. |
-| Calibration fails on one sensor | Candidate capture fails transactionally; matching prior calibration may remain only if mapping unchanged. | Stabilize all mapped sensors and recapture. |
-| Native visualizer fails | Preserve current behavior: visualizer status fails independently; IK/acquisition continue. | Bounded adapter recreation or operator retry. |
-| Native IK solve fails | Publish invalid status and no new JointState; do not hold values with a fresh stamp. | Reassemble/reset after bounded failures. |
-| Recording finalization failure | Mapping/IK status remains observable; no mapping operation claims recording success. | Existing recording recovery path. |
-
-## Compatibility and Migration Strategy
-
-### Firmware
-
-- Add new identity/peer/Identify commands; do not alter current Open Ephys handshake or record commands.
-- Accept old and new ESP-NOW packet versions.
-- Keep current two-sketch flashing workflow and topology tests.
-
-### Relay and ROS
-
-- Keep the current relay CLI arguments and `Esp32BridgeNode` executable.
-- Add fleet-mode arguments/registry and a new `esp32_fleet_bridge` executable.
-- Publish both canonical per-MAC topics and legacy aliases from fleet mode.
-- Seed `legacy_slave_id` from the one slave used by the old startup path; never recalculate it from discovery order.
-
-### OpenSim
-
-- Keep `master_imu_topic`, `slave_imu_topic`, `master_frame`, and `slave_frame` launch parameters in `mapping_mode=legacy`.
-- Add `mapping_mode=dynamic` as the new startup default only after canonical topics and mapping status pass integration tests.
-- Keep all existing service/topic names and the current native visualizer control.
-- Include compatibility aliases in `/opensim/status` so existing Studio health remains functional during UI migration.
-
-### Studio
-
-- Add mapping features without removing the current graph data source, toolbar calibration buttons, live knee output, or pair health.
-- Switch HealthPanel from two hard-coded rows to fleet rows only after `/esp/status/fleet` is available; fall back to pair health when it is absent.
-- Backend state wins after reload/reconnect; no browser-only mapping persistence.
-
-### Removal Gate
-
-Do not remove fixed contracts in this milestone. Mark them deprecated only after all of these pass:
-
-1. one-master/one-slave legacy startup and tests;
-2. one-master/N-slave discovery with stable per-MAC topics;
-3. same-MAC reconnect after DHCP address change;
-4. saved per-model mapping restore;
-5. official calibration + IK + JointState through dynamic mapping;
-6. recording start/stop/finalization with multiple slaves;
-7. Studio and rosbridge end-to-end regression.
+The three consumers branch at ROS publication. Browser load shedding occurs only on the viewer branch after the full-rate canonical message has already been published. No arrow returns from `FleetSignalBus` to the recorder or OpenSim.
+
+### Component Responsibilities
+
+| Component | Status | Responsibility | Must Not Own |
+|-----------|--------|----------------|--------------|
+| `FleetBridgeNode` | Modify narrowly | Continue publishing one canonical raw JSON topic and one typed `Imu` topic per full MAC; expose reconnect generation consistently | Display windows, browser pause, trace scaling |
+| `/esp/fleet/registry` contract | Modify | Discovery, full MAC, route state, observed rate, drops, registry revision, per-device reconnect generation | Body-part mapping truth |
+| `/rehab/mapping/current` contract | Modify | Publish draft and applied snapshots distinctly, with `model_hash`, `revision`, and `applied_revision` | Live sample buffering |
+| `RosbridgeDataSource` | Modify | Single-socket topic management, guarded parsing, websocket-session generation fencing, raw fleet sample fan-out | Long histories or chart downsampling |
+| `FleetRawSample` contract/parser | New | Preserve raw counts, converted SI values, sensor config, sequence, source time, device ID, role, and reconnect generation | Mapping labels derived from drafts |
+| `FleetSignalBus` | New | Own bounded per-device sample rings, display pause, viewport, per-channel visibility, and immutable render snapshots | Recording, exporting authoritative data, OpenSim input |
+| `TraceProjector` | New | Convert the visible time interval into at most O(canvas pixels) min/max buckets per visible channel | Source sample retention |
+| `viewerStore` | New | Low-frequency operator preferences: source selection, groups/channels, raw/SI, window, pause, scale, autoscale | High-rate numeric arrays in Zustand/React state |
+| `SignalViewer` UI | New | Controls, labels, stacked rendering, gap/remap markers, status | Parsing ROS payloads |
+| backend recorder/export | Modify or add | Subscribe to canonical per-MAC raw topics, retain every received sample, and write session provenance | Browser-projected/downsampled points |
+| `OpenSimNode` | Existing; harden generation handling | Consume typed per-MAC `Imu` based only on authoritative applied mapping and calibration | Raw trace units or browser state |
+| physical remap verifier/UAT artifacts | New tests/procedure | Correlate full MAC, applied revision, calibration ID, displayed label, exported columns, and visibly responding model segment | Inferring success from topic existence alone |
 
 ## Recommended Project Structure
 
 ```text
-firmware/
-|-- step_node/
-|   |-- step_node.ino                       # modified master identity/peer/Identify
-|   `-- step_espnow_protocol.h              # new versioned packet definitions
-`-- step_node_slave/
-    |-- step_node_slave.ino                 # modified slave identity/LED/ack
-    `-- step_espnow_protocol.h              # identical protocol header
-
-scripts/
-|-- stepesp_tcp_udp_relay.py                # modified N-route registry
-|-- start_stepesp_wireless.ps1              # modified fleet startup
-`-- stop_stepesp_wireless.ps1               # modified fleet shutdown
+rehab-robotics-studio/src/
+├── data/
+│   ├── RosbridgeDataSource.ts       # extend dynamic per-MAC subscriptions and fan-out
+│   ├── fleetSampleContract.ts       # new guarded raw JSON parser and unit conversion
+│   ├── fleetSignalBus.ts            # new bounded high-rate external store
+│   ├── traceProjector.ts             # new viewport/downsampling functions
+│   ├── signalBus.ts                  # retain for legacy derived dashboard; do not extend
+│   └── appDataSource.ts              # expose subscribeFleetSamples, not buffer ownership
+├── state/
+│   ├── mappingStore.ts               # distinguish draft and applied assignments
+│   └── viewerStore.ts                # new low-rate viewer preferences
+├── components/viewer/
+│   ├── SignalViewer.tsx
+│   ├── SourceSelector.tsx
+│   ├── ViewerControls.tsx
+│   ├── TraceCanvas.tsx
+│   └── provenanceLabel.ts
+└── hooks/
+    └── useFleetSignalSnapshot.ts      # useSyncExternalStore adapter
 
 backend/rehab_robotics_bridge/
-|-- device_identity.py                      # new MAC normalization/contracts
-|-- esp32_transport.py                      # new reusable session/parser
-|-- esp32_bridge_node.py                    # modified legacy wrapper
-|-- esp32_fleet_node.py                     # new dynamic session owner
-|-- opensim_node.py                         # modified mapping/model authority
-`-- opensim/
-    |-- model_catalog.py                    # new model hash/body/frame inventory
-    |-- mapping_store.py                    # new atomic per-model persistence
-    |-- orientation_set.py                  # new N-sensor freshness/skew gate
-    |-- calibration.py                      # modified N-sensor artifact
-    |-- orientation_ik.py                   # modified generic solver contract
-    `-- opensim_orientation_ik.py           # modified N-column official IK
-
-rehab_robotics_interfaces/
-|-- msg/SensorSegmentMapping.msg            # new
-`-- srv/
-    |-- SetSensorMapping.srv                # new
-    |-- ApplySensorMapping.srv              # new
-    `-- IdentifySensor.srv                  # new
-
-rehab-robotics-studio/src/
-|-- types/sensorMapping.ts                  # new transport/domain types
-|-- state/sensorMappingStore.ts             # new draft vs authoritative state
-|-- components/mapping/
-|   |-- SensorMappingPanel.tsx              # new dedicated panel
-|   |-- SensorRow.tsx                       # new stable-MAC row
-|   `-- mappingValidation.ts                # new immediate UX checks
-|-- data/RosbridgeDataSource.ts             # modified subscriptions/services
-|-- data/appDataSource.ts                   # modified application commands
-|-- state/systemStore.ts                    # modified fleet/OpenSim health
-|-- types/health.ts                         # modified fleet status types
-`-- App.tsx                                 # modified Sensor Mapping tab
+├── fleet_bridge_node.py              # canonical streams + reconnect generation contract
+├── mapping_node.py                   # authoritative applied snapshot (already persisted)
+├── recorder_node.py                  # dynamic canonical per-MAC recording/export
+└── opensim_node.py                   # generation-aware freshness and applied mapping consumer
 ```
 
-## Dependency-Aware Build Order
+### Structure Rationale
 
-### Phase 1: Identity and Targeted Identify
+- Keep high-rate mutable rings outside React and Zustand. React subscribes only to immutable, rate-limited snapshots.
+- Keep `signalBus.ts` unchanged in purpose. It currently executes the graph and maintains force/EMG/knee histories from a pair-derived `Frame`; adding fleet raw signals would mix incompatible semantics.
+- Centralize raw payload validation and unit conversion in `fleetSampleContract.ts`. UI components must not reinterpret JSON or sensor scales.
+- Place downsampling in a pure module so correctness (first/last point, extrema preservation, gaps, bounds) can be tested without a canvas.
+- Keep authoritative export backend-owned because a background tab, WebSocket interruption, or a bounded browser ring cannot guarantee completeness.
 
-Build firmware identity, full-MAC status v3, non-blocking LED state, targeted packet/ack, and parser tests.
+## Data Contracts
 
-End-to-end test:
+### Canonical Fleet Raw Sample
 
-- query master and two simulated/physical slaves;
-- prove unique full IDs;
-- Identify each device independently;
-- prove lost acknowledgement returns failure;
-- prove sample/recording loop timing is unchanged.
+The existing backend JSON is the correct base contract and already includes `device_id`, `sample_index`/`seq`, `time_us`, `node_role`, raw `imu` including magnetometer, raw quaternion counts, and `sensor_config`.
 
-### Phase 2: N-Route Relay and Canonical ROS Fleet Topics
+Normalize it at the browser boundary to:
 
-Build relay route registry, reusable device session, fleet bridge, canonical topics/status, and legacy aliases.
+```typescript
+type FleetRawSample = {
+  deviceId: `esp32:${string}`;       // canonical full MAC; never role/order identity
+  topicToken: `mac_${string}`;
+  role: string;
+  seq: number;
+  sourceTimeUs: number;
+  receivedAtMs: number;
+  reconnectGeneration: number;
+  websocketGeneration: number;
+  raw: {
+    accel: readonly [number, number, number];
+    gyro: readonly [number, number, number];
+    mag: readonly [number, number, number];
+    quat: readonly [number, number, number, number]; // qw,qx,qy,qz
+  };
+  si: {
+    accelMps2: readonly [number, number, number];
+    gyroRadS: readonly [number, number, number];
+    magUt: readonly [number, number, number] | null;
+    quat: readonly [number, number, number, number];
+  };
+  sensorConfig: SensorConfig;
+};
+```
 
-End-to-end test:
+Rules:
 
-- discover master plus at least two slaves in any DHCP order;
-- observe three stable `/esp32/mac_*/imu` topics;
-- power-cycle one slave and verify the same topic resumes;
-- verify one failed route does not stop the others;
-- run existing pair, recording, frequency, and range tests through aliases.
+1. Reject a message whose topic MAC and payload `device_id` disagree.
+2. Reject missing/non-finite required channel values; do not coerce invalid values to zero. The existing pair parser's `numeric(...)=0` fallback is unsuitable for diagnostic traces because it creates false flat-line samples.
+3. Preserve raw and SI forms together so changing the UI unit mode never reparses history and never touches acquisition.
+4. Accel and gyro SI conversions use the validated `sensor_config` already shared by frontend/backend.
+5. Magnetometer SI display requires an authoritative scale/config field. Until that contract exists, expose magnetometer as raw counts and show SI as unavailable; do not invent a µT conversion.
+6. Quaternion is dimensionless. Raw mode may show signed counts; normalized mode uses the existing `1 / 32767` factor and should flag implausible norm rather than silently renormalizing.
 
-### Phase 3: Model Catalog and Persistent Mapping Contracts
+### Fleet Registry
 
-Build custom interfaces, model hash/catalog, mapping store, validation, set/apply transactions, and status topic using fake adapter/solver.
+The frontend parser currently discards top-level `revision`, `topic_token`, `last_seen_us`, and nested `reconnects.generation`. Retain them. At minimum:
 
-End-to-end test:
+```typescript
+type FleetDeviceDescriptor = {
+  deviceId: string;
+  topicToken: string;
+  route: 'connected' | 'reconnecting' | 'offline' | string;
+  observedHz?: number;
+  reconnectGeneration: number;
+  lastSeenUs: number;
+};
+```
 
-- load the demo model and receive pelvis/femur/tibia-derived choices;
-- reject duplicate segments;
-- persist an incomplete draft;
-- apply a complete mapping;
-- restart backend and restore by exact model hash/MAC;
-- change model bytes and prove old mapping does not silently apply.
+`registry.revision` orders registry snapshots. `reconnectGeneration` fences per-device samples. The WebSocket's existing `connectionGeneration` fences entire rosbridge sessions. Both are required: a device can reconnect while the browser socket remains connected, and the browser can reconnect while a device session does not.
 
-### Phase 4: N-Sensor Calibration, Official IK, and Visualizer
+### Applied Mapping Provenance
 
-Generalize orientation aggregation, calibration artifact, solver table, node status, and visualizer labels.
+`mapping_node.py` already persists and publishes all needed fields: editable `assignments`, immutable-until-apply `applied_assignments`, derived `assigned`, `revision`, `applied_revision`, and `model_hash`. The current `parseMappingCurrent` drops `applied_assignments` and `assigned`, causing Studio rows to treat draft assignments as if they were runtime labels.
 
-End-to-end test:
+Extend the TypeScript snapshot/store with separate fields:
 
-- feed deterministic 2-sensor fixtures and prove current knee result remains within tolerance;
-- feed 3+ mapped orientations and verify deterministic table labels;
-- stale one sensor and prove JointState stops while other topics continue;
-- recapture after mapping change;
-- open/update native visualizer without changing product JointState contract.
+```typescript
+type AppliedIdentity = {
+  deviceId: string;
+  segment: string;
+  frame: string;
+  modelHash: string;
+  appliedRevision: number;
+};
+```
 
-This phase needs deeper research if runtime IMU frames must be generated for bodies lacking model-authored `<body>_imu` frames, because the pinned OpenSim 4.5.2 Python binding behavior must be verified.
+Viewer labels and exported provenance use only `applied_assignments`/`assigned`. The mapping editor continues to use `assignments`. When `appliedRevision` changes, the viewer creates a new provenance epoch and clears or partitions old visible history.
 
-### Phase 5: Rosbridge and Studio Mapping Panel
+### Recording/Export Provenance
 
-Build parsers, mapping store, workspace tab, row actions, conflict/incomplete UX, and service calls.
+Every backend recording session needs a manifest containing:
 
-End-to-end test:
+- schema version and session ID;
+- start/end times;
+- canonical device IDs and canonical raw topic names;
+- model hash and applied mapping revision;
+- per-device applied segment/frame snapshot;
+- reconnect generation at session start and any generation transitions;
+- sensor configuration/unit conversion metadata;
+- per-device received count, first/last sequence, detected sequence gaps, and ROS/relay drop counters.
 
-- render rows in stable MAC order while status updates;
-- Identify one row and correlate the correct response;
-- prevent duplicate selection locally and verify backend rejection still works;
-- apply mapping and wait for authoritative revision;
-- reload the page and recover backend mapping;
-- preserve existing Run/Rec/Calibrate/Clear/visualizer/live-angle workflows.
+Data rows should include at least `source_time_us`, `seq`, `device_id`, `reconnect_generation`, channel name/value or stable wide columns, and applied segment/frame/revision (directly or by manifest foreign key). Full MAC is mandatory; role is optional metadata, never the primary key.
 
-### Phase 6: Hardware Compatibility and Failure Matrix
-
-Exercise master + multiple slaves at supported rates, recording, reconnect, malformed packets, relay restart, stale sensor, corrupt store, model mismatch, calibration, IK, and visualization.
-
-Do not promote dynamic mode as default until all legacy and fleet tests pass from the same startup script.
+Mapping apply is already blocked while recording, so a recording normally has one applied mapping epoch. Preserve that interlock. If any alternate recorder permits remapping, it must close the current provenance epoch before accepting the new revision.
 
 ## Architectural Patterns
 
-### Stable Identity, Mutable Metadata
+### Pattern 1: One Acquisition Fan-out, Three Independent Consumers
 
-MAC-backed `device_id` is immutable; role, IP, connection state, and segment assignment are mutable projections. This prevents DHCP and remapping from changing topic identity.
+**What:** `FleetBridgeNode` publishes each decoded frame once to canonical raw JSON and typed `Imu`. ROS recording, OpenSim, and rosbridge independently subscribe.
 
-### Desired vs Applied Configuration
+**When to use:** Always for live acquisition.
 
-Persist an editable desired mapping separately from the applied solver mapping. Apply through a staged transaction and retain the last known-good solver on failure.
+**Trade-offs:** Some duplicate serialization is accepted in exchange for strong isolation. A slow browser cannot backpressure the hardware recorder or solver.
 
-### Backend Authority, UI Projection
+**Invariant:** Display sampling settings (`pause`, window, zoom, scale, autoscale, hidden channels, render FPS, downsampling threshold) cannot change ROS QoS, backend subscriptions, firmware recording commands, raw topics, or OpenSim subscriptions.
 
-Studio renders and edits state but does not decide whether a model segment exists, whether a mapping is valid, or whether calibration matches it. This makes restart, multi-tab use, and non-GUI ROS clients consistent.
+### Pattern 2: Mutable High-rate Core, Immutable Low-rate Snapshots
 
-### Latest Complete Orientation Set
+**What:** `FleetSignalBus.ingest()` appends to preallocated per-device sample rings without touching React. A requestAnimationFrame scheduler publishes a new immutable view at no more than 30–60 Hz.
 
-Cache one newest sample per mapped sensor and solve only a complete, fresh, bounded-skew set. Do not queue unbounded N-sensor combinations.
+**When to use:** Every live trace.
 
-### Compatibility Aliases
+**Trade-offs:** The external store is more code than component state, but it avoids one React update per sample/channel.
 
-Publish canonical per-MAC topics once, then republish explicit master/legacy-slave aliases. Compatibility does not leak role labels back into the canonical data model.
+```typescript
+rawStream.subscribe((sample) => fleetSignalBus.ingest(sample)); // every valid sample
 
-## Anti-Patterns
+// Display pause freezes projection/snapshot publication only.
+fleetSignalBus.setDisplayPaused(true);
+// It does NOT call appDataSource.pause() and does not unsubscribe upstream.
+```
 
-### Using DHCP IP or Slot as Identity
+Store one time/sample record per device ring, not thirteen independent timestamp arrays. Channel accessors project that record. Allocate capacity from a configured hard maximum, for example `ceil(maxSampleHz * maxWindowSeconds * 1.25)`, and expose overflow counters. Changing to a shorter window changes projection, not retained acquisition or recording.
 
-**Why it fails:** DHCP order changes and the current firmware may reuse slot 0 when full.
-**Instead:** Confirm the full firmware base MAC and attach transport routes to it.
+### Pattern 3: Extrema-preserving Pixel Projection
 
-### Truncating MAC to `slave_id`
+**What:** For each visible channel and horizontal pixel bucket, emit minimum and maximum values in time order (plus first/last endpoints). This bounds render work by canvas width and preserves spikes that simple every-Nth sampling would miss.
 
-**Why it fails:** The current low 32 bits are not the complete requested hardware identity and increase collision risk.
-**Instead:** carry and normalize all 48 bits.
+**When to use:** When samples in the visible window exceed roughly two points per horizontal pixel.
 
-### Encoding Segment in ROS Topic Names
+**Trade-offs:** It is visually faithful for inspection but is not an analysis dataset. The projected points must never be offered as a full-rate export.
 
-**Why it fails:** Remapping changes topic identity and invalidates subscribers/recordings.
-**Instead:** canonical hardware topics plus backend mapping metadata.
+Autoscale runs over raw samples in the visible window or bucket extrema (which preserve range), with robust padding and a zero-range fallback. It changes only y-axis transforms.
 
-### Letting Studio Persist the Only Mapping
+### Pattern 4: Ordered Identity Epochs
 
-**Why it fails:** Backend IK cannot recover independently; browser reloads/tabs can diverge.
-**Instead:** backend atomic per-model persistence with optimistic revision checks.
+**What:** Accept samples only for the current `(websocketGeneration, deviceId, reconnectGeneration)`. A newer fleet registry generation atomically resets that device's sequence/time continuity and emits a gap marker. A new applied mapping revision emits a remap marker and new label epoch.
 
-### Choosing the First Discovered Slave
+**When to use:** Reconnect, rosbridge restart, model change, or applied remap.
 
-**Why it fails:** discovery/DHCP order is nondeterministic.
-**Instead:** explicit persisted `legacy_slave_id`.
+**Trade-offs:** Short gaps are visible rather than deceptively connected. Historical display is either partitioned or cleared, but never relabeled.
 
-### Reporting ESP-NOW Send Success as Identify Success
+Do not compare raw `seq` across reconnect generations; it restarts at one. Do not use TCP route, role, array order, or abbreviated MAC as identity.
 
-**Why it fails:** link-layer delivery is not application execution.
-**Instead:** command ID echoed in slave status and confirmed by the master.
+## Key Data Flows
 
-### Mutating the Live Solver During Mapping Validation
+### Discovery and Dynamic Subscription
 
-**Why it fails:** a bad model frame or subscription can destroy the current valid path.
-**Instead:** stage, validate, then atomically swap.
+```text
+/esp/fleet/registry
+    -> validate monotonic registry revision
+    -> upsert device descriptor by full MAC
+    -> derive /esp/raw/<topic_token>
+    -> subscribe once on current rosbridge WebSocket
+    -> on route offline: keep row and mark stale/gap (subscription may remain)
+    -> on reconnect generation increment: reset sequence epoch, retain row/preferences
+```
 
-### Solving with "Latest N" Without Skew/Age Gates
+Keeping canonical topic subscriptions across temporary offline states avoids churn and preserves user channel preferences. On an entire WebSocket reconnect, rebuild all desired subscriptions for the new websocket generation.
 
-**Why it fails:** a plausible pose can mix fresh and stale sensors.
-**Instead:** complete-set generation, age, skew, and per-device generation checks.
+### Live Display
+
+```text
+/esp/raw/mac_<MAC> String JSON (full rate)
+    -> RosbridgeDataSource generation/topic fence
+    -> fleetSampleContract strict parse + raw/SI conversion
+    -> FleetSignalBus per-device bounded sample ring
+    -> select visible time window
+    -> extrema-preserving pixel projection
+    -> immutable snapshot at render cadence
+    -> stacked canvas traces
+```
+
+Hidden channels need not be projected, but their samples may remain in the device ring so toggling visibility is immediate within the retained window.
+
+### Recording (Explicit Separation)
+
+```text
+/esp/raw/mac_<MAC> full-rate ROS messages
+    -> backend recorder/export writer
+    -> lossless rows + session manifest + counts/checks
+
+Browser ring/downsampler --------------------X----> recorder
+Browser pause/visibility/window/scale --------X----> recorder
+```
+
+The current `recorder_node.py` defaults to `/esp/raw/master` and `/esp/raw/slave`. For v1.7 it must discover or be configured with canonical per-MAC topics; alias recording is insufficient for “every connected ESP” and can make identity depend on role. Firmware SD recording remains a separate control path via `/esp/recording/set`; the viewer must not redefine the Rec button as browser capture.
+
+### OpenSim and Remap
+
+```text
+/rehab/mapping/current (authoritative applied snapshot)
+    -> OpenSimNode creates/destroys /esp/imu/mac_<MAC> subscriptions
+    -> applied revision/model hash invalidate prior calibration artifact
+    -> operator captures new calibration
+/esp/imu/mac_<MAC> typed full-rate SI orientation
+    -> freshness/sync gate -> OpenSim IK -> native visualizer
+```
+
+The viewer observes this flow but does not mediate it. After a segment swap, success requires a new applied revision, invalid/cleared old calibration, successful recalibration for that exact model hash/revision/device order, fresh post-reconnect inputs, and visible motion of the newly assigned physical segment.
+
+## Remap and Reconnect Handling
+
+### Required Generation Semantics
+
+| Event | Generation/revision | Viewer action | Recorder action | OpenSim action |
+|-------|---------------------|---------------|-----------------|----------------|
+| Browser WebSocket reconnect | increment `connectionGeneration` | reject old-socket callbacks; rebuild subscriptions | none | none |
+| One ESP reconnects | increment device `reconnectGeneration` | insert gap; reset sequence/time continuity; keep preferences | record generation transition and gaps | mark device not fresh until first new-generation frame |
+| Draft assignment edited | increment mapping `revision` only | no trace relabel | no provenance change | no input remap |
+| Mapping successfully applied | set new `appliedRevision`; replace `applied_assignments` atomically | new label/provenance epoch; clear or split history | blocked while active; otherwise snapshot next session | rebuild MAC subscriptions/frame mapping and invalidate old calibration |
+| Model changes | new `modelHash` | invalidate body-part labels until applied snapshot matches | new session metadata only | invalidate artifact and recalibrate |
+
+`OpenSimNode._on_fleet_registry` currently looks for `reconnected_devices` or per-device `event == "reconnect"`, while `FleetBridgeNode` publishes nested `reconnects.generation`. Standardize on generation comparison in all consumers. This closes a contract mismatch and is more reliable than transient event flags.
+
+## Physical 3D Remap Verification Architecture
+
+Treat hardware verification as an evidence-producing end-to-end test, not a visual spot check.
+
+1. Identify both physical sensors using full MAC and LED identify; record MAC-to-physical placement.
+2. Capture baseline applied mapping snapshot (`model_hash`, `applied_revision`, full `applied_assignments`) and reconnect generations.
+3. Record a short baseline motion where only physical sensor A moves. Save viewer screenshot/trace identity, export columns/manifest, calibration ID, OpenSim joint-state metadata, and the visibly responding native model segment.
+4. Stop recording and calibration capture, stage an atomic A/B segment swap, and apply the expected draft revision.
+5. Verify the published applied snapshot changed atomically and the viewer labels changed only after the apply acknowledgement/snapshot—not at draft edit time.
+6. Clear/confirm invalidation of the prior calibration; recalibrate in the specified standing pose against the new `model_hash + applied_revision + device_order`.
+7. Repeat the same isolated physical motion. The same full MAC trace and exported device columns must remain associated with sensor A, while the responding OpenSim model segment must now be the newly applied segment.
+8. Reconnect sensor A and repeat one short motion. Verify its reconnect generation increments, no old samples bridge the gap, applied mapping reattaches by MAC, recalibration/freshness gates behave as specified, and identity remains unchanged.
+
+Minimum evidence table:
+
+| Trial | Physical sensor | Full MAC | Reconnect gen | Applied rev | Applied segment/frame | Calibration ID | Viewer trace label | Export identity | Model segment observed |
+|-------|-----------------|----------|---------------|-------------|-----------------------|----------------|--------------------|-----------------|------------------------|
+| Before swap | A | value | value | value | value | value | value | value | value |
+| After swap | A | same | value | newer | swapped value | new value | swapped label | same MAC + new provenance | swapped value |
+| After reconnect | A | same | newer | same | same | valid/new as required | same | same | same |
 
 ## Scaling and Performance Considerations
 
-The current firmware limit is one master plus six status slots and the AP allows eight clients. Design collections dynamically but validate this milestone at that concrete limit; do not claim arbitrary fleet size.
+This is a local operator application, so scale is sensors × channels × sample rate, not user count.
 
-| Concern | Current two-device path | Target at master + six slaves |
-|---|---|---|
-| Firmware status traffic | Slave status every 10 ms | 6 x 100 Hz status may be significant; measure airtime and consider a lower health rate while retaining sample streams. |
-| Windows UDP routing | Two IP queues | One bounded queue per identified route with per-route drops. |
-| ROS publishers | Static two sets | Dynamic per-device publishers; topic count remains small. |
-| Studio rendering | Two rows | Seven keyed rows; trivial if raw samples are not stored in React state. |
-| OpenSim solve | Two orientation columns | One model-wide N-column solve; native solve latency is the likely bottleneck. |
-| Synchronization | Latest pair | Complete N-device set with max skew/age; missing sensor becomes more likely. |
+| Load | Architecture adjustment |
+|------|-------------------------|
+| 2 sensors × 13 channels × 100 Hz | Main-thread parser and typed-array rings should be sufficient; render at 30–60 Hz |
+| 8–16 sensors × 13 channels × 100–200 Hz | Preallocated structure-of-arrays or compact sample rings; canvas; project only visible channels; benchmark JSON parse cost |
+| Higher rate/longer windows | Move parsing/projection to a Web Worker and transfer compact numeric blocks; keep the recording path unchanged |
 
-Measure:
+First bottlenecks are React reconciliation and canvas draw count, then JSON parsing/allocation. Fix them with external-store snapshots, pixel projection, preallocated rings, and optionally a Worker. Do not respond by throttling ROS subscriptions unless the user explicitly selects a display-only throttle that is proven not to alter other consumers; even then, backend recording and OpenSim subscriptions remain full rate.
 
-- ESP-NOW status/send errors per peer;
-- relay route reconnects and UDP drops per device;
-- observed stream rates and frame ages;
-- orientation-set skew and incomplete-set reasons;
-- calibration dispersion per sensor;
-- OpenSim solve duration and output age.
+## Anti-Patterns
 
-If N-sensor solve cannot keep up, retain only the newest complete orientation set and publish at a configured solve rate. Never allow latency to grow through an unbounded queue.
+### Reusing the Existing Pair `Frame` for Fleet Traces
+
+**Why it fails:** `frameFromPair` replaces raw Master IMU values with derived relative accel/gyro and Slave quaternion, and `Frame` has no magnetometer. Channel identity and raw fidelity are lost.
+
+**Instead:** Parse canonical per-MAC raw JSON into `FleetRawSample`; retain the old `Frame` path for existing dashboard/graph behavior.
+
+### Calling `appDataSource.pause()` from the Viewer
+
+**Why it fails:** `RosbridgeDataSource.handleMessage` returns early while paused, suppressing health, mapping, service responses, and raw processing—not merely chart motion.
+
+**Instead:** implement display pause inside `FleetSignalBus`. Acquisition, recording, mapping callbacks, and OpenSim continue.
+
+### Recording from Downsampled Browser Snapshots
+
+**Why it fails:** bounded rings overwrite history; background tabs reduce animation frames; WebSockets disconnect; extrema buckets are not original samples.
+
+**Instead:** record canonical raw ROS topics or firmware SD data before rosbridge/display transformations.
+
+### Labelling with Draft `assignments`
+
+**Why it fails:** draft revision can diverge from the applied snapshot consumed by OpenSim. The UI can claim a body part that the solver is not using.
+
+**Instead:** labels and export provenance use `applied_assignments` plus `applied_revision`; mapping controls separately show drafts.
+
+### Simple Every-Nth Downsampling
+
+**Why it fails:** narrow spikes and dropouts can vanish, undermining diagnostic inspection.
+
+**Instead:** use time-bucket min/max projection and render explicit gaps.
+
+### Role/Connection-order Identity
+
+**Why it fails:** role aliases can change and reconnect order is unstable.
+
+**Instead:** full canonical MAC keys every buffer, preference, recorded row, mapping join, and test assertion.
+
+## Integration Points
+
+### ROS Topics and Services
+
+| Contract | Producer | Consumer(s) | v1.7 action |
+|----------|----------|-------------|-------------|
+| `/esp/raw/mac_<12hex>` `std_msgs/String` `oe_esp32.raw.v1` | Fleet bridge | viewer, backend recorder | Primary viewer source; strict identity check; preserve all 13 IMU/quaternion fields |
+| `/esp/imu/mac_<12hex>` `sensor_msgs/Imu` | Fleet bridge | OpenSim | Do not route through viewer/downsampler; note it excludes magnetometer |
+| `/esp/fleet/registry` `oe_esp32.fleet_registry.v1` | Fleet bridge | mapping, OpenSim, Studio | Preserve registry revision, topic token, nested reconnect generation |
+| `/rehab/mapping/current` `rehab.mapping_current.1` | Mapping node | OpenSim, Studio, recorder metadata | Parse draft and applied snapshots separately |
+| `/rehab/calibration/status` and `/rehab/opensim/input_validity` | OpenSim | Studio/mapping | Show validation gates; do not infer calibration from trace freshness |
+| `/esp/recording/set` | Fleet bridge service | Studio toolbar | Keep independent from display Run/Pause |
+| `/opensim/calibration/{capture,clear}` | OpenSim services | Studio toolbar/UAT | Required after applied remap before 3D proof |
+| `/opensim/visualizer/open` | OpenSim service | Studio toolbar | Opens native visual proof surface |
+
+### Internal Boundaries
+
+| Boundary | Communication | Contract rule |
+|----------|---------------|---------------|
+| `RosbridgeDataSource` → `FleetSignalBus` | subscribe callback | Every valid sample, ordered and generation-tagged; no React state |
+| `FleetSignalBus` → React | `useSyncExternalStore` | Immutable bounded snapshot at render cadence |
+| `mappingStore` → viewer label resolver | selector/read | Applied snapshot only; draft shown separately if desired |
+| `viewerStore` → `FleetSignalBus` | control methods | Display-only effects; no `DataSource.pause()` |
+| Fleet bridge → recorder | ROS subscription | Full-rate canonical raw message before browser processing |
+| Fleet bridge → OpenSim | typed ROS subscription | Full-rate SI `Imu`, applied mapping only |
+
+## Recommended Build Order
+
+1. **Lock and test contracts.** Extend frontend fleet registry parsing for revision/topic token/reconnect generation; extend mapping parsing/store for `applied_assignments`/`assigned`; add mismatch and stale-generation tests.
+2. **Harden backend generation semantics.** Standardize `FleetBridgeNode`, Studio, and `OpenSimNode` on nested reconnect-generation comparison; verify first post-reconnect sample reopens freshness without joining old sequence continuity.
+3. **Create the lossless browser sample seam.** Add `fleetSampleContract.ts`, strict validation, raw/SI conversion, dynamic canonical topic subscription, and `subscribeFleetSamples` on the existing source. Include magnetometer raw values from day one.
+4. **Implement `FleetSignalBus`.** Bounded per-device rings, epoch/gap handling, display-only pause, time-window selection, and rate-limited immutable snapshots. Unit-test capacity and ensure ingestion continues while display is paused.
+5. **Implement and benchmark projection/rendering.** Pure min/max bucket projector, stacked canvas traces, visibility/groups, unit switch, zoom/scale/autoscale. Test that extrema survive downsampling and output size is bounded by pixels.
+6. **Upgrade recording/export independently.** Discover canonical per-MAC topics, write full-rate rows and provenance manifest, and add count/sequence/generation reconciliation. Prove viewer controls do not change recorded sample counts or OpenSim update counts.
+7. **Integrate labels and remap epochs.** Join trace source identity to applied mapping only; add remap markers/clear behavior and reconnect gap indicators.
+8. **Run automated end-to-end integrity tests.** Simulate multiple MACs, draft/apply divergence, remap, WebSocket reconnect, device reconnect, malformed payloads, and browser pause. Compare publisher counts, recorder counts, and OpenSim input counts.
+9. **Execute physical 3D swap UAT.** Capture the before/after/reconnect evidence matrix and retain screenshots, session manifests, applied snapshots, calibration IDs, and joint-state metadata.
+
+## Verification Gates
+
+- A browser test injects N raw samples while display is paused; after resume the bus reflects continued ingestion (subject only to ring capacity), while no upstream pause call was made.
+- A backend integration test sends N canonical frames and verifies recorder receives N and OpenSim typed input receives N regardless of viewer window/downsampling settings.
+- Exported source rows reconcile with backend-received samples and document gaps; they do not reconcile against rendered point count.
+- Draft mapping edits do not change viewer applied labels, recorder provenance, or OpenSim subscriptions.
+- Successful Apply changes all three on the new applied revision boundary, with recording interlock respected.
+- Old websocket callbacks and old reconnect-generation samples cannot mutate current buffers.
+- Physical UAT proves the same full MAC moves a different native OpenSim segment only after atomic apply and recalibration.
 
 ## Sources
 
-### Repository Evidence
+Primary evidence is the current repository implementation (HIGH confidence):
 
-- `.planning/PROJECT.md` - active milestone requirements and compatibility constraints.
-- `firmware/step_node/step_node.ino` - six MAC-keyed status slots, ESP-NOW peer registration, current command/status packet layouts, relay commands, and master TCP controls.
-- `firmware/step_node_slave/step_node_slave.ino` - current truncated `slave_id`, 100 Hz status packet, master-peer registration, and direct TCP stream behavior.
-- `scripts/stepesp_tcp_udp_relay.py` - two-route Windows NAT/UDP bridge and source-IP demultiplexing.
-- `scripts/start_stepesp_wireless.ps1` - current single-slave discovery rejection, fixed two bridge processes, and fixed OpenSim topics.
-- `backend/rehab_robotics_bridge/esp32_bridge_node.py` - role-derived topic/health/control ownership and raw JSON schema.
-- `backend/rehab_robotics_bridge/opensim_node.py` - fixed role dictionary, two subscriptions, calibration gate, official IK, status, and visualizer isolation.
-- `backend/rehab_robotics_bridge/opensim/calibration.py` and `opensim/opensim_orientation_ik.py` - two-sensor artifacts/table/solve APIs requiring generalization.
-- `backend/rehab_robotics_bridge/opensim_adapter.py` - already-generic mapping dictionary at the visualizer boundary.
-- `backend/launch/opensim_live_link.launch.py` - fixed master/slave parameters.
-- `rehab-robotics-studio/src/data/RosbridgeDataSource.ts`, `state/systemStore.ts`, `types/health.ts`, and `components/dashboard/HealthPanel.tsx` - fixed subscriptions, pair caches, services, state, and UI rows.
-- `examples/opensim_quaternion_demo.osim` - model-authored `femur_r_imu` and `tibia_r_imu` frames attached to model bodies.
+- `.planning/PROJECT.md` — active milestone constraints and explicit decision to isolate bounded display buffering/downsampling from recording.
+- `backend/rehab_robotics_bridge/fleet_bridge_node.py` — canonical per-MAC raw JSON and typed `Imu` topics, registry schema, raw magnetometer fields, reconnect generation, role aliases, and recording control.
+- `backend/rehab_robotics_bridge/mapping_node.py` — persisted draft/applied snapshots, atomic apply, recording/calibration interlocks, and full applied `assigned` list.
+- `backend/rehab_robotics_bridge/opensim_node.py` — dynamic per-MAC typed subscriptions, applied-revision tracking, calibration artifacts, freshness/synchronization gates, and current reconnect-event parsing.
+- `backend/rehab_robotics_bridge/recorder_node.py` — current fixed alias-topic JSONL recorder, establishing the required v1.7 upgrade point.
+- `rehab-robotics-studio/src/data/RosbridgeDataSource.ts` — single WebSocket, session generation fencing, current fixed pair parsing, mapping/fleet callbacks, and pause behavior.
+- `rehab-robotics-studio/src/data/signalBus.ts` — existing high-rate-to-React external-store pattern and its pair-derived buffer ownership.
+- `rehab-robotics-studio/src/state/mappingStore.ts` — current conflation of backend draft assignment fields with applied status/labels and frontend registry field loss.
 
-### Authoritative External Sources
-
-- Espressif ESP-IDF, ESP-NOW API: https://docs.espressif.com/projects/esp-idf/en/v5.2/esp32/api-reference/network/esp_now.html - peer MAC targeting, peer registration, and send semantics (HIGH).
-- Espressif Arduino ESP32 network API: https://docs.espressif.com/projects/arduino-esp32/en/latest/api/network.html - retrieving full interface MAC addresses (HIGH).
-- ROS 2 Humble interface concepts: https://docs.ros.org/en/humble/Concepts/Basic/Interfaces-Topics-Services-Actions.html - topics for continuous state and services for confirmed short operations (HIGH).
-- ROS 2 Humble parameters: https://docs.ros.org/en/humble/Concepts/Basic/About-Parameters.html - node-bound parameter lifetime and lack of automatic persistence (HIGH).
-- rosbridge v2 protocol: https://github.com/RobotWebTools/rosbridge_suite/blob/ros2/ROSBRIDGE_PROTOCOL.md - subscribe and correlated `call_service`/`service_response` contracts (HIGH).
-- OpenSim OpenSense overview: https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53084203 - IMUs represented as model Frames and `<bodyname>_imu` naming (HIGH).
-- OpenSim IMU Placer: https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53086410/Getting%2BStarted%2Bwith%2BIMU%2BPlacer - associating/registering sensors to body segments (HIGH).
-- OpenSense real-time system: https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53084280/WearableandReal-timeKinematicsEstimateswithOpenSense - variable number of additional IMUs (MEDIUM-HIGH; architecture precedent, not a drop-in library contract).
-
-## Research Flags
-
-- Verify runtime construction/connection of missing per-body `PhysicalOffsetFrame`s in the pinned OpenSim 4.5.2 Python environment. If unreliable, require model-authored IMU frames and expose unsupported bodies as `sensor_ready=false`.
-- Measure ESP-NOW airtime and callback load with six slaves sending the current 10 ms status packet. The existing status rate may need reduction or separation from sample delivery.
-- Verify which XIAO ESP32S3 LED is electrically safe and its active level for each deployed board revision before enabling Identify.
-- Confirm base, AP, STA, and ESP-NOW MAC relationships on the actual boards; preserve all values in diagnostics even if they currently match.
-- Define the biomechanically required minimum sensor set and allowed optional segments per loaded model. Software can enforce a declared rule but cannot infer clinical sufficiency from BodySet alone.
-- Validate official orientation IK accuracy and latency with three or more sensors on the pinned OpenSim build; repository tests currently establish only the two-sensor path.
+No external library choice is required to establish these boundaries. Canvas vs. a specialized plotting library remains a phase-level benchmark decision; it must preserve the contracts and invariants above.
 
 ---
-*Architecture research for: Rehab Robotics Studio v1.6 Multi-Sensor Bone Mapping*
-*Researched: 2026-07-30*
+*Architecture research for: v1.7 Multi-Sensor Signal Viewer & 3D Mapping Validation*
+*Researched: 2026-08-13*
