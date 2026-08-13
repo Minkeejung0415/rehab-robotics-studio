@@ -47,6 +47,7 @@ Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline 
 **Target features:**
 - An automatically populated ESP/source selector labelled by full MAC and applied body part.
 - Stacked live traces for the nine accel/gyro/magnetometer components plus optional quaternion channels.
+- Selected multi-ESP and same-channel comparison views with synchronized time axes.
 - Per-group and per-channel visibility, raw/SI units, time-window, pause, zoom/scale, and autoscale controls.
 - Bounded browser buffers and display downsampling that do not reduce the full-rate recording path.
 - Recording/export provenance that retains channel, full-MAC, and applied body-part identity.
@@ -89,6 +90,8 @@ v1.6 generalized the prior fixed Master/Slave path into stable full-MAC fleet ro
 | Use bounded display buffers with downsampling, independent from recording | Open Ephys-style traces must remain responsive without discarding full-rate recorded samples | Active |
 | Label every trace and export by full MAC plus applied body part | Role or connection order cannot safely identify a wearable sensor | Active |
 | Require calibrated physical 3D remap UAT | Topic and subscription checks alone do not prove the operator sees the intended model segment move | Active |
+| Include validated magnetometer sensitivity/calibration and microtesla display | The user selected full 9-axis SI support; uncalibrated counts must not be mislabeled as physical units | Active |
+| Export full-rate provenance independently from the viewer | Display decimation must never reduce or relabel recorded evidence | Active |
 
 ## Evolution
 
