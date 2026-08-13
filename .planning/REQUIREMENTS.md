@@ -66,31 +66,31 @@ Traceability is populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SIG-01 | TBD | Pending |
-| SIG-02 | TBD | Pending |
-| SIG-03 | TBD | Pending |
-| SIG-04 | TBD | Pending |
-| SIG-05 | TBD | Pending |
-| VIEW-01 | TBD | Pending |
-| VIEW-02 | TBD | Pending |
-| VIEW-03 | TBD | Pending |
-| VIEW-04 | TBD | Pending |
-| VIEW-05 | TBD | Pending |
-| VIEW-06 | TBD | Pending |
-| PERF-01 | TBD | Pending |
-| PERF-02 | TBD | Pending |
-| EXP-01 | TBD | Pending |
-| EXP-02 | TBD | Pending |
-| EXP-03 | TBD | Pending |
-| UAT-01 | TBD | Pending |
-| UAT-02 | TBD | Pending |
-| UAT-03 | TBD | Pending |
-| UAT-04 | TBD | Pending |
+| SIG-01 | Phase 26 | Pending |
+| SIG-02 | Phase 26 | Pending |
+| SIG-03 | Phase 26 | Pending |
+| SIG-04 | Phase 26 | Pending |
+| SIG-05 | Phase 26 | Pending |
+| VIEW-01 | Phase 27 | Pending |
+| VIEW-02 | Phase 28 | Pending |
+| VIEW-03 | Phase 28 | Pending |
+| VIEW-04 | Phase 28 | Pending |
+| VIEW-05 | Phase 28 | Pending |
+| VIEW-06 | Phase 27 | Pending |
+| PERF-01 | Phase 28 | Pending |
+| PERF-02 | Phase 28 | Pending |
+| EXP-01 | Phase 29 | Pending |
+| EXP-02 | Phase 29 | Pending |
+| EXP-03 | Phase 29 | Pending |
+| UAT-01 | Phase 30 | Pending |
+| UAT-02 | Phase 30 | Pending |
+| UAT-03 | Phase 30 | Pending |
+| UAT-04 | Phase 30 | Pending |
 
 **Coverage:**
 - v1.7 requirements: 20 total
-- Mapped to phases: 0
-- Unmapped: 20
+- Mapped to phases: 20
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-08-13*

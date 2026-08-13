@@ -2,7 +2,7 @@
 
 ## Overview
 
-Milestone v1.6 generalizes the existing fixed Master/Slave acquisition and OpenSim path into an identity-safe multi-sensor workflow. Work proceeds from verified hardware identity through isolated fleet routing, authoritative model and mapping revisions, dynamic N-sensor calibration and IK, the operator mapping workspace, and finally hardware-backed compatibility evidence before dynamic mode can become the default.
+Milestone v1.7 turns the corrected multi-sensor fleet path into an operator-grade signal inspection and validation workflow. Work proceeds from trustworthy signal/provenance contracts through identity-safe ingestion, a bounded responsive viewer, independent full-rate export evidence, and finally a calibrated physical remap test that proves the same full-MAC identity agrees across Studio, recording, and the native OpenSim visualizer.
 
 ## Milestones
 
@@ -11,212 +11,104 @@ Milestone v1.6 generalizes the existing fixed Master/Slave acquisition and OpenS
 - **v1.3 Acquisition Integrity** - Unfinished prior scope remains preserved in existing artifacts.
 - **v1.4 OpenSim Quaternion Live Link** - Phase 15 implemented.
 - **v1.5 OpenSim IK + Calibration + Visualizer Control** - Phases 16-19 completed.
-- **v1.6 Multi-Sensor Bone Mapping** - Phases 20-25 planned.
+- **v1.6 Multi-Sensor Bone Mapping** - Phases 20-25 completed on 2026-08-05.
+- **v1.7 Multi-Sensor Signal Viewer & 3D Mapping Validation** - Phases 26-30 active.
 
 ## Phases
 
-- [x] **Phase 20: Full Identity and Confirmed Identify** - Every Master and Slave has a verified stable identity and a safely acknowledged physical Identify action. (completed 2026-07-30)
-- [x] **Phase 21: N-Route Relay and Canonical ROS Fleet** - All devices remain independently discoverable, routed, observable, and compatible with explicit legacy aliases. (completed 2026-08-05)
-- [x] **Phase 22: Model Catalog, Mapping Store, and Transactional Contracts** - Model-derived assignments are validated, revisioned, persisted, and applied atomically. (completed 2026-08-05)
-- [x] **Phase 23: N-Sensor Calibration and Official OpenSim IK** - Applied mappings drive provenance-bound calibration and valid synchronized N-sensor OpenSim solves. (completed 2026-08-05)
-- [x] **Phase 24: Rosbridge and Studio Mapping Workspace** - Operators manage the authoritative fleet mapping through stable, actionable device rows. (completed 2026-08-05)
-- [x] **Phase 25: Multi-Device Compatibility and Promotion Gate** - Deterministic and physical acceptance evidence preserves existing workflows and determines default-mode readiness. (completed 2026-08-05)
+- [ ] **Phase 26: Signal Contract and Provenance** - Every sample has trustworthy identity, timing, capability, units, and applied-mapping meaning.
+- [ ] **Phase 27: Identity-Safe Multi-Sensor Ingestion** - Every known ESP reaches the viewer independently with stable identity and explicit reconnect/remap boundaries.
+- [ ] **Phase 28: Bounded Signal Viewer and Controls** - Operators can inspect and compare responsive stacked traces without affecting acquisition, recording, or OpenSim.
+- [ ] **Phase 29: Full-Rate Export Integrity** - Recorded evidence retains full-rate values and provenance independently of all display behavior.
+- [ ] **Phase 30: Calibrated 3D Remap Acceptance** - Physical evidence proves full-MAC mappings follow applied swaps and reconnects into the expected native OpenSim segments.
 
 ## Phase Details
 
-### Phase 20: Full Identity and Confirmed Identify
+### Phase 26: Signal Contract and Provenance
 
-**Goal**: Operators can reliably distinguish and physically identify every Master and Slave without disrupting live work.
-**Depends on**: Phase 19
-**Requirements**: ID-01, ID-03
+**Goal**: Operators can trust the identity, timing, validity, units, capabilities, and applied mapping attached to every displayed or exported sample.
+**Depends on**: Phase 25
+**Requirements**: SIG-01, SIG-02, SIG-03, SIG-04, SIG-05
 **Success Criteria** (what must be TRUE):
 
-  1. Operator can see a verified, normalized full 48-bit identity for the Master and every discovered Slave, with role, IP address, and transport MAC shown as separate metadata.
-  2. A physical device retains the same canonical identity across DHCP changes, reconnects, and discovery-order changes, while the canonical data-topic instantiation remains owned by Phase 21.
-  3. Operator can target exactly one device with a bounded, non-blocking LED Identify action and see whether it was confirmed, timed out, offline, unsupported, or rejected without interrupting acquisition or recording.
+  1. Operator can inspect lossless raw accel, gyro, and magnetometer counts whose samples retain full MAC, acquisition time or sequence, reconnect epoch, and channel capabilities.
+  2. Operator can switch accel and gyro channels to validated SI values while raw counts remain available and unchanged.
+  3. Operator sees magnetometer values labelled in microtesla only when sensor sensitivity and calibration provenance validate; otherwise SI is explicitly unavailable.
+  4. Live and historical labels reflect only the authoritative applied mapping revision, exact segment, and frame, never a draft assignment.
+  5. Quaternion channels appear only for sources declaring valid quaternion capability, and missing or invalid orientation is visibly unavailable rather than fabricated.
 
-**Plans**: 6 plans
+**Plans**: TBD
+**UI hint**: yes
 
-Plans:
-**Wave 1**
+### Phase 27: Identity-Safe Multi-Sensor Ingestion
 
-- [x] 20-01-PLAN.md — Firmware full identity and confirmed non-blocking Identify
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 20-02-PLAN.md — Identity-confirmed relay sessions and DHCP-safe launch
-- [x] 20-04-PLAN.md — Hardware-only LED pin and active-level verification
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 20-03-PLAN.md — Stable canonical ROS topics and typed Identify service
-
-**Wave 4** *(blocked on Wave 3 completion)*
-
-- [x] 20-05-PLAN.md — Evidence-backed board activation and operator runbook
-
-**Wave 5** *(blocked on Wave 4 completion)*
-
-- [x] 20-06-PLAN.md — Final local and Master-plus-two-Slave acceptance
-
-### Phase 21: N-Route Relay and Canonical ROS Fleet
-
-**Goal**: Operators can observe and use every known IMU through failure-isolated, identity-keyed ROS routes.
-**Depends on**: Phase 20
-**Requirements**: ID-02, FLEET-01, FLEET-02, FLEET-03
+**Goal**: Operators can discover and follow every saved or connected ESP as an independent, stable signal source across reconnect and remap boundaries.
+**Depends on**: Phase 26
+**Requirements**: VIEW-01, VIEW-06
 **Success Criteria** (what must be TRUE):
 
-  1. Operator can see the Master and every current or previously known Slave in one MAC-keyed fleet registry with distinct discovery, command, route, orientation freshness, synchronization, and rate states.
-  2. Each device publishes canonical per-MAC IMU and health data on the same topics after DHCP, reconnect, or ordering changes, while fixed Master/Slave aliases remain explicitly bound to identities and carry matching data.
-  3. A failed, stale, or reconnecting route does not stop acquisition, health, Identify, or recording for other devices, and its bounded queue, drop, and reconnect diagnostics remain visible.
+  1. Operator sees connected and saved ESP sources populate automatically with full MAC, role, connection state, rate/errors, and applied body part, including stable offline entries.
+  2. Reconnecting a device produces an explicit visible gap and begins a new reconnect epoch instead of joining old and new samples silently.
+  3. Applying a remap begins a new provenance epoch, and already buffered samples retain their original applied labels rather than being relabelled.
 
-**Plans**: 6 plans
+**Plans**: TBD
+**UI hint**: yes
 
-Plans:
-- [x] 21-01-PLAN.md — Multi-slave relay + launcher discovery (route all verified ≤6)
-- [x] 21-02-PLAN.md — Fleet manager: canonical mac_ topics + layered registry
-- [x] 21-03-PLAN.md — Legacy aliases + pair health + single-process launch params
-- [x] 21-04-PLAN.md — Isolation diagnostics (drop_count, reconnect) + deterministic tests
-- [ ] 21-05-PLAN.md — Live TCP session loop: per-route connect/handshake/stream/Identify/Imu (gap closure)
-- [ ] 21-06-PLAN.md — Deterministic live-session contract tests (gap closure)
+### Phase 28: Bounded Signal Viewer and Controls
 
-### Phase 22: Model Catalog, Mapping Store, and Transactional Contracts
-
-**Goal**: Operators can create, save, restore, and atomically apply a valid mapping against the exact loaded OpenSim model.
-**Depends on**: Phase 21
-**Requirements**: MODEL-01, MODEL-02, MODEL-03, MAP-01, MAP-02, MAP-03, MAP-04, MAP-05, MAP-06
+**Goal**: Operators can responsively inspect and compare all available IMU channels while display choices remain isolated from authoritative data paths.
+**Depends on**: Phase 27
+**Requirements**: VIEW-02, VIEW-03, VIEW-04, VIEW-05, PERF-01, PERF-02
 **Success Criteria** (what must be TRUE):
 
-  1. The loaded `.osim` model is identified by the SHA-256 hash of its exact bytes, and assignment choices contain only exact non-Ground model segments and compatible sensor Frames reported by that model.
-  2. Missing, ambiguous, or unsupported Frames fail closed with an actionable reason and never trigger a fuzzy selection or source-model modification.
-  3. Operator can mark every known device Assigned, Not used, or Unassigned, while duplicate, unknown, incomplete, and solver-insufficient candidates are rejected authoritatively.
-  4. Desired mappings survive restart and corruption recovery under a versioned, revisioned, atomic backend store; the same MAC reattaches under an unchanged model/revision while a different MAC remains Unassigned.
-  5. Apply validates and stages the complete candidate against the expected revision, atomically swaps only on success, preserves the previous applied revision on failure, and remains blocked during calibration capture, recording, or finalization without altering that active operation.
+  1. Operator can view one ESP as stacked scrolling traces for all nine IMU components and any valid quaternion components, with synchronized time axes and persistent full-MAC/body-part labels.
+  2. Operator can compare selected ESPs or the same channel across devices without losing device identity or time alignment.
+  3. Operator can change group/channel visibility, raw or SI presentation, time window, local pause, vertical zoom/scale, and autoscale without interrupting incoming data.
+  4. Viewer pause, visibility, scaling, and display reduction leave acquisition, health/services, recording, and OpenSim input counts and behavior unchanged.
+  5. At the tested fleet/channel envelope, long-running memory stays bounded and extrema remain visible while the display sustains a responsive 20-30 FPS and exposes backlog, drops, freshness, and effective-rate diagnostics.
 
-**Plans**: 6 plans
+**Plans**: TBD
+**UI hint**: yes
 
-Plans:
+### Phase 29: Full-Rate Export Integrity
 
-**Wave 1**
-
-- [ ] 22-01-PLAN.md — ROS interface srv files (SetAssignment, ApplyMapping, GetMappingState, ResetMapping) + CMakeLists.txt
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [ ] 22-02-PLAN.md — model_catalog_node.py: SHA-256 identity, frame enumeration, /rehab/model/catalog publisher
-- [ ] 22-03-PLAN.md — mapping_node.py: assignment state machine, persistence, Apply + interlock, reconnect re-attach
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [ ] 22-04-PLAN.md — Offline tests for model_catalog_node (hash, frame enumeration, error cases)
-- [ ] 22-05-PLAN.md — Offline tests for mapping_node (all MAP-01–06 contracts, Apply state machine, interlock)
-
-**Wave 4** *(blocked on Wave 3 completion)*
-
-- [ ] 22-06-PLAN.md — Launch wiring: setup.py entry points + rehab_robotics.launch.py
-
-### Phase 23: N-Sensor Calibration and Official OpenSim IK
-
-**Goal**: Operators receive official OpenSim results only from a complete, current, provenance-matched mapped sensor set.
-**Depends on**: Phase 22
-**Requirements**: IK-01, IK-02, IK-03, IK-04
+**Goal**: Operators can retain authoritative full-rate multi-sensor evidence whose identity and values reconcile with the displayed traces.
+**Depends on**: Phase 28
+**Requirements**: EXP-01, EXP-02, EXP-03
 **Success Criteria** (what must be TRUE):
 
-  1. Applying or replacing a mapping creates one deterministic ordered N-sensor input set and tears down obsolete MAC-keyed subscriptions, callbacks, and queues without resource growth across repeated remaps.
-  2. Calibration artifacts identify the exact model hash, applied mapping revision, device-to-Frame assignments, and solver profile, and become invalid after any semantic change.
-  3. Joint states publish only when every required input is valid, fresh, post-reconnect, and within the synchronization-skew bound; degraded inputs suppress new IK output while acquisition and recording continue.
-  4. Official OpenSim orientation IK consumes mapped inputs in deterministic order and exposes mapping revision, calibration identity, input validity, solver status, and visualizer provenance.
+  1. Operator can record and export every configured canonical source at full received rate regardless of browser buffering, frame rate, visibility, pause, or display downsampling.
+  2. Exported samples preserve timestamp or sequence, full MAC, role, channel, raw and applicable SI values/units, mapping revision, segment, frame, and provenance epoch.
+  3. Automated reconciliation confirms that displayed trace identity, value, and time correspond to the authoritative export while allowing the display to render fewer points than were recorded.
 
-**Plans**: 5 plans
+**Plans**: TBD
 
-Plans:
+### Phase 30: Calibrated 3D Remap Acceptance
 
-**Wave 1** *(parallel — no dependencies between 23-01 and 23-02)*
-
-- [x] 23-01-PLAN.md — Dynamic N-sensor subscription management + solve_n() (IK-01)
-- [x] 23-02-PLAN.md — Calibration artifact store and capture service (IK-02)
-
-**Wave 2** *(blocked on 23-01 completion — needs _DeviceInput)*
-
-- [x] 23-03-PLAN.md — Sync-skew gate and reconnect freshness (IK-03)
-
-**Wave 3** *(blocked on 23-01, 23-02, 23-03 completion)*
-
-- [x] 23-04-PLAN.md — N-sensor IK wiring and extended output (IK-04)
-
-**Wave 4** *(blocked on all prior plans)*
-
-- [x] 23-05-PLAN.md — Launch wiring and integration smoke test (all IK requirements)
-
-### Phase 24: Rosbridge and Studio Mapping Workspace
-
-**Goal**: Operators can identify, assign, validate, save, and apply the multi-sensor mapping from a dedicated Studio workspace without browser state masquerading as runtime truth.
-**Depends on**: Phase 23
-**Requirements**: UI-01, UI-02, UI-03, UI-04
+**Goal**: Operators have retained physical evidence that applied full-MAC mappings determine which calibrated native OpenSim segment responds.
+**Depends on**: Phase 29
+**Requirements**: UAT-01, UAT-02, UAT-03, UAT-04
 **Success Criteria** (what must be TRUE):
 
-  1. Operator can open a dedicated mapping panel with stable rows for the Master, all known Slaves, and saved devices that are currently offline.
-  2. Each row shows full MAC, role and capabilities, layered readiness, rate and errors, a model-derived segment selector, an explicit Not used option, and a targeted Identify control.
-  3. Operator can distinguish Draft, Saved, Applied, and Runtime Ready states and receives immediate conflict feedback plus authoritative validation, interlock, and stale-revision errors.
-  4. Reload, reconnect, arbitrary status ordering, and temporary dropout preserve row identity and restore backend state without treating local browser state as applied truth.
+  1. Operator can Identify each physical ESP, apply a baseline mapping, recalibrate, move one sensor at a time, and retain evidence that the expected native OpenSim segment responds.
+  2. Operator can atomically swap two segment assignments in Studio, recalibrate, and retain evidence that the responding native OpenSim segments swap with the full-MAC devices.
+  3. After remap and reconnect, the same full MAC regains the expected applied label, export provenance, and observed 3D segment response without depending on role, route, or discovery order.
+  4. The acceptance evidence clearly limits its conclusion to routing and visual segment correspondence for the tested configuration and makes no clinical, anatomical-accuracy, or biomechanical-validity claim.
 
-**Plans**: 4 plans
-
-Plans:
-
-**Wave 1** *(parallel — both independent)*
-
-- [x] 24-01-PLAN.md — mappingStore.ts: Zustand store with all types, row identity, mappingStatus computation (TDD)
-- [x] 24-02-PLAN.md — RosbridgeDataSource extensions: 5 subscriptions + 4 service call methods (TDD)
-
-**Wave 2** *(blocked on 24-01 completion)*
-
-- [x] 24-03-PLAN.md — MappingWorkspace.tsx: full panel component with header, 9-column table, footer, all interactions
-
-**Wave 3** *(blocked on 24-01, 24-02, 24-03 completion)*
-
-- [x] 24-04-PLAN.md — App shell wiring: App.tsx Mapping tab + appDataSource.ts callbacks + integration smoke test
-
-### Phase 25: Multi-Device Compatibility and Promotion Gate
-
-**Goal**: Operators can rely on both dynamic and legacy workflows within a measured hardware envelope before dynamic mode is promoted.
-**Depends on**: Phase 24
-**Requirements**: COMP-01, COMP-02, COMP-03
-
-> **Gate status:** Gate OPEN — hardware evidence pending.
-
-**Plans**: 3 plans
-
-Plans:
-
-**Wave 1** *(parallel — independent files)*
-
-- [x] 25-01-PLAN.md — test_compat_legacy.py: legacy two-sensor workflow regression tests (COMP-01, TDD)
-- [x] 25-02-PLAN.md — test_acceptance.py: all 9 COMP-02 edge-case categories (COMP-02, TDD)
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 25-03-PLAN.md — hardware-acceptance-report.md + acceptance_gate.py + conditional use_fleet_bridge default flip (COMP-03)
-
-**Success Criteria** (what must be TRUE):
-
-  1. Existing two-sensor startup, pair health, frequency/range controls, recording, calibration, joint-state, graph, and visualizer workflows remain functional through explicit aliases and rollback mode.
-  2. Deterministic acceptance tests reproduce and pass full-MAC collision, arbitrary ordering, DHCP/reconnect, Identify failure, partial-Apply rollback, corrupt persistence, stale/skewed input, interlock, and repeated-cleanup cases.
-  3. Hardware acceptance states the supported fleet size and rates from Master-plus-multiple-Slave evidence covering Identify safety, acquisition and recording continuity, reconnect, radio/relay load, and OpenSim solve latency.
-  4. Dynamic mode becomes the default only when the documented acceptance gate passes; otherwise the tested legacy mode remains available with the unmet evidence visible.
+**Plans**: TBD
+**UI hint**: yes
 
 ## Progress
 
-**Execution Order:** Phase 20 -> Phase 21 -> Phase 22 -> Phase 23 -> Phase 24 -> Phase 25
+**Execution Order:** Phase 26 -> Phase 27 -> Phase 28 -> Phase 29 -> Phase 30
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 20. Full Identity and Confirmed Identify | 6/6 | Complete   | 2026-07-30 |
-| 21. N-Route Relay and Canonical ROS Fleet | 6/6 | Complete | 2026-08-05 |
-| 22. Model Catalog, Mapping Store, and Transactional Contracts | 6/6 | Complete | 2026-08-05 |
-| 23. N-Sensor Calibration and Official OpenSim IK | 5/5 | Complete | 2026-08-05 |
-| 24. Rosbridge and Studio Mapping Workspace | 4/4 | Complete   | 2026-08-05 |
-| 25. Multi-Device Compatibility and Promotion Gate | 3/3 | Complete | 2026-08-05 |
+| 26. Signal Contract and Provenance | 0/TBD | Not started | - |
+| 27. Identity-Safe Multi-Sensor Ingestion | 0/TBD | Not started | - |
+| 28. Bounded Signal Viewer and Controls | 0/TBD | Not started | - |
+| 29. Full-Rate Export Integrity | 0/TBD | Not started | - |
+| 30. Calibrated 3D Remap Acceptance | 0/TBD | Not started | - |
 
 ---
-*Roadmap created: 2026-07-30 for milestone v1.6*
+*Roadmap created: 2026-08-13 for milestone v1.7*
