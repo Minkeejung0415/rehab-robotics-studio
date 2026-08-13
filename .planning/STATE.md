@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.6
-milestone_name: Multi-Sensor Bone Mapping
-status: complete
-stopped_at: Completed 25-03-PLAN.md — Phase 25 VERIFIED
-last_updated: "2026-08-05T00:00:00.000Z"
-last_activity: 2026-08-05
+milestone: v1.7
+milestone_name: Multi-Sensor Signal Viewer & 3D Mapping Validation
+status: planning
+last_updated: "2026-08-13T07:05:08.178Z"
+last_activity: 2026-08-13
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 30
-  completed_plans: 30
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,13 +24,10 @@ See: `.planning/PROJECT.md` (updated 2026-07-30)
 
 ## Current Position
 
-Phase: 25 — COMPLETE (milestone v1.6 complete)
-Plan: 3 of 3 executed; verified inline
-Status: Milestone complete — all 6 phases done
-Last activity: 2026-08-05
-
-Progress: [██████████] 100%
-Verification: `.planning/phases/25-multi-device-compatibility-and-promotion-gate/25-VERIFICATION.md`
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-08-13 — Milestone v1.7 started
 
 ## Performance Metrics
 
@@ -123,6 +119,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-08-05T22:31:22.010Z
-Stopped at: Completed 24-01-PLAN.md
-Resume file: None
+Last session: 2026-08-12
+Stopped at: Session resumed, proceeding to final post-flash ESP32 → ROS → OpenSim → GUI verification
+Resume file: `.planning/.continue-here.md`

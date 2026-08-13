@@ -17,15 +17,17 @@ Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline 
 - Existing ROS 2 package scaffold and TCP ESP32 bridge are present, but the end-to-end hardware pipeline is not yet validated.
 - Paired Master/Slave ESP32 health and native IMU topics are visible through ROS 2 and Studio.
 - OpenSim calibration, orientation IK status, joint-state output, and native visualizer controls exist for the current two-sensor path.
+- v1.6 provides full-MAC fleet identity, model-derived sensor mapping, persistent desired/applied revisions, dynamic per-MAC OpenSim inputs, and a dedicated Studio mapping workspace.
+- Live hardware verification proved two mapped ESP inputs reconnect at approximately 100 Hz, remain fresh/synchronized, and can be swapped and restored through the GUI mapping workflow.
 
 ### Active
 
-- [ ] Discover every Master/Slave IMU currently visible through the ESP-NOW acquisition path and expose a stable hardware identity for each device.
-- [ ] Add a Studio sensor-mapping panel that assigns each connected IMU to a selectable segment from the loaded `.osim` model.
-- [ ] Identify a selected physical ESP by MAC/status and a temporary LED blink command.
-- [ ] Persist MAC-to-segment mappings per OpenSim model and restore them when devices reconnect.
-- [ ] Prevent two sensors from being assigned to the same model segment.
-- [ ] Route dynamically mapped IMU topics into calibration and OpenSim orientation IK with per-device health and clear error reporting.
+- [ ] Show every connected ESP as an automatically discovered, full-MAC and body-part-labelled signal source.
+- [ ] Show Open Ephys-style stacked live traces for ax/ay/az, gx/gy/gz, mx/my/mz, and optional qw/qx/qy/qz channels.
+- [ ] Let the operator control channel visibility, grouping, raw/SI units, time window, pause, zoom/scale, and autoscale without affecting acquisition or recording.
+- [ ] Keep rendering responsive through bounded buffering and display downsampling while preserving the full-rate recording path.
+- [ ] Prove displayed channel identity, exported data columns, full MAC, and applied body-part mapping remain consistent across remap and reconnect.
+- [ ] Prove on physical hardware that an applied Studio segment swap changes which OpenSim 3D model segment responds after recalibration.
 
 ### Out of Scope
 
@@ -38,21 +40,21 @@ Reliable live ESP32 motion data must flow through a reproducible ROS 2 pipeline 
 - Embedded Studio 3D rendering of the solved model - deferred; native OpenSim visualizer is used via an operator button.
 - Remaining unfinished v1.3 Acquisition Integrity phases - preserved as unfinished prior scope.
 
-## Current Milestone: v1.6 Multi-Sensor Bone Mapping
+## Current Milestone: v1.7 Multi-Sensor Signal Viewer & 3D Mapping Validation
 
-**Goal:** Let an operator discover all ESP-NOW IMUs, identify each physical device, assign it to a segment in the loaded OpenSim model, and run calibration/IK from the saved dynamic mapping.
+**Goal:** Let an operator inspect every raw IMU component as a responsive Open Ephys-style live trace and prove that displayed, recorded, mapped, and OpenSim 3D sensor identities agree end to end.
 
 **Target features:**
-- A dedicated multi-sensor mapping panel for the Master and every connected Slave.
-- Stable MAC-based device rows with live status and an **Identify** LED blink action.
-- Segment choices populated from the currently loaded `.osim` model.
-- One-sensor-per-segment validation with explicit incomplete/conflict states.
-- Per-model persisted mappings that automatically reattach by MAC after reconnect.
-- Dynamic ROS topic/health routing and OpenSim calibration/IK input construction for the applied mapping.
+- An automatically populated ESP/source selector labelled by full MAC and applied body part.
+- Stacked live traces for the nine accel/gyro/magnetometer components plus optional quaternion channels.
+- Per-group and per-channel visibility, raw/SI units, time-window, pause, zoom/scale, and autoscale controls.
+- Bounded browser buffers and display downsampling that do not reduce the full-rate recording path.
+- Recording/export provenance that retains channel, full-MAC, and applied body-part identity.
+- Hardware-backed calibrated 3D remap validation proving the UI assignment changes the responding OpenSim segment.
 
 ## Context
 
-The GUI and ROS 2 backend currently model acquisition as one fixed Master plus one fixed Slave. Firmware can already track several ESP-NOW peers, but the wireless relay, ROS bridge, status schema, OpenSim subscription path, and Studio data model collapse that topology back to two devices. v1.6 generalizes the full path around stable device identities and model-derived segment assignments without changing SD recording into an unreliable best-effort transport. Existing Phase 9 and Phase 15-19 artifacts remain preserved on disk.
+v1.6 generalized the prior fixed Master/Slave path into stable full-MAC fleet rows, authoritative model-derived mapping revisions, and dynamic per-MAC OpenSim inputs. Live testing subsequently exposed and fixed the GUI frame-option collision, atomic sensor-swap behavior, desired-versus-applied snapshot separation, mapping payload contract, and canonical typed per-MAC IMU path. v1.7 builds an operator-grade signal inspection surface on that corrected stream and closes the remaining visual proof that an applied segment remap drives the corresponding calibrated 3D model segment.
 
 ## Constraints
 
@@ -84,6 +86,9 @@ The GUI and ROS 2 backend currently model acquisition as one fixed Master plus o
 | Persist mappings by model identity and ESP MAC | Reconnecting hardware should restore the operator's prior assignment without depending on DHCP addresses | Active |
 | Identify hardware with status plus temporary LED blink | MAC addresses alone are difficult to match to physical sensors during setup | Active |
 | Enforce one sensor per segment | Duplicate orientation sources for one segment are ambiguous for calibration and IK | Active |
+| Use bounded display buffers with downsampling, independent from recording | Open Ephys-style traces must remain responsive without discarding full-rate recorded samples | Active |
+| Label every trace and export by full MAC plus applied body part | Role or connection order cannot safely identify a wearable sensor | Active |
+| Require calibrated physical 3D remap UAT | Topic and subscription checks alone do not prove the operator sees the intended model segment move | Active |
 
 ## Evolution
 
@@ -103,4 +108,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-30 - started v1.6 Multi-Sensor Bone Mapping*
+*Last updated: 2026-08-13 - started v1.7 Multi-Sensor Signal Viewer & 3D Mapping Validation*
