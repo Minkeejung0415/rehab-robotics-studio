@@ -83,7 +83,20 @@ Each TDD task was committed through RED and GREEN gates:
 
 ## Deviations from Plan
 
-None - plan executed exactly as written.
+### Auto-fixed Issues
+
+**1. [Rule 1 - Bug] Corrected inconsistent SDK progress metadata**
+- **Found during:** Plan close-out self-check
+- **Issue:** `state.update-progress` updated the visible progress bar to 83% but wrote `percent: 0` in STATE frontmatter and left milestone totals at four plans.
+- **Fix:** Aligned frontmatter and performance totals with five completed plans.
+- **Files modified:** `.planning/STATE.md`
+- **Verification:** `state.load` reports Plan 6 of 6 with five completed summaries and 83% visible progress.
+- **Committed in:** `2be6cd7`
+
+---
+
+**Total deviations:** 1 auto-fixed (1 bug).
+**Impact on plan:** Tracking-only correction; implementation scope and runtime behavior are unchanged.
 
 ## Issues Encountered
 
