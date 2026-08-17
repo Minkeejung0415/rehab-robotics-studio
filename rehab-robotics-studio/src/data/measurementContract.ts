@@ -164,24 +164,26 @@ export function validateSensorConfig(raw: unknown): ValidateResult<SensorConfig>
   // Check 2: all required keys must be present
   const requiredKeys = ['accel_range_g', 'gyro_range_dps', 'accel_lsb_per_g', 'gyro_lsb_per_dps', 'units'];
   for (const key of requiredKeys) {
-    if (!(key in obj)) {
+    if (!Object.prototype.hasOwnProperty.call(obj, key)) {
       return { ok: false, reason: `sensor_config is missing required key: '${key}'` };
     }
   }
 
-  const accelRangeG = obj['accel_range_g'] as number;
-  const gyroRangeDps = obj['gyro_range_dps'] as number;
+  const accelRangeG = obj['accel_range_g'];
+  const gyroRangeDps = obj['gyro_range_dps'];
   const accelLsb = obj['accel_lsb_per_g'] as number;
   const gyroLsb = obj['gyro_lsb_per_dps'] as number;
   const units = obj['units'];
 
   // Check 3: accel_range_g must be a supported value
-  if (!(accelRangeG in ACCEL_LSB_PER_G)) {
+  if (typeof accelRangeG !== 'number' || !Number.isInteger(accelRangeG)
+      || !Object.prototype.hasOwnProperty.call(ACCEL_LSB_PER_G, accelRangeG)) {
     return { ok: false, reason: `sensor_config accel_range_g ${String(accelRangeG)} is not supported; must be one of [2, 4, 8, 16]` };
   }
 
   // Check 4: gyro_range_dps must be a supported value
-  if (!(gyroRangeDps in GYRO_LSB_PER_DPS)) {
+  if (typeof gyroRangeDps !== 'number' || !Number.isInteger(gyroRangeDps)
+      || !Object.prototype.hasOwnProperty.call(GYRO_LSB_PER_DPS, gyroRangeDps)) {
     return { ok: false, reason: `sensor_config gyro_range_dps ${String(gyroRangeDps)} is not supported; must be one of [250, 500, 1000, 2000]` };
   }
 
@@ -217,7 +219,7 @@ export function validateSensorConfig(raw: unknown): ValidateResult<SensorConfig>
   if (units === null || typeof units !== 'object' || Array.isArray(units)) {
     return { ok: false, reason: "sensor_config units must be a non-null object" };
   }
-  if (!('raw' in (units as Record<string, unknown>))) {
+  if (!Object.prototype.hasOwnProperty.call(units, 'raw')) {
     return { ok: false, reason: "sensor_config units must contain at least a 'raw' key" };
   }
 

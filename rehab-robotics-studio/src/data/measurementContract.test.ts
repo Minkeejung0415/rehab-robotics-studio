@@ -128,6 +128,19 @@ describe('measurementContract — 09-02-01', () => {
 
   it('09-02-01 validateSensorConfig rejects each required rejection partition', () => {
 
+    for (const invalid of ['2', '__proto__', 'constructor', true, new Number(2)]) {
+      assert.equal(validateSensorConfig({
+        ...makeWireConfig(2, 250),
+        accel_range_g: invalid,
+      }).ok, false, `adversarial accel range ${String(invalid)} must be rejected`);
+    }
+    for (const invalid of ['250', '__proto__', 'constructor', false, new Number(250)]) {
+      assert.equal(validateSensorConfig({
+        ...makeWireConfig(2, 250),
+        gyro_range_dps: invalid,
+      }).ok, false, `adversarial gyro range ${String(invalid)} must be rejected`);
+    }
+
     // Partition 1: null
     assert.equal(validateSensorConfig(null).ok, false, 'null must be rejected');
 
