@@ -52,7 +52,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 26-04-PLAN.md — Validate dynamic rosbridge ingress and separate applied mapping state.
+- [x] 26-04-PLAN.md — Validate dynamic rosbridge ingress and separate applied mapping state.
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -159,7 +159,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 26. Signal Contract and Provenance | 3/6 | In Progress|  |
+| 26. Signal Contract and Provenance | 4/6 | In Progress|  |
 | 27. Full-Body Model and Mapping Vocabulary | 0/TBD | Not started | - |
 | 28. Fleet-Scale Identity-Safe Ingestion | 0/TBD | Not started | - |
 | 29. Bounded Signal Viewer and Controls | 0/TBD | Not started | - |
