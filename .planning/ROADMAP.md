@@ -16,7 +16,7 @@ Milestone v1.7 turns the corrected multi-sensor fleet path into an operator-grad
 
 ## Phases
 
-- [ ] **Phase 26: Signal Contract and Provenance** - Every channel sample has trustworthy identity, timing, capability, units, and applied-mapping meaning.
+- [x] **Phase 26: Signal Contract and Provenance** - Every channel sample has trustworthy identity, timing, capability, units, and applied-mapping meaning. (completed 2026-08-17)
 - [ ] **Phase 27: Full-Body Model and Mapping Vocabulary** - Studio exposes exact compatible Frames for all required head, trunk, arm, and leg segments.
 - [ ] **Phase 28: Fleet-Scale Identity-Safe Ingestion** - The required full-body sensor fleet reaches the viewer independently with measured capacity and explicit reconnect/remap boundaries.
 - [ ] **Phase 29: Bounded Signal Viewer and Controls** - Operators can inspect and compare responsive stacked traces without affecting authoritative data paths.
@@ -60,7 +60,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 26-06-PLAN.md — Deliver the accessible responsive Signal Contract inspector.
+- [x] 26-06-PLAN.md — Deliver the accessible responsive Signal Contract inspector.
 
 **UI hint**: yes
 
@@ -159,7 +159,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 26. Signal Contract and Provenance | 5/6 | In Progress|  |
+| 26. Signal Contract and Provenance | 6/6 | Complete   | 2026-08-17 |
 | 27. Full-Body Model and Mapping Vocabulary | 0/TBD | Not started | - |
 | 28. Fleet-Scale Identity-Safe Ingestion | 0/TBD | Not started | - |
 | 29. Bounded Signal Viewer and Controls | 0/TBD | Not started | - |

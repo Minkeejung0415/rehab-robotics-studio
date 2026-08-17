@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Multi-Sensor Signal Viewer & 3D Mapping Validation
-status: executing
-stopped_at: Completed 26-05-PLAN.md
-last_updated: "2026-08-17T02:19:59.398Z"
+status: verifying
+stopped_at: Completed 26-06-PLAN.md
+last_updated: "2026-08-17T17:24:43.633Z"
 last_activity: 2026-08-17
 progress:
   total_phases: 7
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 6
-  completed_plans: 5
-  percent: 83
+  completed_plans: 6
+  percent: 100
 ---
 
 # Project State
@@ -25,25 +25,25 @@ See: `.planning/PROJECT.md` (updated 2026-08-13)
 
 ## Current Position
 
-Phase: 26 (Signal Contract and Provenance) — EXECUTING
+Phase: 26 (Signal Contract and Provenance) — VERIFYING
 Plan: 6 of 6
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-08-17
 
-Progress: [████████░░] 83%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Current milestone:**
 
-- Plans completed: 5
-- Phases completed: 0/7
-- Average duration: 8min
-- Total execution time: 40min
+- Plans completed: 6
+- Phases completed: 1/7
+- Average duration: 2h 37min
+- Total execution time: 15h 41min
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 26-32 | 5 | 40min | 8min |
+| 26-32 | 6 | 15h 41min | 2h 37min |
 
 **Prior milestone reference:** v1.6 Phases 20-25 completed on 2026-08-05; detailed execution artifacts remain preserved.
 | Phase 26 P01 | 7min | 3 tasks | 5 files |
@@ -51,6 +51,7 @@ Progress: [████████░░] 83%
 | Phase 26 P03 | 11min | 3 tasks | 5 files |
 | Phase 26 P04 | 9min | 2 tasks | 4 files |
 | Phase 26 P05 | 5min | 2 tasks | 4 files |
+| Phase 26 P06 | 15h 1min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,9 @@ Decisions are logged in `PROJECT.md`. Current milestone decisions:
 - [Phase 26]: Canonical accepted and rejected callbacks remain separate from legacy Frame subscriptions and are silent while mock fallback is active.
 - [Phase 26]: SignalBus retains parser-owned immutable samples by exact full MAC and copies only snapshot maps at the bounded publication boundary.
 - [Phase 26]: Rejection totals and per-source metadata are bounded; repeated source/reason signatures suppress announcements without suppressing counts.
+- [Phase 26]: Raw/SI selection remains local to each source card and retained SI mode fails closed with em dashes when later validity disappears.
+- [Phase 26]: Signal Contract presentation remains pure for server rendering while Dashboard owns useSignals and bounded rejection logging.
+- [Phase 26]: Rejection feedback retains last accepted values and announces only changed per-source reason signatures.
 
 ### Pending Todos
 
@@ -102,6 +106,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-08-17T02:19:59.391Z
-Stopped at: Completed 26-05-PLAN.md
+Last session: 2026-08-17T17:24:43.623Z
+Stopped at: Completed 26-06-PLAN.md
 Resume file: None
