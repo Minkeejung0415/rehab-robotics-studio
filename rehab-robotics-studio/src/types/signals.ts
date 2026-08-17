@@ -90,3 +90,111 @@ export interface Frame {
    */
   openSimKneeAngleDeg?: number | null;
 }
+
+/** Stable, bounded reasons for rejecting an untrusted canonical envelope. */
+export type CanonicalSignalRejectionReason =
+  | 'schema_invalid'
+  | 'device_id_invalid'
+  | 'topic_device_mismatch'
+  | 'sequence_invalid'
+  | 'sequence_origin_invalid'
+  | 'acquisition_time_invalid'
+  | 'bridge_time_invalid'
+  | 'reconnect_epoch_invalid'
+  | 'mapping_epoch_invalid'
+  | 'capability_invalid'
+  | 'raw_field_missing'
+  | 'raw_field_invalid'
+  | 'raw_field_out_of_range'
+  | 'conversion_invalid'
+  | 'quaternion_invalid'
+  | 'applied_mapping_invalid';
+
+export type SignalAvailabilityReason =
+  | 'capability_absent'
+  | 'config_invalid'
+  | 'calibration_missing'
+  | 'calibration_invalid'
+  | 'stale'
+  | 'missing'
+  | 'malformed'
+  | 'non_finite'
+  | 'zero_norm'
+  | 'norm_out_of_range';
+
+export type ReadonlyVector3 = readonly [number, number, number];
+export type ReadonlyQuaternion = readonly [number, number, number, number];
+
+export interface CanonicalTiming {
+  readonly sequence: number;
+  readonly sequence_origin: 'device' | 'bridge_session';
+  readonly acquisition_time_us: number | null;
+  readonly acquisition_clock: string | null;
+  readonly bridge_monotonic_time_us: number;
+}
+
+export interface CanonicalEpochs {
+  readonly reconnect_epoch: number;
+  readonly mapping_epoch: number;
+}
+
+export interface CanonicalCapabilities {
+  readonly accel: boolean;
+  readonly gyro: boolean;
+  readonly magnetometer: boolean;
+  readonly quaternion: boolean;
+}
+
+export interface CanonicalRawChannels {
+  readonly ax: number;
+  readonly ay: number;
+  readonly az: number;
+  readonly gx: number;
+  readonly gy: number;
+  readonly gz: number;
+  readonly mx: number;
+  readonly my: number;
+  readonly mz: number;
+}
+
+export type CanonicalVectorAvailability<Unit extends string> =
+  | {
+      readonly available: true;
+      readonly unit: Unit;
+      readonly values: Readonly<{ x: number; y: number; z: number }>;
+    }
+  | { readonly available: false; readonly reason: SignalAvailabilityReason };
+
+export type CanonicalQuaternionAvailability =
+  | { readonly available: true; readonly values: ReadonlyQuaternion }
+  | { readonly available: false; readonly reason: SignalAvailabilityReason };
+
+export interface CanonicalConversions {
+  readonly accel: CanonicalVectorAvailability<'m/s^2'>;
+  readonly gyro: CanonicalVectorAvailability<'rad/s'>;
+  readonly magnetometer: CanonicalVectorAvailability<'µT'>;
+}
+
+export interface CanonicalAppliedMapping {
+  readonly revision: number;
+  readonly segment: string | null;
+  readonly frame: string | null;
+  readonly model_hash: string;
+}
+
+/** Browser-owned, immutable value produced only by the strict canonical parser. */
+export interface CanonicalSignalSample extends CanonicalTiming, CanonicalEpochs {
+  readonly schema: 'rehab.signal_sample.1';
+  readonly device_id: `esp32:${string}`;
+  readonly topic_token: `mac_${string}`;
+  readonly capabilities: CanonicalCapabilities;
+  readonly raw: CanonicalRawChannels;
+  readonly raw_units: 'counts';
+  readonly si: CanonicalConversions;
+  readonly quaternion: CanonicalQuaternionAvailability;
+  readonly applied_mapping: CanonicalAppliedMapping;
+}
+
+export type CanonicalSignalParseResult =
+  | { readonly ok: true; readonly value: CanonicalSignalSample }
+  | { readonly ok: false; readonly reason: CanonicalSignalRejectionReason | 'canonical_parser_unimplemented' };
