@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Multi-Sensor Signal Viewer & 3D Mapping Validation
 status: executing
-stopped_at: Completed 26-04-PLAN.md
-last_updated: "2026-08-17T02:09:47.307Z"
+stopped_at: Completed 26-05-PLAN.md
+last_updated: "2026-08-17T02:19:59.398Z"
 last_activity: 2026-08-17
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 6
-  completed_plans: 4
-  percent: 67
+  completed_plans: 5
+  percent: 0
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-08-13)
 ## Current Position
 
 Phase: 26 (Signal Contract and Provenance) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-08-17
 
-Progress: [███████░░░] 67%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
@@ -50,6 +50,7 @@ Progress: [███████░░░] 67%
 | Phase 26 P02 | 8min | 3 tasks | 5 files |
 | Phase 26 P03 | 11min | 3 tasks | 5 files |
 | Phase 26 P04 | 9min | 2 tasks | 4 files |
+| Phase 26 P05 | 5min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,9 @@ Decisions are logged in `PROJECT.md`. Current milestone decisions:
 - [Phase 26]: Mapping-current payloads validate draft and applied assignments independently and freeze the applied snapshot.
 - [Phase 26]: Canonical rosbridge topics derive only from normalized fleet full MAC identities; payload topic aliases are ignored.
 - [Phase 26]: Rejections emit bounded counts on every event while repeated identical source/reason announcements are suppressed.
+- [Phase 26]: Canonical accepted and rejected callbacks remain separate from legacy Frame subscriptions and are silent while mock fallback is active.
+- [Phase 26]: SignalBus retains parser-owned immutable samples by exact full MAC and copies only snapshot maps at the bounded publication boundary.
+- [Phase 26]: Rejection totals and per-source metadata are bounded; repeated source/reason signatures suppress announcements without suppressing counts.
 
 ### Pending Todos
 
@@ -98,6 +102,6 @@ None recorded.
 
 ## Session Continuity
 
-Last session: 2026-08-17T02:09:47.300Z
-Stopped at: Completed 26-04-PLAN.md
+Last session: 2026-08-17T02:19:59.391Z
+Stopped at: Completed 26-05-PLAN.md
 Resume file: None

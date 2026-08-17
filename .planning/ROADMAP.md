@@ -56,7 +56,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 26-05-PLAN.md — Carry latest accepted samples and bounded rejections through SignalBus.
+- [x] 26-05-PLAN.md — Carry latest accepted samples and bounded rejections through SignalBus.
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -159,7 +159,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 26. Signal Contract and Provenance | 4/6 | In Progress|  |
+| 26. Signal Contract and Provenance | 5/6 | In Progress|  |
 | 27. Full-Body Model and Mapping Vocabulary | 0/TBD | Not started | - |
 | 28. Fleet-Scale Identity-Safe Ingestion | 0/TBD | Not started | - |
 | 29. Bounded Signal Viewer and Controls | 0/TBD | Not started | - |
