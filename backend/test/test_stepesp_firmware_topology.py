@@ -123,6 +123,33 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
         cls.master = MASTER_SOURCE.read_text(encoding='utf-8')
         cls.slave = SLAVE_SOURCE.read_text(encoding='utf-8')
 
+    def test_signal_status_protocol_is_bounded_and_declared_by_both_roles(self):
+        required_literals = (
+            'SIGNAL_STATUS?', 'SIGNAL_STATUS_OK protocol=signal-cap-v1',
+            'device_id=%s', 'accel=%u', 'gyro=%u', 'magnetometer=%u',
+            'quaternion=%u', 'magnetometer_model=AK09916',
+            'magnetometer_sensitivity_uT_per_count=0.15',
+            'sequence_transport=none', 'acquisition_clock=none',
+        )
+        for role, source in (('master', self.master), ('slave', self.slave)):
+            with self.subTest(role=role):
+                for literal in required_literals:
+                    self.assertIn(literal, source, f'signal_status_protocol absent in {role}: {literal}')
+                body = function_body(source, 'handleLine')
+                self.assertIn('icm_ok', body)
+                self.assertIn('mag_ok', body)
+                self.assertIn('g_filter_on', body)
+
+    def test_signal_status_protocol_does_not_extend_binary_stream_record(self):
+        for role, source in (('master', self.master), ('slave', self.slave)):
+            with self.subTest(role=role):
+                body = struct_body(source, 'StreamRecord')
+                self.assertIn('uint32_t seq;', body)
+                self.assertIn('int16_t ch[NUM_CHANNELS];', body)
+                stream_body = function_body(source, 'streamWriteTask')
+                self.assertIn('rec.ch', stream_body)
+                self.assertNotIn('rec.seq', stream_body)
+
     def test_master_is_the_only_soft_ap_owner(self):
         self.assertEqual(define(self.master, 'WIFI_FORCE_SOFT_AP'), 'true')
         self.assertEqual(define(self.slave, 'WIFI_FORCE_SOFT_AP'), 'false')

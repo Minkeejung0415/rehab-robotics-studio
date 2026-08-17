@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import struct
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -81,6 +83,102 @@ LAYERED_FIELDS = (
     'synchronization',
     'rate',
 )
+
+
+class FleetSignalStatusProtocolTest(unittest.TestCase):
+    """Resolved source-capability and unchanged-frame contracts for Phase 26."""
+
+    DEVICE_ID = 'esp32:aabbccddeeff'
+    VALID_STATUS = (
+        'SIGNAL_STATUS_OK protocol=signal-cap-v1 '
+        'device_id=esp32:aabbccddeeff accel=1 gyro=1 magnetometer=1 '
+        'quaternion=1 magnetometer_model=AK09916 '
+        'magnetometer_sensitivity_uT_per_count=0.15 '
+        'sequence_transport=none acquisition_clock=none'
+    )
+
+    def _parser(self):
+        parser = getattr(fleet, 'parse_signal_status', None)
+        self.assertIsNotNone(
+            parser,
+            'signal_status_protocol absent: parse_signal_status is required',
+        )
+        return parser
+
+    def test_signal_status_protocol_accepts_only_identity_bound_device_facts(self):
+        parsed = self._parser()(self.VALID_STATUS, self.DEVICE_ID)
+        self.assertEqual(parsed['protocol'], 'signal-cap-v1')
+        self.assertEqual(parsed['device_id'], self.DEVICE_ID)
+        self.assertEqual(
+            parsed['capabilities'],
+            {'accel': True, 'gyro': True, 'magnetometer': True, 'quaternion': True},
+        )
+        self.assertEqual(parsed['magnetometer_model'], 'AK09916')
+        self.assertEqual(parsed['magnetometer_sensitivity_uT_per_count'], 0.15)
+        self.assertEqual(parsed['sequence_transport'], 'none')
+        self.assertEqual(parsed['acquisition_clock'], 'none')
+
+    def test_signal_status_protocol_rejects_old_malformed_duplicate_and_wrong_mac(self):
+        parser = self._parser()
+        cases = {
+            'old_firmware': 'STATUS icm_ok=1 mag_ok=1 filter=1',
+            'malformed': self.VALID_STATUS.replace(' accel=1', ' accel=yes'),
+            'duplicate': self.VALID_STATUS + ' accel=1',
+            'wrong_mac': self.VALID_STATUS.replace(self.DEVICE_ID, 'esp32:112233445566'),
+            'missing_field': self.VALID_STATUS.replace(' sequence_transport=none', ''),
+        }
+        for name, line in cases.items():
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                parser(line, self.DEVICE_ID)
+
+    def test_signal_status_protocol_route_capabilities_are_expectation_only(self):
+        parser = self._parser()
+        expected = {'accel': True, 'gyro': True, 'magnetometer': False, 'quaternion': True}
+        with self.assertRaisesRegex(ValueError, '^capability_expectation_mismatch$'):
+            parser(self.VALID_STATUS, self.DEVICE_ID, expected_capabilities=expected)
+        accepted = parser(self.VALID_STATUS, self.DEVICE_ID)
+        self.assertTrue(accepted['capabilities']['magnetometer'])
+
+    def test_signal_status_protocol_frame_bytes_remain_oe_header_plus_14_int16(self):
+        values = tuple(range(-7, 7))
+        payload = struct.pack('<14h', *values)
+        frame = fleet.OE_HEADER.pack(0, len(payload), 0, 2, 14, 1) + payload
+        self.assertEqual(len(frame), fleet.OE_HEADER_SIZE + 28)
+        self.assertEqual(frame[fleet.OE_HEADER_SIZE:], payload)
+        self.assertNotIn(struct.pack('<I', 0xA1B2C3D4), frame)
+        master_source = (Path(__file__).parents[2] / 'firmware' / 'step_node' / 'step_node.ino').read_text(encoding='utf-8')
+        self.assertIn('uint32_t seq;', master_source)
+        self.assertIn('struct StreamRecord', master_source)
+
+    def test_signal_status_protocol_calibration_authorizes_microtesla_only_when_valid(self):
+        loader = getattr(fleet, 'load_signal_calibrations', None)
+        self.assertIsNotNone(loader, 'signal_status_protocol absent: load_signal_calibrations is required')
+        valid = {
+            'schema': 'rehab.mag_calibration.1', 'device_id': self.DEVICE_ID,
+            'sensor_model': 'AK09916', 'axis_convention': 'xyz',
+            'calibration_id': 'lab-2026-08-16',
+            'calibration_hash': 'sha256:' + 'a' * 64,
+            'hard_iron_uT': [1.0, 2.0, 3.0],
+            'soft_iron': [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        }
+        invalid = {
+            'missing': None, 'hash_invalid': {**valid, 'calibration_hash': 'bad'},
+            'mac_mismatch': {**valid, 'device_id': 'esp32:112233445566'},
+            'axis_invalid': {**valid, 'axis_convention': 'zyx'},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / 'calibration.json'
+            path.write_text(json.dumps(valid), encoding='utf-8')
+            loaded = loader(str(path), expected_device_id=self.DEVICE_ID)
+            self.assertEqual(loaded[self.DEVICE_ID]['calibration_hash'], valid['calibration_hash'])
+            for name, artifact in invalid.items():
+                with self.subTest(name=name):
+                    if artifact is None:
+                        self.assertEqual(loader('', expected_device_id=self.DEVICE_ID), {})
+                        continue
+                    path.write_text(json.dumps(artifact), encoding='utf-8')
+                    with self.assertRaises(ValueError):
+                        loader(str(path), expected_device_id=self.DEVICE_ID)
 
 
 class FleetCanonicalTopicContractsTest(unittest.TestCase):
