@@ -1,5 +1,10 @@
 import type { DataSource, OpenSimDataSource } from './DataSource';
-import type { Frame, ImuData } from '../types/signals';
+import type {
+  CanonicalSignalRejectionReason,
+  CanonicalSignalSample,
+  Frame,
+  ImuData,
+} from '../types/signals';
 import type {
   OpenSimIkStatusSnapshot,
   OpenSimJointStateSnapshot,
@@ -24,6 +29,7 @@ import {
   gyroCountToRad_s,
   type SensorConfig,
 } from './measurementContract';
+import { parseCanonicalSignalSample } from './signalContract';
 
 type RawEspMessage = {
   topic_schema?: string;
@@ -65,6 +71,15 @@ const TRIGGER_SERVICE_TYPE = 'std_srvs/srv/Trigger';
 const SERVICE_TIMEOUT_MS = 10_000;
 const VISUALIZER_TIMEOUT_REASON = 'No response from the OpenSim service within 10 s';
 const QUAT_SCALE = 1 / 32767;
+const CANONICAL_TOPIC_PREFIX = '/esp/raw/';
+
+export interface CanonicalSignalRejection {
+  readonly device_id: `esp32:${string}` | null;
+  readonly reason: CanonicalSignalRejectionReason;
+  readonly rejected_at_ms: number;
+  readonly count: number;
+  readonly should_announce: boolean;
+}
 
 // Phase 24: Mapping workspace topic constants
 const MAPPING_CATALOG_TOPIC = '/rehab/model/catalog';
@@ -90,6 +105,15 @@ function numeric(value: unknown): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeFullMac(value: unknown): `esp32:${string}` | null {
+  if (typeof value !== 'string') return null;
+  let compact = value;
+  if (compact.startsWith('esp32:')) compact = compact.slice(6);
+  else if (/^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(compact)) compact = compact.replace(/:/g, '');
+  if (!/^[0-9a-fA-F]{12}$/.test(compact)) return null;
+  return `esp32:${compact.toLowerCase()}`;
 }
 
 function optionalFinite(value: unknown): number | null | undefined {
@@ -443,6 +467,11 @@ export function parseInputValidity(payload: unknown): InputValiditySnapshot | nu
 export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
   private socket: WebSocket | null = null;
   private listeners = new Set<(frame: Frame) => void>();
+  private canonicalAcceptedListeners = new Set<(sample: CanonicalSignalSample) => void>();
+  private canonicalRejectedListeners = new Set<(rejection: CanonicalSignalRejection) => void>();
+  private canonicalTopicTokens = new Map<string, `mac_${string}`>();
+  private canonicalRejectionCounts = new Map<string, number>();
+  private canonicalLastRejectionReason = new Map<string, CanonicalSignalRejectionReason>();
   private running = false;
   private paused = false;
   private connected = false;
@@ -491,6 +520,9 @@ export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
     this.receivedFrame = false;
     this.angleStabilizer.reset();
     if (this.socket) return;
+    this.canonicalTopicTokens.clear();
+    this.canonicalRejectionCounts.clear();
+    this.canonicalLastRejectionReason.clear();
     const generation = ++this.connectionGeneration;
     const socket = new WebSocket(this.url);
     this.socket = socket;
@@ -561,6 +593,16 @@ export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
   subscribe(callback: (frame: Frame) => void): () => void {
     this.listeners.add(callback);
     return () => this.listeners.delete(callback);
+  }
+
+  subscribeCanonicalAccepted(callback: (sample: CanonicalSignalSample) => void): () => void {
+    this.canonicalAcceptedListeners.add(callback);
+    return () => this.canonicalAcceptedListeners.delete(callback);
+  }
+
+  subscribeCanonicalRejected(callback: (rejection: CanonicalSignalRejection) => void): () => void {
+    this.canonicalRejectedListeners.add(callback);
+    return () => this.canonicalRejectedListeners.delete(callback);
   }
 
   setRecording(on: boolean): Promise<RecordingCommandResult> {
@@ -910,7 +952,10 @@ export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
         if (typeof envelope.msg.data !== 'string') return;
         try {
           const registry = parseFleetRegistry(JSON.parse(envelope.msg.data));
-          if (registry) this.onFleetRegistry?.(registry);
+          if (registry) {
+            this.reconcileCanonicalTopics(registry, generation, socket);
+            this.onFleetRegistry?.(registry);
+          }
         } catch { /* malformed JSON silently dropped */ }
         return;
       }
@@ -928,6 +973,35 @@ export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
           const validity = parseInputValidity(JSON.parse(envelope.msg.data));
           if (validity) this.onInputValidity?.(validity);
         } catch { /* malformed JSON silently dropped */ }
+        return;
+      }
+
+      const expectedTopicToken = typeof envelope.topic === 'string'
+        ? this.canonicalTopicTokens.get(envelope.topic)
+        : undefined;
+      if (expectedTopicToken) {
+        const deviceId = `esp32:${expectedTopicToken.slice(4)}` as `esp32:${string}`;
+        if (typeof envelope.msg.data !== 'string') {
+          this.emitCanonicalRejection(deviceId, 'schema_invalid');
+          return;
+        }
+        let raw: unknown;
+        try {
+          const transportPayload = JSON.parse(envelope.msg.data) as unknown;
+          raw = isRecord(transportPayload) ? transportPayload.sample_contract : undefined;
+        } catch {
+          this.emitCanonicalRejection(deviceId, 'schema_invalid');
+          return;
+        }
+        const result = parseCanonicalSignalSample(raw, expectedTopicToken);
+        if (!result.ok) {
+          this.emitCanonicalRejection(
+            deviceId,
+            result.reason === 'canonical_parser_unimplemented' ? 'schema_invalid' : result.reason,
+          );
+          return;
+        }
+        this.canonicalAcceptedListeners.forEach((listener) => listener(result.value));
         return;
       }
 
@@ -981,6 +1055,52 @@ export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
 
   private isCurrentSession(generation: number, socket: WebSocket): boolean {
     return generation === this.connectionGeneration && socket === this.socket;
+  }
+
+  private reconcileCanonicalTopics(
+    registry: FleetRegistrySnapshot,
+    generation: number,
+    socket: WebSocket | null,
+  ): void {
+    if (!socket || !this.connected || !this.isCurrentSession(generation, socket)) return;
+    const desired = new Map<string, `mac_${string}`>();
+    for (const row of registry.devices) {
+      const deviceId = normalizeFullMac(row.device_id);
+      if (!deviceId) continue;
+      const token = `mac_${deviceId.slice(6)}` as `mac_${string}`;
+      desired.set(`${CANONICAL_TOPIC_PREFIX}${token}`, token);
+    }
+    for (const topic of this.canonicalTopicTokens.keys()) {
+      if (!desired.has(topic)) socket.send(JSON.stringify({ op: 'unsubscribe', topic }));
+    }
+    for (const topic of desired.keys()) {
+      if (!this.canonicalTopicTokens.has(topic)) {
+        socket.send(JSON.stringify({ op: 'subscribe', topic, type: 'std_msgs/msg/String' }));
+      }
+    }
+    this.canonicalTopicTokens = desired;
+  }
+
+  private emitCanonicalRejection(
+    deviceId: `esp32:${string}` | null,
+    reason: CanonicalSignalRejectionReason,
+  ): void {
+    const sourceKey = deviceId ?? 'unknown';
+    const count = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      (this.canonicalRejectionCounts.get(sourceKey) ?? 0) + 1,
+    );
+    const shouldAnnounce = this.canonicalLastRejectionReason.get(sourceKey) !== reason;
+    this.canonicalRejectionCounts.set(sourceKey, count);
+    this.canonicalLastRejectionReason.set(sourceKey, reason);
+    const event = Object.freeze({
+      device_id: deviceId,
+      reason,
+      rejected_at_ms: Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.trunc(Date.now()))),
+      count,
+      should_announce: shouldAnnounce,
+    });
+    this.canonicalRejectedListeners.forEach((listener) => listener(event));
   }
 
   private rejectPendingServiceCalls(
