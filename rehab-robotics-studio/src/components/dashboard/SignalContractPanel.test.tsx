@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type {
   CanonicalSignalSample,
@@ -303,5 +306,19 @@ describe('Signal Contract panel composition', () => {
     assert.match(markup, /Canonical schema is invalid/);
     assert.match(markup, /role="status"/);
     assert.doesNotMatch(markup, /signal-source-card/);
+  });
+
+  it('keeps Signal Contract before Acquisition Health and applies the responsive visual contract', () => {
+    const sourceRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
+    const dashboard = readFileSync(join(sourceRoot, 'components/dashboard/Dashboard.tsx'), 'utf8');
+    const css = readFileSync(join(sourceRoot, 'styles/app.css'), 'utf8');
+    assert.ok(dashboard.indexOf('<SignalContractPanel') < dashboard.indexOf('<HealthPanel'));
+    assert.match(css, /\.dash-panel\.signal-contract-panel\s*{\s*padding: 8px;/);
+    assert.match(css, /grid-template-columns: 112px minmax\(0, 1fr\) 168px;/);
+    assert.match(css, /\.signal-source-list\s*{[^}]*gap: 24px;/s);
+    assert.match(css, /\.signal-source-card,[^{]+{[^}]*padding: 16px;/s);
+    assert.match(css, /@media \(max-width: 768px\)/);
+    assert.match(css, /@media \(max-width: 620px\)/);
+    assert.match(css, /outline: 2px solid #4a90d6;/);
   });
 });

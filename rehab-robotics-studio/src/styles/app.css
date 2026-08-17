@@ -755,6 +755,253 @@ select {
   background: #16191b;
 }
 
+.dash-panel.signal-contract-panel {
+  padding: 8px;
+}
+
+.signal-contract-summary,
+.signal-empty-state,
+.signal-source-header,
+.signal-channel-row,
+.signal-provenance,
+.signal-rejection-only {
+  font-size: 12px;
+}
+
+.signal-summary-rejected,
+.signal-rejection strong {
+  color: #ec5a5a;
+}
+
+.signal-empty-state {
+  display: grid;
+  gap: 4px;
+  padding: 16px;
+  color: #8b969c;
+}
+
+.signal-empty-state strong {
+  color: #dfe6ea;
+}
+
+.signal-source-list {
+  display: grid;
+  gap: 24px;
+}
+
+.signal-source-card,
+.signal-rejection-only {
+  min-width: 0;
+  border: 1px solid #23292d;
+  border-radius: 0;
+  padding: 16px;
+  background: #16191b;
+}
+
+.signal-source-header {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin-bottom: 12px;
+}
+
+.signal-source-header h4,
+.signal-applied-label {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 12px;
+}
+
+.signal-source-header h4 {
+  color: #dfe6ea;
+  font-weight: 600;
+}
+
+.signal-applied-label {
+  color: #dfe6ea;
+}
+
+.signal-epochs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  color: #8b969c;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+}
+
+.signal-unit-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.signal-unit-control .mini-btn[aria-pressed='true'] {
+  border-color: #4a90d6;
+  color: #4a90d6;
+}
+
+.signal-unit-control .mini-btn:disabled {
+  color: #5e686d;
+}
+
+.signal-control-reason,
+.signal-channel-reason {
+  color: #8b969c;
+}
+
+.signal-control-reason {
+  flex-basis: 100%;
+}
+
+.signal-channel-table {
+  display: grid;
+  border-top: 1px solid #23292d;
+  margin-bottom: 12px;
+}
+
+.signal-channel-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) 168px;
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+  border-bottom: 1px solid #23292d;
+  padding: 8px 0;
+}
+
+.signal-channel-group,
+.signal-channel-availability {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.signal-channel-group strong {
+  color: #dfe6ea;
+  font-weight: 600;
+}
+
+.signal-channel-values {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.signal-channel-value {
+  display: inline-flex;
+  gap: 6px;
+  min-width: 0;
+  color: #8b969c;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-channel-value strong,
+.signal-channel-unit {
+  color: #dfe6ea;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-channel-value .signal-value--unavailable,
+.signal-availability--unavailable {
+  color: #5e686d;
+}
+
+.signal-availability--available {
+  color: #46c47a;
+  border-color: #46c47a55;
+}
+
+.signal-availability--raw-only {
+  color: #e0a64a;
+  border-color: #e0a64a55;
+}
+
+.signal-availability--invalid {
+  color: #ec5a5a;
+  border-color: #ec5a5a55;
+}
+
+.signal-provenance-toggle[aria-expanded='true'] {
+  border-color: #4a90d6;
+  color: #4a90d6;
+}
+
+.signal-provenance {
+  margin-top: 8px;
+  border: 1px solid #30383d;
+  padding: 8px;
+  background: #111416;
+}
+
+.signal-provenance strong,
+.signal-rejection-only,
+.signal-rejection-time {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-rejection {
+  margin: 0 0 12px;
+}
+
+.signal-rejection-time {
+  color: #8b969c;
+}
+
+.signal-contract-panel button:focus-visible {
+  outline: 2px solid #4a90d6;
+  outline-offset: -2px;
+}
+
+@media (max-width: 768px) {
+  .signal-channel-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .signal-unit-control .mini-btn,
+  .signal-provenance-toggle {
+    min-height: 44px;
+  }
+
+  .signal-provenance {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 620px) {
+  .signal-source-header,
+  .signal-applied-label,
+  .signal-epochs,
+  .signal-provenance strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .signal-epochs {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signal-contract-panel *,
+  .signal-contract-panel *::before,
+  .signal-contract-panel *::after {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+    scroll-behavior: auto;
+    transition-duration: 0.01ms;
+  }
+}
+
 .health-panel {
   display: grid;
   gap: 10px;
