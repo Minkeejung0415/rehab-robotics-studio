@@ -1208,6 +1208,107 @@ describe('24-02 RosbridgeDataSource mapping service methods', () => {
   });
 });
 
+function makeCanonicalSample(deviceId = 'esp32:aabbccddeeff'): Record<string, unknown> {
+  return {
+    schema: 'rehab.signal_sample.1',
+    device_id: deviceId,
+    sequence: 42,
+    sequence_origin: 'bridge_session',
+    acquisition_time_us: null,
+    acquisition_clock: null,
+    bridge_monotonic_time_us: 123_456,
+    reconnect_epoch: 2,
+    mapping_epoch: 3,
+    capabilities: { accel: true, gyro: true, magnetometer: false, quaternion: false },
+    raw: { ax: 1, ay: 2, az: 3, gx: 4, gy: 5, gz: 6, mx: 7, my: 8, mz: 9 },
+    quaternion: null,
+    applied_mapping: { revision: 7, segment: 'femur_r', frame: 'femur_r_imu', model_hash: 'model-7' },
+  };
+}
+
+describe('26-04 canonical per-MAC rosbridge ingress', () => {
+  it('derives deduplicated subscriptions only from validated fleet full MACs', () => withSessionWebSockets(() => {
+    const ds = new RosbridgeDataSource('ws://localhost:9090', '/esp/raw/master', '/esp/raw/slave');
+    ds.start(100);
+    const socket = SessionWebSocket.instances[0]!;
+    socket.onopen?.();
+    socket.onmessage?.({ data: makePublishEnvelope('/esp/fleet/registry', JSON.stringify({
+      devices: [
+        { device_id: 'esp32:aabbccddeeff', topic_token: 'mac_spoofed' },
+        { device_id: 'AA:BB:CC:DD:EE:FF' },
+        { device_id: 'esp32:short' },
+      ],
+    })) });
+
+    const canonicalSubscriptions = socket.sent
+      .map((message) => JSON.parse(message) as { op?: string; topic?: string })
+      .filter((message) => message.op === 'subscribe' && message.topic === '/esp/raw/mac_aabbccddeeff');
+    assert.equal(canonicalSubscriptions.length, 1);
+    assert.equal(socket.sent.some((message) => message.includes('mac_spoofed')), false);
+    ds.stop();
+  }));
+
+  it('keeps accepted samples and bounded rejection events in separate callbacks', () => withSessionWebSockets(() => {
+    const ds = new RosbridgeDataSource('ws://localhost:9090', '/esp/raw/master', '/esp/raw/slave');
+    const accepted: unknown[] = [];
+    const rejected: Array<Record<string, unknown>> = [];
+    ds.subscribeCanonicalAccepted((sample) => accepted.push(sample));
+    ds.subscribeCanonicalRejected((event) => rejected.push(event as unknown as Record<string, unknown>));
+    ds.start(100);
+    const socket = SessionWebSocket.instances[0]!;
+    socket.onopen?.();
+    socket.onmessage?.({ data: makePublishEnvelope('/esp/fleet/registry', JSON.stringify({
+      devices: [{ device_id: 'esp32:aabbccddeeff' }],
+    })) });
+
+    const topic = '/esp/raw/mac_aabbccddeeff';
+    socket.onmessage?.({ data: makePublishEnvelope(topic, JSON.stringify({ sample_contract: makeCanonicalSample() })) });
+    assert.equal(accepted.length, 1);
+    assert.deepEqual((accepted[0] as { applied_mapping: unknown }).applied_mapping, {
+      revision: 7, segment: 'femur_r', frame: 'femur_r_imu', model_hash: 'model-7',
+    });
+
+    const mismatched = makeCanonicalSample('esp32:001122334455');
+    socket.onmessage?.({ data: makePublishEnvelope(topic, JSON.stringify({ sample_contract: mismatched })) });
+    socket.onmessage?.({ data: makePublishEnvelope(topic, JSON.stringify({ sample_contract: mismatched })) });
+    assert.equal(accepted.length, 1, 'rejections cannot emit or replace an accepted sample');
+    assert.deepEqual(rejected.map(({ device_id, reason, count, should_announce }) => ({
+      device_id, reason, count, should_announce,
+    })), [
+      { device_id: 'esp32:aabbccddeeff', reason: 'topic_device_mismatch', count: 1, should_announce: true },
+      { device_id: 'esp32:aabbccddeeff', reason: 'topic_device_mismatch', count: 2, should_announce: false },
+    ]);
+    assert.equal(Object.keys(rejected[0]!).some((key) => ['raw', 'detail', 'message', 'exception'].includes(key)), false);
+    ds.stop();
+  }));
+
+  it('unsubscribes removed fleet topics and rejects malformed JSON without leaking detail', () => withSessionWebSockets(() => {
+    const ds = new RosbridgeDataSource('ws://localhost:9090', '/esp/raw/master', '/esp/raw/slave');
+    const rejected: Array<Record<string, unknown>> = [];
+    ds.subscribeCanonicalRejected((event) => rejected.push(event as unknown as Record<string, unknown>));
+    ds.start(100);
+    const socket = SessionWebSocket.instances[0]!;
+    socket.onopen?.();
+    const publishFleet = (devices: unknown[]) => socket.onmessage?.({
+      data: makePublishEnvelope('/esp/fleet/registry', JSON.stringify({ devices })),
+    });
+    publishFleet([{ device_id: 'esp32:aabbccddeeff' }]);
+    publishFleet([{ device_id: 'esp32:001122334455' }]);
+
+    const operations = socket.sent.map((message) => JSON.parse(message) as { op?: string; topic?: string });
+    assert.ok(operations.some((message) => message.op === 'unsubscribe' && message.topic === '/esp/raw/mac_aabbccddeeff'));
+    assert.ok(operations.some((message) => message.op === 'subscribe' && message.topic === '/esp/raw/mac_001122334455'));
+
+    socket.onmessage?.({ data: makePublishEnvelope('/esp/raw/mac_001122334455', '{secret invalid json') });
+    assert.equal(rejected.length, 1);
+    assert.equal(rejected[0]?.device_id, 'esp32:001122334455');
+    assert.equal(rejected[0]?.reason, 'schema_invalid');
+    assert.equal(typeof rejected[0]?.rejected_at_ms, 'number');
+    assert.equal(JSON.stringify(rejected[0]).includes('secret'), false);
+    ds.stop();
+  }));
+});
+
 describe('systemStore - recording health synchronization', () => {
   it('reflects an already-active hardware session before another Rec click', () => {
     const store = useSystemStore.getState();
