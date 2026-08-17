@@ -38,7 +38,15 @@ Milestone v1.7 turns the corrected multi-sensor fleet path into an operator-grad
 3. Magnetometer values show microtesla only with validated sensitivity/calibration provenance; otherwise SI is explicitly unavailable.
 4. Labels use the authoritative applied revision and exact segment/frame, never drafts, while invalid quaternion data remains unavailable rather than fabricated.
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+- [ ] 26-01-PLAN.md — Define the immutable backend canonical contract and shared cross-language fixture.
+- [ ] 26-02-PLAN.md — Implement strict TypeScript contract and conversion parity.
+- [ ] 26-03-PLAN.md — Publish additive canonical envelopes with session and applied provenance.
+- [ ] 26-04-PLAN.md — Validate dynamic rosbridge ingress and separate applied mapping state.
+- [ ] 26-05-PLAN.md — Carry latest accepted samples and bounded rejections through SignalBus.
+- [ ] 26-06-PLAN.md — Deliver the accessible responsive Signal Contract inspector.
 **UI hint**: yes
 
 ### Phase 27: Full-Body Model and Mapping Vocabulary
