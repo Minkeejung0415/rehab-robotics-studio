@@ -8,11 +8,11 @@
 
 ### Signal Contract
 
-- [ ] **SIG-01**: Every viewer sample preserves full device MAC, acquisition timestamp or sequence, reconnect epoch, and channel-capability metadata.
-- [ ] **SIG-02**: Operator can inspect lossless raw counts for ax/ay/az, gx/gy/gz, and mx/my/mz and switch accelerometer and gyroscope channels to validated SI values.
-- [ ] **SIG-03**: Operator can view mx/my/mz in validated microtesla using an explicit sensor-sensitivity and magnetometer-calibration contract.
-- [ ] **SIG-04**: Viewer and export labels use only the authoritative applied mapping revision and exact segment/frame; an unsaved or saved draft never relabels live or historical samples.
-- [ ] **SIG-05**: Quaternion channels appear only when the source declares valid quaternion capability; missing or invalid orientation is never fabricated as an identity quaternion.
+- [x] **SIG-01**: Every viewer sample preserves full device MAC, acquisition timestamp or sequence, reconnect epoch, and channel-capability metadata.
+- [x] **SIG-02**: Operator can inspect lossless raw counts for ax/ay/az, gx/gy/gz, and mx/my/mz and switch accelerometer and gyroscope channels to validated SI values.
+- [x] **SIG-03**: Operator can view mx/my/mz in validated microtesla using an explicit sensor-sensitivity and magnetometer-calibration contract.
+- [x] **SIG-04**: Viewer and export labels use only the authoritative applied mapping revision and exact segment/frame; an unsaved or saved draft never relabels live or historical samples.
+- [x] **SIG-05**: Quaternion channels appear only when the source declares valid quaternion capability; missing or invalid orientation is never fabricated as an identity quaternion.
 
 ### Signal Viewer
 
@@ -77,11 +77,11 @@ Traceability is populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SIG-01 | Phase 26 | Pending |
-| SIG-02 | Phase 26 | Pending |
-| SIG-03 | Phase 26 | Pending |
-| SIG-04 | Phase 26 | Pending |
-| SIG-05 | Phase 26 | Pending |
+| SIG-01 | Phase 26 | Complete |
+| SIG-02 | Phase 26 | Complete |
+| SIG-03 | Phase 26 | Complete |
+| SIG-04 | Phase 26 | Complete |
+| SIG-05 | Phase 26 | Complete |
 | VIEW-01 | Phase 28 | Pending |
 | VIEW-02 | Phase 29 | Pending |
 | VIEW-03 | Phase 29 | Pending |

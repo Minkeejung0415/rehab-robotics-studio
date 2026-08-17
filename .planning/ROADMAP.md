@@ -43,7 +43,7 @@ Milestone v1.7 turns the corrected multi-sensor fleet path into an operator-grad
 Plans:
 **Wave 1**
 
-- [ ] 26-01-PLAN.md — Define the immutable backend canonical contract and shared cross-language fixture.
+- [x] 26-01-PLAN.md — Define the immutable backend canonical contract and shared cross-language fixture.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -159,7 +159,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 26. Signal Contract and Provenance | 0/TBD | Not started | - |
+| 26. Signal Contract and Provenance | 1/6 | In Progress|  |
 | 27. Full-Body Model and Mapping Vocabulary | 0/TBD | Not started | - |
 | 28. Fleet-Scale Identity-Safe Ingestion | 0/TBD | Not started | - |
 | 29. Bounded Signal Viewer and Controls | 0/TBD | Not started | - |
