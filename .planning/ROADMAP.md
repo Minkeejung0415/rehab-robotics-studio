@@ -41,12 +41,27 @@ Milestone v1.7 turns the corrected multi-sensor fleet path into an operator-grad
 **Plans**: 6 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 26-01-PLAN.md — Define the immutable backend canonical contract and shared cross-language fixture.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 26-02-PLAN.md — Implement strict TypeScript contract and conversion parity.
 - [ ] 26-03-PLAN.md — Publish additive canonical envelopes with session and applied provenance.
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 26-04-PLAN.md — Validate dynamic rosbridge ingress and separate applied mapping state.
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 26-05-PLAN.md — Carry latest accepted samples and bounded rejections through SignalBus.
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 26-06-PLAN.md — Deliver the accessible responsive Signal Contract inspector.
+
 **UI hint**: yes
 
 ### Phase 27: Full-Body Model and Mapping Vocabulary
