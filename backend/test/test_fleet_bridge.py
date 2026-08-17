@@ -10,9 +10,6 @@ import types
 import unittest
 from pathlib import Path
 
-from backend.test.test_esp32_controls import _load_bridge_module
-
-
 def _install_ros_stubs() -> None:
     _backend_root = str(Path(__file__).parents[1])
     if _backend_root not in sys.path:
@@ -40,12 +37,13 @@ def _install_ros_stubs() -> None:
     sys.modules.setdefault('sensor_msgs', sensor_msgs)
     sys.modules.setdefault('sensor_msgs.msg', sensor_msgs.msg)
 
-    std_msgs = types.ModuleType('std_msgs')
-    std_msgs.msg = types.ModuleType('std_msgs.msg')
+    std_msgs = sys.modules.setdefault('std_msgs', types.ModuleType('std_msgs'))
+    std_msgs.msg = sys.modules.setdefault(
+        'std_msgs.msg', getattr(std_msgs, 'msg', types.ModuleType('std_msgs.msg'))
+    )
     for name in ('Float32MultiArray', 'Header', 'String'):
-        setattr(std_msgs.msg, name, type(name, (), {'__init__': lambda self, **kw: None}))
-    sys.modules.setdefault('std_msgs', std_msgs)
-    sys.modules.setdefault('std_msgs.msg', std_msgs.msg)
+        if not hasattr(std_msgs.msg, name):
+            setattr(std_msgs.msg, name, type(name, (), {'__init__': lambda self, **kw: None}))
 
     std_srvs = types.ModuleType('std_srvs')
     std_srvs.srv = types.ModuleType('std_srvs.srv')
@@ -53,11 +51,14 @@ def _install_ros_stubs() -> None:
     sys.modules.setdefault('std_srvs', std_srvs)
     sys.modules.setdefault('std_srvs.srv', std_srvs.srv)
 
-    rehab_interfaces = types.ModuleType('rehab_robotics_interfaces')
-    rehab_interfaces.srv = types.ModuleType('rehab_robotics_interfaces.srv')
+    rehab_interfaces = sys.modules.setdefault(
+        'rehab_robotics_interfaces', types.ModuleType('rehab_robotics_interfaces')
+    )
+    rehab_interfaces.srv = sys.modules.setdefault(
+        'rehab_robotics_interfaces.srv',
+        getattr(rehab_interfaces, 'srv', types.ModuleType('rehab_robotics_interfaces.srv')),
+    )
     rehab_interfaces.srv.IdentifyDevice = type('IdentifyDevice', (), {})
-    sys.modules.setdefault('rehab_robotics_interfaces', rehab_interfaces)
-    sys.modules.setdefault('rehab_robotics_interfaces.srv', rehab_interfaces.srv)
 
 
 def _load_fleet_module():
@@ -70,6 +71,9 @@ def _load_fleet_module():
     spec.loader.exec_module(module)
     return module
 
+
+_install_ros_stubs()
+from backend.test.test_esp32_controls import _load_bridge_module
 
 bridge = _load_bridge_module()
 fleet = _load_fleet_module()

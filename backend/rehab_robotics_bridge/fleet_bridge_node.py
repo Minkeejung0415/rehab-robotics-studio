@@ -11,7 +11,7 @@ import time
 from collections import deque
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Mapping
 
 import rclpy
 from rclpy.node import Node
@@ -62,6 +62,10 @@ ALIAS_STATUS_MASTER_TOPIC = '/esp/status/master'
 ALIAS_STATUS_SLAVE_TOPIC = '/esp/status/slave'
 PAIR_HEALTH_TOPIC = '/esp/status/pair'
 PAIR_HEALTH_SCHEMA = 'oe_esp32.pair_health.v1'
+MAPPING_CURRENT_TOPIC = '/rehab/mapping/current'
+MAX_MAPPING_DEVICES = 256
+MAX_MAPPING_LABEL_BYTES = 64
+MAX_MODEL_HASH_BYTES = 128
 
 
 async def run_isolated_session_tasks(
@@ -139,6 +143,76 @@ def canonical_topic_paths(device_id: str) -> tuple[str, str]:
     """Return identity-stable raw and status topic paths for a device."""
     token = device_topic_token(device_id)
     return f'/esp/raw/{token}', f'/esp/status/{token}'
+
+
+class AppliedMappingCache:
+    """Strict immutable snapshots of authoritative ``applied_*`` mapping state."""
+
+    def __init__(self) -> None:
+        self.epoch = 0
+        self._revision = 0
+        self._model_hash = 'unavailable'
+        self._assignments: dict[str, tuple[str | None, str | None]] = {}
+        self._signature: tuple[Any, ...] | None = None
+
+    @staticmethod
+    def _label(value: object) -> str:
+        if not isinstance(value, str) or not value or len(value) > MAX_MAPPING_LABEL_BYTES:
+            raise ValueError('applied_mapping_invalid')
+        return value
+
+    def update(self, document: object) -> bool:
+        if not isinstance(document, Mapping):
+            raise ValueError('applied_mapping_invalid')
+        revision = document.get('applied_revision')
+        model_hash = document.get('model_hash')
+        assignments = document.get('applied_assignments')
+        if (isinstance(revision, bool) or not isinstance(revision, int)
+                or not 0 <= revision <= 2**53 - 1):
+            raise ValueError('applied_mapping_invalid')
+        if (not isinstance(model_hash, str) or not model_hash
+                or len(model_hash) > MAX_MODEL_HASH_BYTES):
+            raise ValueError('applied_mapping_invalid')
+        if not isinstance(assignments, Mapping) or len(assignments) > MAX_MAPPING_DEVICES:
+            raise ValueError('applied_mapping_invalid')
+
+        parsed: dict[str, tuple[str | None, str | None]] = {}
+        for raw_device_id, raw_entry in assignments.items():
+            if not isinstance(raw_device_id, str):
+                raise ValueError('applied_mapping_invalid')
+            device_id = normalize_device_id(raw_device_id)
+            if device_id != raw_device_id or not isinstance(raw_entry, Mapping):
+                raise ValueError('applied_mapping_invalid')
+            state = raw_entry.get('state')
+            if state == 'assigned':
+                parsed[device_id] = (
+                    self._label(raw_entry.get('segment')),
+                    self._label(raw_entry.get('frame')),
+                )
+            elif state in ('not_used', 'unassigned'):
+                parsed[device_id] = (None, None)
+            else:
+                raise ValueError('applied_mapping_invalid')
+
+        signature = (revision, model_hash, tuple(sorted(parsed.items())))
+        if signature == self._signature:
+            return False
+        self._revision = revision
+        self._model_hash = model_hash
+        self._assignments = parsed
+        self._signature = signature
+        self.epoch += 1
+        return True
+
+    def snapshot(self, device_id: str) -> dict[str, Any]:
+        canonical = normalize_device_id(device_id)
+        segment, frame = self._assignments.get(canonical, (None, None))
+        return {
+            'revision': self._revision,
+            'segment': segment,
+            'frame': frame,
+            'model_hash': self._model_hash,
+        }
 
 
 def parse_routes_json(raw: str) -> list[dict[str, Any]]:
@@ -771,7 +845,11 @@ class FleetBridgeNode(Node):
         )
         self._sessions = self._manager.sessions
         self._registry = self._manager.registry
+        self._mapping_cache = AppliedMappingCache()
         self._pub_registry = self.create_publisher(String, FLEET_REGISTRY_TOPIC, 10)
+        self._mapping_subscription = self.create_subscription(
+            String, MAPPING_CURRENT_TOPIC, self._on_mapping_current, 10
+        )
         period = float(self.get_parameter('registry_period_s').value)
         self._registry_timer = self.create_timer(max(0.1, period), self._publish_registry)
 
@@ -849,6 +927,13 @@ class FleetBridgeNode(Node):
 
     def _publish_registry(self) -> None:
         self._publish_registry_doc(self._manager.build_registry())
+
+    def _on_mapping_current(self, message: String) -> None:
+        """Accept only bounded authoritative applied state; drafts are ignored."""
+        try:
+            self._mapping_cache.update(json.loads(message.data))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            self.get_logger().warning('mapping provenance rejected: applied_mapping_invalid')
 
     async def _run_sessions(self) -> None:
         """Supervise one isolated TCP session task per configured route."""
