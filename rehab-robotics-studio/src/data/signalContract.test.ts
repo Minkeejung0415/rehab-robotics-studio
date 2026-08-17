@@ -89,5 +89,39 @@ describe('canonical signal contract shared-fixture parity', () => {
     mapping.segment = 'draft_injection';
     assert.notEqual(result.value.raw.ax, raw.ax);
     assert.notEqual(result.value.applied_mapping.segment, mapping.segment);
+    assert.equal(Object.isFrozen(result.value), true);
+    assert.equal(Object.isFrozen(result.value.raw), true);
+    assert.equal(Object.isFrozen(result.value.applied_mapping), true);
+  });
+
+  it('accepts a detached serialized canonical envelope at the browser boundary', () => {
+    const testCase = fixture.accepted[0];
+    const built = parseCanonicalSignalSample(applyCase(testCase), testCase.topic_token);
+    assert.equal(built.ok, true);
+    if (!built.ok) return;
+    const wireValue = JSON.parse(JSON.stringify(built.value)) as unknown;
+    const parsed = parseCanonicalSignalSample(wireValue, testCase.topic_token);
+    assert.deepEqual(parsed, built);
+    assert.notEqual(parsed.ok && parsed.value, wireValue);
+  });
+
+  it('rejects unknown availability codes and capability contradictions', () => {
+    const testCase = fixture.accepted[0];
+    const built = parseCanonicalSignalSample(applyCase(testCase), testCase.topic_token);
+    assert.equal(built.ok, true);
+    if (!built.ok) return;
+    const unknownReason = JSON.parse(JSON.stringify(built.value)) as Record<string, unknown>;
+    (unknownReason.si as Record<string, unknown>).accel = { available: false, reason: 'backend_detail' };
+    assert.deepEqual(parseCanonicalSignalSample(unknownReason, testCase.topic_token), {
+      ok: false,
+      reason: 'conversion_invalid',
+    });
+
+    const contradiction = JSON.parse(JSON.stringify(built.value)) as Record<string, unknown>;
+    (contradiction.capabilities as Record<string, unknown>).accel = false;
+    assert.deepEqual(parseCanonicalSignalSample(contradiction, testCase.topic_token), {
+      ok: false,
+      reason: 'conversion_invalid',
+    });
   });
 });
