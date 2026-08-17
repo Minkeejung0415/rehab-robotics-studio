@@ -5,6 +5,7 @@ status: draft
 nyquist_compliant: true
 wave_0_complete: false
 created: 2026-08-16
+updated: 2026-08-16
 ---
 
 # Phase 26 — Validation Strategy
@@ -19,7 +20,7 @@ created: 2026-08-16
 |----------|-------|
 | **Framework** | Python pytest 9.1.1 collecting `unittest`; Node `node:test` through `tsx` 4.23.1 |
 | **Config file** | Frontend commands in `rehab-robotics-studio/package.json`; no dedicated pytest config |
-| **Quick run command** | `$env:PYTHONPATH='backend'; python -m pytest backend/test/test_signal_contract.py backend/test/test_measurement_contract.py backend/test/test_fleet_bridge.py -q; Push-Location rehab-robotics-studio; npm exec -- tsx --test src/data/signalContract.test.ts src/data/measurementContract.test.ts src/state/mappingStore.test.ts; Pop-Location` |
+| **Quick run command** | `$env:PYTHONPATH='backend'; python -m pytest backend/test/test_signal_contract.py backend/test/test_measurement_contract.py backend/test/test_fleet_bridge.py backend/test/test_stepesp_firmware_topology.py -q; Push-Location rehab-robotics-studio; npm exec -- tsx --test src/data/signalContract.test.ts src/data/measurementContract.test.ts src/data/RosbridgeDataSource.test.ts src/data/signalBus.test.ts src/state/mappingStore.test.ts src/components/dashboard/SignalContractPanel.test.tsx; Pop-Location` |
 | **Full suite command** | `$env:PYTHONPATH='backend'; python -m pytest backend/test -q; Push-Location rehab-robotics-studio; npm test; npm run typecheck; Pop-Location` |
 | **Estimated runtime** | ~120 seconds |
 
@@ -27,7 +28,7 @@ created: 2026-08-16
 
 ## Sampling Rate
 
-- **After every task commit:** Run the quick contract and integration suite.
+- **After every task commit:** Run the task-specific command below, then the quick contract/integration suite when the task is GREEN.
 - **After every plan wave:** Run the full backend suite, frontend tests, and TypeScript typecheck.
 - **Before `$gsd-verify-work`:** Full suite must be green.
 - **Max feedback latency:** 120 seconds.
@@ -38,12 +39,22 @@ created: 2026-08-16
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 26-01-01 | 01 | 1 | SIG-01 | T-26-01 | MAC/topic agreement and identity/time/epoch/capability fields fail closed | shared fixture + unit | `python -m pytest backend/test/test_signal_contract.py -k identity_time -q` | ❌ W0 | ⬜ pending |
-| 26-01-02 | 01 | 1 | SIG-02 | T-26-02 | int16 raw counts remain exact and SI requires validated configuration | cross-language unit | `python -m pytest backend/test/test_measurement_contract.py -q` | ✅ extend | ⬜ pending |
-| 26-01-03 | 01 | 1 | SIG-03 | magnetometer SI remains unavailable without sensitivity and calibration provenance | shared fixture + unit | `python -m pytest backend/test/test_signal_contract.py -k magnetometer -q` | ❌ W0 | ⬜ pending |
-| 26-02-01 | 02 | 2 | SIG-04 | only applied assignments label accepted samples; old epochs remain immutable | integration + frontend unit | `python -m pytest backend/test/test_mapping_node.py backend/test/test_fleet_bridge.py -k applied -q` | ✅ extend | ⬜ pending |
-| 26-02-02 | 02 | 2 | SIG-05 | incapable and invalid quaternion states remain distinct; no identity fallback | shared fixture + unit | `python -m pytest backend/test/test_signal_contract.py -k quaternion -q` | ❌ W0 | ⬜ pending |
-| 26-02-03 | 02 | 2 | SIG-01..05 | Python and TypeScript accept/reject identical fixtures and reason codes | cross-language contract | `npm exec -- tsx --test src/data/signalContract.test.ts src/data/measurementContract.test.ts` | ❌ W0 | ⬜ pending |
+| 26-01-01 | 01 | 1 | SIG-01..05 | T-26-01..05 | Shared cases execute the builder and fail only on the intended unimplemented behavior | focused inverted RED | `$env:PYTHONPATH='backend'; $o=& python -m pytest backend/test/test_signal_contract.py -k identity_time -q 2>&1; $c=$LASTEXITCODE; $t=[string]::Join(' ', $o); if($c -ne 1 -or $t -notmatch 'canonical_validation_unimplemented'){throw 'wrong RED state'}` | ❌ W0 | ⬜ pending |
+| 26-01-02 | 01 | 1 | SIG-01, SIG-04, SIG-05 | T-26-01..04 | MAC/topic, timing/epoch, applied snapshot, bounded labels, and quaternion guards fail closed | Python unit | `python -m pytest backend/test/test_signal_contract.py -k "identity_time or quaternion or applied" -q` | ❌ W0 | ⬜ pending |
+| 26-01-03 | 01 | 1 | SIG-02, SIG-03 | T-26-02, T-26-05 | Exact raw int16 values and validated sensitivity/calibration SI gate | Python unit | `python -m pytest backend/test/test_measurement_contract.py backend/test/test_signal_contract.py -q` | ✅ extend/W0 | ⬜ pending |
+| 26-02-01 | 02 | 2 | SIG-01..05 | T-26-06..10 | Readonly TS contract and shared fixture establish only the intended parser RED state | focused inverted RED | `Push-Location rehab-robotics-studio; $o=& npm exec -- tsx --test src/data/signalContract.test.ts 2>&1; $c=$LASTEXITCODE; Pop-Location; $t=[string]::Join(' ', $o); if($c -ne 1 -or $t -notmatch 'canonical_parser_unimplemented'){throw 'wrong RED state'}` | ❌ W0 | ⬜ pending |
+| 26-02-02 | 02 | 2 | SIG-02, SIG-03 | T-26-07, T-26-10 | TS measurement validation and µT gating match Python | Node unit | `npm exec -- tsx --test src/data/measurementContract.test.ts` | ✅ extend | ⬜ pending |
+| 26-02-03 | 02 | 2 | SIG-01..05 | T-26-06..10 | Unknown JSON accepts/rejects identically across Python and TS | cross-language contract | `npm exec -- tsx --test src/data/signalContract.test.ts src/data/measurementContract.test.ts; npm run typecheck` | ❌ W0 | ⬜ pending |
+| 26-03-01 | 03 | 2 | SIG-01, SIG-03, SIG-05 | T-26-11, T-26-12, T-26-15 | Source capability protocol, unchanged frame bytes, and calibration gate establish intended RED assertions | focused inverted RED + byte contract | `$env:PYTHONPATH='backend'; $o=& python -m pytest backend/test/test_fleet_bridge.py backend/test/test_stepesp_firmware_topology.py -k signal_status_protocol -q 2>&1; $c=$LASTEXITCODE; $t=[string]::Join(' ', $o); if($c -ne 1 -or $t -notmatch 'signal_status_protocol'){throw 'wrong RED state'}` | ✅ extend | ⬜ pending |
+| 26-03-02 | 03 | 2 | SIG-04 | T-26-13, T-26-14 | Only applied snapshots increment mapping provenance; reconnect remains independent | backend integration | `python -m pytest backend/test/test_mapping_node.py backend/test/test_fleet_bridge.py -k "applied or provenance or reconnect" -q` | ✅ extend | ⬜ pending |
+| 26-03-03 | 03 | 2 | SIG-01..05 | T-26-11..15 | Identity-bound firmware status is the sole capability source; additive envelope uses honest timing | firmware/source + backend integration | `python -m pytest backend/test/test_signal_contract.py backend/test/test_measurement_contract.py backend/test/test_fleet_bridge.py backend/test/test_stepesp_firmware_topology.py -q` | ✅ extend | ⬜ pending |
+| 26-04-01 | 04 | 3 | SIG-04 | T-26-18, T-26-19 | Draft and bounded applied snapshots stay separate and atomic | Node store/integration | `npm exec -- tsx --test src/state/mappingStore.test.ts src/data/RosbridgeDataSource.test.ts` | ✅ extend | ⬜ pending |
+| 26-04-02 | 04 | 3 | SIG-01, SIG-04, SIG-05 | Dynamic topics enforce MAC agreement; rejections cannot reach accepted callbacks | Node integration | `npm exec -- tsx --test src/data/RosbridgeDataSource.test.ts src/data/signalContract.test.ts src/state/mappingStore.test.ts; npm run typecheck` | ✅ extend | ⬜ pending |
+| 26-05-01 | 05 | 4 | SIG-01 | T-26-21, T-26-22, T-26-25 | Accepted/rejected subscriptions stay separate; mock mode fabricates no source | Node unit | `npm exec -- tsx --test src/data/signalBus.test.ts src/data/RosbridgeDataSource.test.ts` | ❌ W0/extend | ⬜ pending |
+| 26-05-02 | 05 | 4 | SIG-01..05 | T-26-21..25 | Full-MAC latest state is immutable, bounded-rate, and rejection-retaining | Node unit | `npm exec -- tsx --test src/data/signalBus.test.ts src/data/signalContract.test.ts; npm run typecheck` | ❌ W0 | ⬜ pending |
+| 26-06-01 | 06 | 5 | SIG-02, SIG-03, SIG-04, SIG-05 | T-26-27..30 | Presentation never fabricates SI/quaternion and maps bounded availability copy accessibly | server-render + pure view-model unit | `npm exec -- tsx --test src/components/dashboard/SignalContractPanel.test.tsx; npm run typecheck` | ❌ W0 | ⬜ pending |
+| 26-06-02 | 06 | 5 | SIG-01, SIG-04 | T-26-26..30 | Persistent panel retains accepted values on rejection and renders applied identity first | component + bus unit | `npm exec -- tsx --test src/components/dashboard/SignalContractPanel.test.tsx src/data/signalBus.test.ts; npm run typecheck` | ❌ W0 | ⬜ pending |
+| 26-06-03 | 06 | 5 | SIG-01..05 | T-26-26..30 | Responsive production build and full phase contract stay green | full regression/build | `python -m pytest backend/test/test_signal_contract.py backend/test/test_measurement_contract.py backend/test/test_fleet_bridge.py backend/test/test_stepesp_firmware_topology.py -q; npm test; npm run typecheck; npm run build` | ✅ suite | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -53,10 +64,15 @@ created: 2026-08-16
 
 - [ ] `backend/test/fixtures/signal_contract_cases.json` — shared SIG-01..05 accept/reject/conversion/provenance cases.
 - [ ] `backend/test/test_signal_contract.py` — pure backend builder/validator tests without ROS.
-- [ ] `rehab-robotics-studio/src/data/signalContract.test.ts` — consumes the same fixture and asserts identical results/reason codes.
+- [ ] `rehab-robotics-studio/src/data/signalContract.test.ts` — shared-fixture TS acceptance and reason-code parity.
+- [ ] Focused firmware/fleet `signal_status_protocol` cases — old/no-response, valid, malformed, duplicate, MAC mismatch, route-expectation mismatch, and reconnect refresh.
+- [ ] Byte-level current-frame cases — exact `OeHeader + 14 int16` wire contract with no transmitted device sequence/time.
+- [ ] `rehab.mag_calibration.1` cases — valid, missing, invalid hash, MAC/sensor mismatch, invalid axes, and non-finite/bad-shape coefficients.
 - [ ] Extend `rehab-robotics-studio/src/state/mappingStore.test.ts` with differing draft/applied assignments.
-- [ ] Extend `backend/test/test_fleet_bridge.py` with reconnect generation, applied snapshot, capability, and time-origin publication assertions.
-- [ ] Add byte-level old/new stream fixtures only if firmware framing is extended.
+- [ ] Extend `backend/test/test_fleet_bridge.py` with reconnect generation, applied snapshot, source capability, calibration, and time-origin assertions.
+- [ ] `rehab-robotics-studio/src/data/signalBus.test.ts` — immutable latest-by-MAC and bounded rejection state.
+- [ ] `rehab-robotics-studio/src/components/dashboard/SignalContractPanel.test.tsx` — availability matrix, exact copy, accessibility, and server-render contract.
+- [ ] Keep firmware stream framing unchanged; any later negotiated extension requires separately approved old/new fixtures.
 
 ---
 
@@ -68,11 +84,13 @@ All Phase 26 behaviors have automated verification. Live ROS/hardware smoke evid
 
 ## Validation Sign-Off
 
-- [x] All anticipated tasks have automated verification or Wave 0 dependencies.
+- [x] All 16 actual plan tasks appear in the Per-Task Verification Map with automated verification or explicit Wave 0 dependencies.
 - [x] Sampling continuity: no 3 consecutive tasks without automated verification.
-- [x] Wave 0 covers all missing references.
+- [x] Wave 0 covers contract/parser/bus/panel files, source-status protocol cases, unchanged-frame byte cases, and calibration artifacts.
+- [x] RED tasks use explicit exit-code/output inversion and cannot pass on import/collection errors.
+- [x] Source capability origin and route-expectation mismatch are covered before canonical publication.
 - [x] No watch-mode flags.
-- [x] Feedback latency < 120s.
+- [x] Feedback latency ≤ 120s.
 - [x] `nyquist_compliant: true` set in frontmatter.
 
-**Approval:** approved 2026-08-16 for planning; execution remains pending.
+**Approval:** approved 2026-08-16 for revised planning; execution remains pending.

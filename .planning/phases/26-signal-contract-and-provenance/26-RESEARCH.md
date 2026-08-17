@@ -58,7 +58,7 @@
 
 Phase 26 should create one immutable, versioned `CanonicalSignalSample` contract at the native per-MAC publication boundary, validate the same wire shape in Python and TypeScript, and attach all context needed by later viewer/export consumers at ingestion time. The raw signed counts remain authoritative; SI fields are derived only from a validated configuration snapshot; capability, transient validity, timing origin, reconnect generation, and applied mapping are explicit data rather than UI inference. [VERIFIED: codebase `fleet_bridge_node.py`, `measurement_contract.py`, `RosbridgeDataSource.ts`; VERIFIED: `26-CONTEXT.md`]
 
-The present pipeline is close but not sufficient. Fleet JSON already carries full `device_id`, nine raw axes, quaternion counts, bridge-local `seq`, bridge monotonic `time_us`, and accel/gyro configuration. However, it does not attach reconnect generation, applied mapping, declared sensor capabilities, magnetometer calibration provenance, or time-domain labels. Firmware sequence is appended to `StreamRecord` but the fleet decoder discards it; no acquisition timestamp exists in that live record. The browser parser also converts absent/malformed values through `numeric(...)` to zero, falls back to `performance.now()`, always emits quaternion fields, and collapses the two role aliases into one derived `Frame`. [VERIFIED: codebase `fleet_bridge_node.py:1085-1154`, firmware `step_node*.ino` `StreamRecord`, `RosbridgeDataSource.ts:27-33,259-287`]
+The present pipeline is close but not sufficient. Fleet JSON already carries full `device_id`, nine raw axes, quaternion counts, bridge-local `seq`, bridge monotonic `time_us`, and accel/gyro configuration. However, it does not attach reconnect generation, applied mapping, declared sensor capabilities, magnetometer calibration provenance, or time-domain labels. Firmware stores `StreamRecord.seq` internally but the TCP/UDP/serial binary writer deliberately transmits only `OeHeader + 14 int16 channels`; no device sequence or acquisition timestamp exists on the live wire. The browser parser also converts absent/malformed values through `numeric(...)` to zero, falls back to `performance.now()`, always emits quaternion fields, and collapses the two role aliases into one derived `Frame`. [VERIFIED: codebase `fleet_bridge_node.py:1085-1154`, firmware `step_node*.ino` `streamWriteTask`, `RosbridgeDataSource.ts:27-33,259-287`]
 
 The applied-mapping seam requires a deliberate correction: backend `/rehab/mapping/current` publishes both draft `assignments` and immutable `applied_assignments`, but the current TypeScript snapshot/store parses only `assignments` into `backendSegment/backendFrame`. That is correct for the mapping editor but unsafe for signal labels. Signal normalization needs a distinct applied-snapshot cache and must copy its values into samples; it must never look up the current store when rendering historical data. [VERIFIED: codebase `mapping_node.py:421-442,737-743`, `mappingStore.ts:23-29,200-252`]
 
@@ -140,6 +140,8 @@ backend/rehab_robotics_bridge/
 ├── measurement_contract.py       # extend config + deterministic SI helpers
 ├── signal_contract.py            # canonical sample builder/validator, no ROS imports
 ├── fleet_bridge_node.py           # attach session, capability, time, mapping snapshots
+backend/config/
+├── signal_calibrations.json       # optional rehab.mag_calibration.1 artifact keyed by full MAC
 backend/test/
 ├── fixtures/signal_contract_cases.json
 ├── test_signal_contract.py
@@ -286,7 +288,7 @@ interface CanonicalSignalSample {
 
 **Why it happens:** The Open Ephys header describes only 14 int16 channels; the decoder consumes header plus channel payload, not the appended uint32. [VERIFIED: codebase]
 
-**How to avoid:** Plan an explicit compatible stream framing update or label the current counter `bridge_session` and do not claim device sequence. Add byte-level fixture tests for old and extended frames. [VERIFIED: codebase; recommendation]
+**How to avoid:** Keep the current frame bytes locked by a byte-level fixture, label the backend counter `bridge_session`, set acquisition facts unavailable, and do not claim device sequence. Any later device-sequence transport requires a separately negotiated schema and old/new byte fixtures. [DECIDED: resolved compatibility contract]
 
 **Warning signs:** Device sequence gaps never appear even when firmware stream queue reports drops. [VERIFIED: firmware/backend separation]
 
@@ -410,22 +412,21 @@ mapping = {
 | A2 | An additive nested envelope is preferable to a new ROS custom message in this phase. [ASSUMED] | Standard Stack / Pattern 5 | Medium; a custom message would change plan/task boundaries and launch/interface work. |
 | A3 | Exact quaternion norm thresholds can align with the existing OpenSim validator after fixture review. [ASSUMED] | Pattern 2 / Code Examples | Medium; wrong tolerances could suppress valid quantized values or accept corrupted ones. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **How will live source capability reach each fleet session?**
-   - What we know: firmware diagnostics contain `icm_ok`, `mag_ok`, `filter`, and slave `quat_enabled`, while identity capability bits currently cover Identify only; fleet raw JSON carries none of these declarations. [VERIFIED: firmware and fleet code]
-   - What's unclear: whether the preferred compatible change is an extended stream header, a verified status query at bind/config changes, or new identity capability bits. [VERIFIED: codebase gap]
-   - Recommendation: make this a Wave 0 protocol decision and byte-level fixture; do not infer capability from channel contents. [VERIFIED: locked decision]
+1. **Live source capability transport — resolved to a verified firmware status query.**
+   - Add the bounded ASCII request `SIGNAL_STATUS?` and response `SIGNAL_STATUS_OK protocol=signal-cap-v1 device_id=<canonical-full-mac> accel=<0|1> gyro=<0|1> magnetometer=<0|1> quaternion=<0|1> mag_sensor=<AK09916|none> mag_sensitivity_uT_per_lsb=<finite-positive|none> sequence_transport=none acquisition_clock=none`. Firmware derives these declarations from initialized `icm_ok`, `mag_ok`, and filter/quaternion state, not from channel values. The fleet handshake issues the query only after `IDENTITY_OK` has bound the exact full MAC; response MAC disagreement, timeout, duplicate keys, unknown protocol, invalid booleans, or unbounded fields blocks canonical publication for that session while preserving the legacy path. Re-query on every reconnect and after a successful configuration change that can alter capability. [DECIDED: source-originated, identity-bound, fail closed]
+   - `routes_json` may contain optional `expected_signal_capabilities` for deployment assertions only. The backend compares those expectations with the verified `SIGNAL_STATUS_OK` declaration; it never promotes route values into sample capability. Any mismatch blocks canonical publication with `capability_expectation_mismatch`. [DECIDED: route configuration is non-authoritative]
+   - This is a control-line extension, not a binary frame change. Old firmware that does not answer is explicitly canonical-incompatible and continues only on the existing legacy stream; tests cover old/no-response, malformed, MAC-mismatch, expectation-mismatch, and valid `signal-cap-v1` responses. [DECIDED: backward-compatible legacy behavior]
 
-2. **Can acquisition time and device sequence be added without breaking old stream readers?**
-   - What we know: device `seq` exists in `StreamRecord` but is not decoded; acquisition time is absent from live `StreamRecord`, though recording rows contain `time_us`. [VERIFIED: firmware/backend]
-   - What's unclear: the exact backward-compatible framing/version negotiation. [VERIFIED: codebase gap]
-   - Recommendation: preserve current bridge-session sequence/time with honest origins immediately, then add versioned device metadata only if byte framing can be proven against old/new fixtures. SIG-01 can fail closed without pretending bridge time is acquisition time. [VERIFIED: requirements; recommendation]
+2. **Acquisition time and device sequence compatibility — resolved without changing live binary framing.**
+   - Phase 26 keeps the existing wire bytes exactly `OeHeader + 14 little-endian int16 channels`. Although `StreamRecord.seq` exists in the firmware queue object, `streamWriteTask` does not transmit it, and no acquisition timestamp is present. Therefore canonical samples set `sequence` to the backend frame counter with `sequence_origin='bridge_session'`, set `acquisition_time_us=null` and `acquisition_clock=null`, and carry `bridge_monotonic_time_us` separately. They make no device-sequence or synchronization claim. [DECIDED: honest machine-readable fallback]
+   - Byte-level regression fixtures assert the exact current frame length/content and parser resynchronization; there is no old/new frame fixture because no framing change is authorized. A later versioned framing change must use a new negotiated stream schema plus old/new byte fixtures before device sequence/time may be labelled as supplied. [DECIDED: compatibility boundary]
 
-3. **What calibration artifact authorizes magnetometer SI?**
-   - What we know: deployed firmware names AK09916 and uses 0.15 units/LSB; no hard-/soft-iron calibration contract was found in firmware, backend, or frontend. [VERIFIED: codebase]
-   - What's unclear: coefficient source, axis convention, calibration procedure, persistence, ID/hash, validity dates/temperature scope. [VERIFIED: gap]
-   - Recommendation: implement the schema and unavailable path now; enable microtesla only when an explicit validated artifact is supplied. Do not block raw magnetometer delivery. [VERIFIED: locked decision]
+3. **Magnetometer calibration artifact — resolved to `rehab.mag_calibration.1`.**
+   - The fleet node accepts an optional `signal_calibration_path` pointing to one bounded JSON document with schema `rehab.mag_calibration.1` and entries keyed by canonical full MAC. Each entry requires `device_id`, `sensor_model='AK09916'`, finite positive `sensitivity_uT_per_lsb`, `axis_order` (a permutation of x/y/z), `axis_sign` (three values each ±1), finite `hard_iron_uT[3]`, finite `soft_iron_matrix[3][3]`, bounded `artifact_id`, and lowercase 64-hex `artifact_sha256` computed over the canonical entry excluding the hash field. [DECIDED: explicit persisted provenance]
+   - At bind, the entry full MAC, sensor model, and sensitivity must agree with verified `SIGNAL_STATUS_OK`; hash, dimensions, axis convention, and coefficients must validate. Conversion applies the declared axis permutation/sign, subtracts `hard_iron_uT`, then applies the soft-iron matrix to sensitivity-scaled counts. Missing artifact yields `calibration_missing`; any mismatch/invalid field yields `calibration_invalid`. In both cases raw magnetometer counts remain available and µT remains unavailable. [DECIDED: deterministic fail-closed conversion]
+   - Synthetic valid/invalid artifacts exercise conversion in tests. No deployed artifact is invented by this phase; runtime µT activates only when the operator supplies an artifact satisfying this contract. [DECIDED: no fabricated calibration]
 
 ## Environment Availability
 
@@ -479,7 +480,9 @@ Baseline evidence: existing focused backend measurement/fleet/mapping suite pass
 - [ ] `backend/test/fixtures/signal_contract_cases.json` — shared accept/reject/conversion/provenance cases for SIG-01..05. [ASSUMED: proposed path]
 - [ ] `backend/test/test_signal_contract.py` — pure backend builder/validator tests without ROS. [ASSUMED: proposed path]
 - [ ] `rehab-robotics-studio/src/data/signalContract.test.ts` — consumes the same JSON fixture and asserts identical reason codes/results. [ASSUMED: proposed path]
-- [ ] Byte-level old/new stream-frame fixture if firmware sequence/capability framing is extended. [ASSUMED: protocol decision dependent]
+- [ ] Byte-level current stream-frame fixture proving the unchanged `OeHeader + 14 int16` wire contract and that no internal `StreamRecord.seq` bytes are claimed as transmitted. [DECIDED: no framing extension]
+- [ ] Firmware/fleet control-line fixtures for old/no-response and valid/malformed/MAC-mismatched `signal-cap-v1` responses. [DECIDED: source-originated capability protocol]
+- [ ] Valid, missing, hash-invalid, MAC-mismatched, axis-invalid, and coefficient-invalid `rehab.mag_calibration.1` fixtures. [DECIDED: calibration gate]
 - [ ] Extend `mappingStore.test.ts` with payloads where `assignments` differs from `applied_assignments`. [VERIFIED: identified gap]
 - [ ] Extend `test_fleet_bridge.py` with reconnect generation, applied snapshot, capability, and time-origin publication assertions. [VERIFIED: identified gap]
 
