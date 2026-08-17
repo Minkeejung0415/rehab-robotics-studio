@@ -1,0 +1,74 @@
+{
+  "schema": "rehab.signal_contract_cases.1",
+  "trace_decisions": {
+    "D-01": "full MAC identity", "D-02": "honest acquisition timing",
+    "D-03": "explicit capabilities", "D-04": "bounded timing validation",
+    "D-05": "lossless signed raw counts", "D-06": "validated acceleration SI",
+    "D-07": "validated angular-rate SI", "D-08": "calibrated magnetometer SI only",
+    "D-09": "applied mapping snapshot only", "D-10": "drafts never relabel samples",
+    "D-11": "mapping epoch preserves history", "D-12": "unassigned stays explicit",
+    "D-13": "explicit quaternion capability", "D-14": "invalid quaternion unavailable",
+    "D-15": "no identity fallback", "D-16": "consumers cannot manufacture orientation"
+  },
+  "requirement_partitions": {
+    "SIG-01": ["identity_time_device", "identity_time_bridge", "device_id_malformed", "topic_mismatch", "sequence_fractional", "reconnect_negative"],
+    "SIG-02": ["raw_int16_edges", "raw_fractional", "raw_out_of_range", "raw_missing"],
+    "SIG-03": ["mag_calibration_missing", "mag_calibration_invalid", "mag_calibrated"],
+    "SIG-04": ["applied_snapshot", "applied_unassigned", "draft_provenance", "mapping_label_overlong", "model_hash_overlong"],
+    "SIG-05": ["quaternion_capability_absent", "quaternion_stale", "quaternion_missing", "quaternion_malformed", "quaternion_non_finite", "quaternion_zero_norm", "quaternion_norm_out_of_range", "quaternion_available"]
+  },
+  "base_input": {
+    "schema": "rehab.signal_sample.1",
+    "device_id": "esp32:aabbccddeeff",
+    "sequence": 42,
+    "sequence_origin": "device",
+    "acquisition_time_us": 123456,
+    "acquisition_clock": "device_monotonic",
+    "bridge_monotonic_time_us": 789012,
+    "reconnect_epoch": 2,
+    "mapping_epoch": 3,
+    "capabilities": {"accel": true, "gyro": true, "magnetometer": true, "quaternion": true},
+    "raw": {"ax": -32768, "ay": 32767, "az": 0, "gx": -1, "gy": 1, "gz": 2, "mx": -3, "my": 4, "mz": 5},
+    "quaternion": {"status": "available", "values": [0.5, -0.5, 0.5, -0.5]},
+    "applied_mapping": {"revision": 7, "segment": "femur_r", "frame": "femur_r_imu", "model_hash": "sha256:0123456789abcdef"}
+  },
+  "accepted": [
+    {"id": "identity_time_device", "traces": ["D-01", "D-02", "D-03", "D-04"], "topic_token": "mac_aabbccddeeff", "overrides": {}, "expect": {"device_id": "esp32:aabbccddeeff", "sequence_origin": "device", "acquisition_time_us": 123456}},
+    {"id": "identity_time_bridge", "traces": ["D-02", "D-04"], "topic_token": "mac_aabbccddeeff", "overrides": {"sequence_origin": "bridge_session", "acquisition_time_us": null, "acquisition_clock": null}, "expect": {"sequence_origin": "bridge_session", "acquisition_time_us": null, "acquisition_clock": null}},
+    {"id": "raw_int16_edges", "traces": ["D-05"], "topic_token": "mac_aabbccddeeff", "overrides": {}, "expect": {"raw": {"ax": -32768, "ay": 32767}}},
+    {"id": "applied_snapshot", "traces": ["D-09", "D-10", "D-11"], "topic_token": "mac_aabbccddeeff", "overrides": {}, "expect": {"mapping_epoch": 3, "applied_mapping": {"revision": 7, "segment": "femur_r", "frame": "femur_r_imu"}}},
+    {"id": "applied_unassigned", "traces": ["D-12"], "topic_token": "mac_aabbccddeeff", "overrides": {"applied_mapping": {"revision": 8, "segment": null, "frame": null, "model_hash": "sha256:0123456789abcdef"}}, "expect": {"applied_mapping": {"revision": 8, "segment": null, "frame": null}}},
+    {"id": "quaternion_capability_absent", "traces": ["D-13", "D-15", "D-16"], "topic_token": "mac_aabbccddeeff", "overrides": {"capabilities": {"accel": true, "gyro": true, "magnetometer": true, "quaternion": false}, "quaternion": null}, "expect": {"quaternion": {"available": false, "reason": "capability_absent"}}},
+    {"id": "quaternion_stale", "traces": ["D-14", "D-15"], "topic_token": "mac_aabbccddeeff", "overrides": {"quaternion": {"status": "stale", "values": [1, 0, 0, 0]}}, "expect": {"quaternion": {"available": false, "reason": "stale"}}},
+    {"id": "quaternion_missing", "traces": ["D-14", "D-15"], "topic_token": "mac_aabbccddeeff", "overrides": {"quaternion": null}, "expect": {"quaternion": {"available": false, "reason": "missing"}}},
+    {"id": "quaternion_malformed", "traces": ["D-14", "D-15"], "topic_token": "mac_aabbccddeeff", "overrides": {"quaternion": {"status": "available", "values": [1, 0, 0]}}, "expect": {"quaternion": {"available": false, "reason": "malformed"}}},
+    {"id": "quaternion_non_finite", "traces": ["D-14", "D-15"], "topic_token": "mac_aabbccddeeff", "overrides": {"quaternion": {"status": "available", "values": ["NaN", 0, 0, 1]}}, "expect": {"quaternion": {"available": false, "reason": "non_finite"}}},
+    {"id": "quaternion_zero_norm", "traces": ["D-14", "D-15"], "topic_token": "mac_aabbccddeeff", "overrides": {"quaternion": {"status": "available", "values": [0, 0, 0, 0]}}, "expect": {"quaternion": {"available": false, "reason": "zero_norm"}}},
+    {"id": "quaternion_norm_out_of_range", "traces": ["D-14", "D-15"], "topic_token": "mac_aabbccddeeff", "overrides": {"quaternion": {"status": "available", "values": [2, 0, 0, 0]}}, "expect": {"quaternion": {"available": false, "reason": "norm_out_of_range"}}},
+    {"id": "quaternion_available", "traces": ["D-13", "D-16"], "topic_token": "mac_aabbccddeeff", "overrides": {}, "expect": {"quaternion": {"available": true, "values": [0.5, -0.5, 0.5, -0.5]}}},
+    {"id": "mag_calibration_missing", "traces": ["D-08"], "topic_token": "mac_aabbccddeeff", "overrides": {}, "expect": {"si": {"magnetometer": {"available": false, "reason": "calibration_missing"}}}}
+  ],
+  "rejected": [
+    {"id": "schema_invalid", "traces": ["D-01"], "topic_token": "mac_aabbccddeeff", "overrides": {"schema": "rehab.signal_sample.0"}, "reason": "schema_invalid"},
+    {"id": "device_id_malformed", "traces": ["D-01"], "topic_token": "mac_short", "overrides": {"device_id": "AA:BB"}, "reason": "device_id_invalid"},
+    {"id": "topic_mismatch", "traces": ["D-01"], "topic_token": "mac_001122334455", "overrides": {}, "reason": "topic_device_mismatch"},
+    {"id": "sequence_fractional", "traces": ["D-02", "D-04"], "topic_token": "mac_aabbccddeeff", "overrides": {"sequence": 1.5}, "reason": "sequence_invalid"},
+    {"id": "sequence_origin_invalid", "traces": ["D-02"], "topic_token": "mac_aabbccddeeff", "overrides": {"sequence_origin": "guessed"}, "reason": "sequence_origin_invalid"},
+    {"id": "acquisition_pair_invalid", "traces": ["D-02"], "topic_token": "mac_aabbccddeeff", "overrides": {"acquisition_time_us": null, "acquisition_clock": "device_monotonic"}, "reason": "acquisition_time_invalid"},
+    {"id": "bridge_time_negative", "traces": ["D-04"], "topic_token": "mac_aabbccddeeff", "overrides": {"bridge_monotonic_time_us": -1}, "reason": "bridge_time_invalid"},
+    {"id": "reconnect_negative", "traces": ["D-04"], "topic_token": "mac_aabbccddeeff", "overrides": {"reconnect_epoch": -1}, "reason": "reconnect_epoch_invalid"},
+    {"id": "mapping_epoch_fractional", "traces": ["D-11"], "topic_token": "mac_aabbccddeeff", "overrides": {"mapping_epoch": 2.5}, "reason": "mapping_epoch_invalid"},
+    {"id": "raw_fractional", "traces": ["D-05"], "topic_token": "mac_aabbccddeeff", "overrides": {"raw": {"ax": 0.5, "ay": 0, "az": 0, "gx": 0, "gy": 0, "gz": 0, "mx": 0, "my": 0, "mz": 0}}, "reason": "raw_field_invalid"},
+    {"id": "raw_out_of_range", "traces": ["D-05"], "topic_token": "mac_aabbccddeeff", "overrides": {"raw": {"ax": -32769, "ay": 0, "az": 0, "gx": 0, "gy": 0, "gz": 0, "mx": 0, "my": 0, "mz": 0}}, "reason": "raw_field_out_of_range"},
+    {"id": "raw_missing", "traces": ["D-05"], "topic_token": "mac_aabbccddeeff", "overrides": {"raw": {"ax": 0}}, "reason": "raw_field_missing"},
+    {"id": "capabilities_missing", "traces": ["D-03", "D-13"], "topic_token": "mac_aabbccddeeff", "remove": ["capabilities"], "reason": "capability_invalid"},
+    {"id": "draft_provenance", "traces": ["D-09", "D-10"], "topic_token": "mac_aabbccddeeff", "overrides": {"draft_mapping": {"segment": "tibia_r"}}, "reason": "applied_mapping_invalid"},
+    {"id": "mapping_label_overlong", "traces": ["D-09"], "topic_token": "mac_aabbccddeeff", "overrides": {"applied_mapping": {"revision": 7, "segment": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "frame": "femur_r_imu", "model_hash": "sha256:0123456789abcdef"}}, "reason": "applied_mapping_invalid"},
+    {"id": "model_hash_overlong", "traces": ["D-09"], "topic_token": "mac_aabbccddeeff", "overrides": {"applied_mapping": {"revision": 7, "segment": "femur_r", "frame": "femur_r_imu", "model_hash": "sha256:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}, "reason": "applied_mapping_invalid"},
+    {"id": "error_detail_overlong", "traces": ["D-04", "D-14"], "topic_token": "mac_aabbccddeeff", "overrides": {"error_detail": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}, "reason": "schema_invalid"}
+  ],
+  "measurement_cases": [
+    {"id": "mag_calibration_invalid", "traces": ["D-08"], "calibration": {"schema": "rehab.mag_calibration.1", "sensor_model": "ICM-20948", "axis_convention": "xyz", "calibration_id": "lab-01", "calibration_hash": "bad", "hard_iron_uT": [0, 0, 0], "soft_iron": [[1,0,0],[0,1,0],[0,0,1]]}, "reason": "calibration_invalid"},
+    {"id": "mag_calibrated", "traces": ["D-08"], "sensitivity_uT_per_count": 0.15, "calibration": {"schema": "rehab.mag_calibration.1", "sensor_model": "ICM-20948", "axis_convention": "xyz", "calibration_id": "lab-01", "calibration_hash": "sha256:abcdef0123456789", "hard_iron_uT": [0.15, -0.3, 0.45], "soft_iron": [[1,0,0],[0,1,0],[0,0,1]]}, "raw": [10, 20, -30], "expected_uT": [1.35, 3.3, -4.95]}
+  ]
+}
