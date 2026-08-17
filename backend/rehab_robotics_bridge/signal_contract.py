@@ -8,6 +8,14 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from .measurement_contract import (
+    MeasurementConfig,
+    accel_count_to_mps2,
+    gyro_count_to_rad_s,
+    magnetometer_counts_to_uT,
+    validate_sensor_config,
+)
+
 
 SCHEMA = 'rehab.signal_sample.1'
 RAW_FIELDS = ('ax', 'ay', 'az', 'gx', 'gy', 'gz', 'mx', 'my', 'mz')
@@ -140,14 +148,61 @@ def _quaternion_availability(value: object, capable: bool) -> dict[str, Any]:
     return {'available': True, 'values': list(values)}
 
 
-def _si_snapshot(raw: Mapping[str, int], measurement: object | None) -> dict[str, Any]:
-    """Return explicit raw-only availability until a validated config is supplied."""
-    # Task 3 extends this boundary with validated deterministic conversions.
-    return {
-        'accel': {'available': False, 'reason': 'config_invalid'},
-        'gyro': {'available': False, 'reason': 'config_invalid'},
-        'magnetometer': {'available': False, 'reason': 'calibration_missing'},
-    }
+def _si_snapshot(
+    raw: Mapping[str, int],
+    measurement: object | None,
+    capabilities: Mapping[str, bool],
+) -> dict[str, Any]:
+    """Build deterministic SI groups without attaching units to unavailable data."""
+    config: MeasurementConfig | None
+    if isinstance(measurement, MeasurementConfig):
+        config = measurement
+    elif isinstance(measurement, Mapping):
+        try:
+            config = validate_sensor_config(measurement)
+        except ValueError:
+            config = None
+    else:
+        config = None
+
+    result: dict[str, Any] = {}
+    if not capabilities['accel']:
+        result['accel'] = {'available': False, 'reason': 'capability_absent'}
+    elif config is None:
+        result['accel'] = {'available': False, 'reason': 'config_invalid'}
+    else:
+        result['accel'] = {
+            'available': True,
+            'unit': 'm/s^2',
+            'values': {axis: accel_count_to_mps2(raw[f'a{axis}'], config) for axis in 'xyz'},
+        }
+    if not capabilities['gyro']:
+        result['gyro'] = {'available': False, 'reason': 'capability_absent'}
+    elif config is None:
+        result['gyro'] = {'available': False, 'reason': 'config_invalid'}
+    else:
+        result['gyro'] = {
+            'available': True,
+            'unit': 'rad/s',
+            'values': {axis: gyro_count_to_rad_s(raw[f'g{axis}'], config) for axis in 'xyz'},
+        }
+    if not capabilities['magnetometer']:
+        result['magnetometer'] = {'available': False, 'reason': 'capability_absent'}
+    elif config is None:
+        result['magnetometer'] = {'available': False, 'reason': 'calibration_missing'}
+    elif config.magnetometer_availability != 'available':
+        result['magnetometer'] = {
+            'available': False,
+            'reason': config.magnetometer_availability,
+        }
+    else:
+        converted = magnetometer_counts_to_uT([raw['mx'], raw['my'], raw['mz']], config)
+        result['magnetometer'] = {
+            'available': True,
+            'unit': 'µT',
+            'values': dict(zip('xyz', converted)),
+        }
+    return result
 
 
 def build_canonical_signal_sample(
@@ -224,7 +279,7 @@ def build_canonical_signal_sample(
         'capabilities': capabilities,
         'raw': raw,
         'raw_units': 'counts',
-        'si': _si_snapshot(raw, measurement),
+        'si': _si_snapshot(raw, measurement, capabilities),
         'quaternion': _quaternion_availability(sample.get('quaternion'), capabilities['quaternion']),
         'applied_mapping': {
             'revision': revision,

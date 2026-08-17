@@ -22,7 +22,9 @@ step_node_slave.ino exactly.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
+from typing import Mapping
 
 # ── Physical constants ────────────────────────────────────────────────────────
 
@@ -66,11 +68,83 @@ class MeasurementConfig:
     gyro_range_dps: int
     accel_lsb_per_g: float
     gyro_lsb_per_dps: float
+    magnetometer_sensitivity_uT_per_count: float | None = None
+    magnetometer_calibration: 'MagnetometerCalibration | None' = None
+    magnetometer_availability: str = 'calibration_missing'
+
+
+@dataclass(frozen=True)
+class MagnetometerCalibration:
+    """Validated bounded calibration provenance and affine coefficients."""
+
+    schema: str
+    sensor_model: str
+    axis_convention: str
+    calibration_id: str
+    calibration_hash: str
+    hard_iron_uT: tuple[float, float, float]
+    soft_iron: tuple[tuple[float, float, float], ...]
+
+
+_CALIBRATION_HASH_RE = re.compile(r'^sha256:[0-9a-f]{16,64}$')
+_MAX_PROVENANCE_TEXT = 64
+
+
+def _finite_vector(value: object, length: int) -> tuple[float, ...] | None:
+    if not isinstance(value, (list, tuple)) or len(value) != length:
+        return None
+    if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in value):
+        return None
+    result = tuple(float(item) for item in value)
+    return result if all(math.isfinite(item) for item in result) else None
+
+
+def validate_magnetometer_calibration(obj: object) -> MagnetometerCalibration:
+    """Validate a ``rehab.mag_calibration.1`` artifact or raise its stable code."""
+    if not isinstance(obj, Mapping):
+        raise ValueError('calibration_invalid')
+    required = {
+        'schema', 'sensor_model', 'axis_convention', 'calibration_id',
+        'calibration_hash', 'hard_iron_uT', 'soft_iron',
+    }
+    if set(obj) != required or obj.get('schema') != 'rehab.mag_calibration.1':
+        raise ValueError('calibration_invalid')
+    for key in ('sensor_model', 'calibration_id'):
+        value = obj.get(key)
+        if not isinstance(value, str) or not value or len(value) > _MAX_PROVENANCE_TEXT:
+            raise ValueError('calibration_invalid')
+    if obj.get('axis_convention') != 'xyz':
+        raise ValueError('calibration_invalid')
+    calibration_hash = obj.get('calibration_hash')
+    if not isinstance(calibration_hash, str) or not _CALIBRATION_HASH_RE.fullmatch(calibration_hash):
+        raise ValueError('calibration_invalid')
+    hard_iron = _finite_vector(obj.get('hard_iron_uT'), 3)
+    matrix_obj = obj.get('soft_iron')
+    if hard_iron is None or not isinstance(matrix_obj, (list, tuple)) or len(matrix_obj) != 3:
+        raise ValueError('calibration_invalid')
+    rows = tuple(_finite_vector(row, 3) for row in matrix_obj)
+    if any(row is None for row in rows):
+        raise ValueError('calibration_invalid')
+    return MagnetometerCalibration(
+        schema='rehab.mag_calibration.1',
+        sensor_model=obj['sensor_model'],
+        axis_convention='xyz',
+        calibration_id=obj['calibration_id'],
+        calibration_hash=calibration_hash,
+        hard_iron_uT=hard_iron,
+        soft_iron=rows,  # type: ignore[arg-type]
+    )
 
 
 # ── Public factory ────────────────────────────────────────────────────────────
 
-def measurement_config(accel_range_g: int, gyro_range_dps: int) -> MeasurementConfig:
+def measurement_config(
+    accel_range_g: int,
+    gyro_range_dps: int,
+    *,
+    magnetometer_sensitivity_uT_per_count: float | None = None,
+    magnetometer_calibration: object | None = None,
+) -> MeasurementConfig:
     """Build a MeasurementConfig from confirmed range values.
 
     Raises ValueError for any unsupported range value.
@@ -86,11 +160,33 @@ def measurement_config(accel_range_g: int, gyro_range_dps: int) -> MeasurementCo
             f'gyro_range_dps {gyro_range_dps!r} is not supported; '
             f'must be one of {sorted(SUPPORTED_GYRO_RANGES_DPS)}'
         )
+    sensitivity: float | None = None
+    calibration: MagnetometerCalibration | None = None
+    availability = 'calibration_missing'
+    if magnetometer_sensitivity_uT_per_count is not None:
+        candidate = magnetometer_sensitivity_uT_per_count
+        if (isinstance(candidate, bool) or not isinstance(candidate, (int, float))
+                or not math.isfinite(candidate) or candidate <= 0):
+            availability = 'calibration_invalid'
+        else:
+            sensitivity = float(candidate)
+            if magnetometer_calibration is not None:
+                try:
+                    calibration = validate_magnetometer_calibration(magnetometer_calibration)
+                except ValueError:
+                    availability = 'calibration_invalid'
+                else:
+                    availability = 'available'
+    elif magnetometer_calibration is not None:
+        availability = 'calibration_invalid'
     return MeasurementConfig(
         accel_range_g=accel_range_g,
         gyro_range_dps=gyro_range_dps,
         accel_lsb_per_g=ACCEL_LSB_PER_G[accel_range_g],
         gyro_lsb_per_dps=GYRO_LSB_PER_DPS[gyro_range_dps],
+        magnetometer_sensitivity_uT_per_count=sensitivity,
+        magnetometer_calibration=calibration,
+        magnetometer_availability=availability,
     )
 
 
@@ -102,7 +198,7 @@ def config_as_json(config: MeasurementConfig) -> dict:
     Values are taken from the canonical literal table (not re-derived floats)
     to guarantee exact round-trip through JSON without floating-point drift.
     """
-    return {
+    result = {
         'accel_range_g':     config.accel_range_g,
         'gyro_range_dps':    config.gyro_range_dps,
         'accel_lsb_per_g':   ACCEL_LSB_PER_G[config.accel_range_g],
@@ -115,7 +211,28 @@ def config_as_json(config: MeasurementConfig) -> dict:
             'gyro_sensitivity':    'count/(deg/s)',
             'linear_acceleration': 'm/s^2',
             'angular_velocity':    'rad/s',
+            'magnetic_field':      'µT',
         },
+    }
+    result['magnetometer'] = {
+        'sensitivity_uT_per_count': config.magnetometer_sensitivity_uT_per_count,
+        'availability': config.magnetometer_availability,
+        'calibration': calibration_as_json(config.magnetometer_calibration),
+    }
+    return result
+
+
+def calibration_as_json(calibration: MagnetometerCalibration | None) -> dict | None:
+    if calibration is None:
+        return None
+    return {
+        'schema': calibration.schema,
+        'sensor_model': calibration.sensor_model,
+        'axis_convention': calibration.axis_convention,
+        'calibration_id': calibration.calibration_id,
+        'calibration_hash': calibration.calibration_hash,
+        'hard_iron_uT': list(calibration.hard_iron_uT),
+        'soft_iron': [list(row) for row in calibration.soft_iron],
     }
 
 
@@ -201,11 +318,21 @@ def validate_sensor_config(obj: object) -> MeasurementConfig:
             "sensor_config units must be a dict containing at least a 'raw' key"
         )
 
-    return MeasurementConfig(
-        accel_range_g=accel_range_g,
-        gyro_range_dps=gyro_range_dps,
-        accel_lsb_per_g=accel_lsb,
-        gyro_lsb_per_dps=gyro_lsb,
+    mag = obj.get('magnetometer')
+    if mag is None:
+        return MeasurementConfig(
+            accel_range_g=accel_range_g,
+            gyro_range_dps=gyro_range_dps,
+            accel_lsb_per_g=accel_lsb,
+            gyro_lsb_per_dps=gyro_lsb,
+        )
+    if not isinstance(mag, Mapping):
+        raise ValueError('sensor_config magnetometer must be a dict')
+    return measurement_config(
+        accel_range_g,
+        gyro_range_dps,
+        magnetometer_sensitivity_uT_per_count=mag.get('sensitivity_uT_per_count'),
+        magnetometer_calibration=mag.get('calibration'),
     )
 
 
@@ -219,3 +346,27 @@ def accel_count_to_mps2(count: int, config: MeasurementConfig) -> float:
 def gyro_count_to_rad_s(count: int, config: MeasurementConfig) -> float:
     """Convert a raw gyroscope count to rad/s using the config snapshot."""
     return count / config.gyro_lsb_per_dps * DEG_TO_RAD
+
+
+def magnetometer_counts_to_uT(
+    counts: tuple[int, int, int] | list[int],
+    config: MeasurementConfig,
+) -> tuple[float, float, float]:
+    """Convert counts only when sensitivity and calibration both validate."""
+    if (config.magnetometer_availability != 'available'
+            or config.magnetometer_sensitivity_uT_per_count is None
+            or config.magnetometer_calibration is None):
+        raise ValueError(config.magnetometer_availability)
+    if (not isinstance(counts, (tuple, list)) or len(counts) != 3
+            or any(isinstance(count, bool) or not isinstance(count, int) for count in counts)):
+        raise ValueError('raw_field_invalid')
+    sensitivity = config.magnetometer_sensitivity_uT_per_count
+    calibration = config.magnetometer_calibration
+    centered = tuple(
+        count * sensitivity - bias
+        for count, bias in zip(counts, calibration.hard_iron_uT)
+    )
+    return tuple(
+        sum(coefficient * value for coefficient, value in zip(row, centered))
+        for row in calibration.soft_iron
+    )

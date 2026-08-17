@@ -8,6 +8,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 from rehab_robotics_bridge.signal_contract import build_canonical_signal_sample
+from rehab_robotics_bridge.measurement_contract import measurement_config
 
 
 FIXTURE_PATH = Path(__file__).parent / 'fixtures' / 'signal_contract_cases.json'
@@ -110,6 +111,49 @@ class SignalContractTests(unittest.TestCase):
         self.assertEqual(traced, {f'D-{index:02d}' for index in range(1, 17)})
         self.assertEqual(set(FIXTURE['requirement_partitions']),
                          {f'SIG-{index:02d}' for index in range(1, 6)})
+
+    def test_si_conversion_availability_and_units(self):
+        base = copy.deepcopy(FIXTURE['base_input'])
+        config = measurement_config(2, 250)
+        sample = build_canonical_signal_sample(
+            topic_token='mac_aabbccddeeff', sample=base, measurement=config,
+        ).as_dict()
+        self.assertTrue(sample['si']['accel']['available'])
+        self.assertEqual(sample['si']['accel']['unit'], 'm/s^2')
+        self.assertTrue(sample['si']['gyro']['available'])
+        self.assertEqual(sample['si']['gyro']['unit'], 'rad/s')
+        self.assertFalse(sample['si']['magnetometer']['available'])
+        self.assertEqual(sample['si']['magnetometer']['reason'], 'calibration_missing')
+        self.assertNotIn('unit', sample['si']['magnetometer'])
+
+        mag_case = next(case for case in FIXTURE['measurement_cases']
+                        if case['id'] == 'mag_calibrated')
+        base['raw'].update(dict(zip(('mx', 'my', 'mz'), mag_case['raw'])))
+        calibrated = measurement_config(
+            2, 250,
+            magnetometer_sensitivity_uT_per_count=mag_case['sensitivity_uT_per_count'],
+            magnetometer_calibration=mag_case['calibration'],
+        )
+        converted = build_canonical_signal_sample(
+            topic_token='mac_aabbccddeeff', sample=base, measurement=calibrated,
+        ).as_dict()
+        self.assertEqual(converted['raw']['mx'], 10)
+        self.assertEqual(converted['si']['magnetometer']['unit'], 'µT')
+        for axis, expected in zip('xyz', mag_case['expected_uT']):
+            self.assertAlmostEqual(
+                converted['si']['magnetometer']['values'][axis], expected, delta=1e-12,
+            )
+
+    def test_invalid_measurement_config_remains_raw_only(self):
+        sample = build_canonical_signal_sample(
+            topic_token='mac_aabbccddeeff',
+            sample=copy.deepcopy(FIXTURE['base_input']),
+            measurement={'accel_range_g': 3},
+        ).as_dict()
+        self.assertEqual(sample['raw']['ax'], -32768)
+        self.assertEqual(sample['si']['accel'],
+                         {'available': False, 'reason': 'config_invalid'})
+        self.assertNotIn('unit', sample['si']['accel'])
 
 
 if __name__ == '__main__':

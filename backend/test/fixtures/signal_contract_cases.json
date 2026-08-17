@@ -68,6 +68,7 @@
     {"id": "error_detail_overlong", "traces": ["D-04", "D-14"], "topic_token": "mac_aabbccddeeff", "overrides": {"error_detail": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}, "reason": "schema_invalid"}
   ],
   "measurement_cases": [
+    {"id": "accel_gyro_valid", "traces": ["D-06", "D-07"], "accel_range_g": 2, "gyro_range_dps": 250, "raw": 4096, "expected_accel_mps2": 2.4516625, "expected_gyro_rad_s": 0.545415391248228},
     {"id": "mag_calibration_invalid", "traces": ["D-08"], "calibration": {"schema": "rehab.mag_calibration.1", "sensor_model": "ICM-20948", "axis_convention": "xyz", "calibration_id": "lab-01", "calibration_hash": "bad", "hard_iron_uT": [0, 0, 0], "soft_iron": [[1,0,0],[0,1,0],[0,0,1]]}, "reason": "calibration_invalid"},
     {"id": "mag_calibrated", "traces": ["D-08"], "sensitivity_uT_per_count": 0.15, "calibration": {"schema": "rehab.mag_calibration.1", "sensor_model": "ICM-20948", "axis_convention": "xyz", "calibration_id": "lab-01", "calibration_hash": "sha256:abcdef0123456789", "hard_iron_uT": [0.15, -0.3, 0.45], "soft_iron": [[1,0,0],[0,1,0],[0,0,1]]}, "raw": [10, 20, -30], "expected_uT": [1.35, 3.3, -4.95]}
   ]

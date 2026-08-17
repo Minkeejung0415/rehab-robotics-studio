@@ -9,6 +9,7 @@ a full ROS installation.
 from __future__ import annotations
 
 import json
+import copy
 import sys
 import types
 import unittest
@@ -28,7 +29,9 @@ from rehab_robotics_bridge.measurement_contract import (
     accel_count_to_mps2,
     config_as_json,
     gyro_count_to_rad_s,
+    magnetometer_counts_to_uT,
     measurement_config,
+    validate_magnetometer_calibration,
     validate_sensor_config,
 )
 
@@ -134,6 +137,73 @@ class MeasurementContractTableTests(unittest.TestCase):
             with self.subTest(case=description):
                 with self.assertRaises(ValueError, msg=f'expected ValueError for: {description}'):
                     validate_sensor_config(obj)
+
+    def test_26_01_magnetometer_requires_sensitivity_and_calibration(self):
+        """Nominal sensitivity alone never authorizes microtesla output."""
+        missing = measurement_config(
+            2, 250, magnetometer_sensitivity_uT_per_count=0.15,
+        )
+        self.assertEqual(missing.magnetometer_availability, 'calibration_missing')
+        with self.assertRaisesRegex(ValueError, '^calibration_missing$'):
+            magnetometer_counts_to_uT((10, 20, -30), missing)
+
+        fixture_path = Path(__file__).parent / 'fixtures' / 'signal_contract_cases.json'
+        fixture = json.loads(fixture_path.read_text(encoding='utf-8'))
+        invalid_case = next(case for case in fixture['measurement_cases']
+                            if case['id'] == 'mag_calibration_invalid')
+        invalid = measurement_config(
+            2, 250,
+            magnetometer_sensitivity_uT_per_count=0.15,
+            magnetometer_calibration=invalid_case['calibration'],
+        )
+        self.assertEqual(invalid.magnetometer_availability, 'calibration_invalid')
+        self.assertIsNone(config_as_json(invalid)['magnetometer']['calibration'])
+
+    def test_26_01_magnetometer_calibration_converts_deterministically(self):
+        fixture_path = Path(__file__).parent / 'fixtures' / 'signal_contract_cases.json'
+        fixture = json.loads(fixture_path.read_text(encoding='utf-8'))
+        case = next(case for case in fixture['measurement_cases']
+                    if case['id'] == 'mag_calibrated')
+        calibration = validate_magnetometer_calibration(case['calibration'])
+        self.assertEqual(calibration.sensor_model, 'ICM-20948')
+        config = measurement_config(
+            2, 250,
+            magnetometer_sensitivity_uT_per_count=case['sensitivity_uT_per_count'],
+            magnetometer_calibration=case['calibration'],
+        )
+        self.assertEqual(config.magnetometer_availability, 'available')
+        converted = magnetometer_counts_to_uT(case['raw'], config)
+        for actual, expected in zip(converted, case['expected_uT']):
+            self.assertAlmostEqual(actual, expected, delta=1e-12)
+        serialized = config_as_json(config)
+        self.assertEqual(serialized['magnetometer']['calibration'], case['calibration'])
+
+    def test_26_01_magnetometer_rejects_unbounded_or_nonfinite_provenance(self):
+        valid = {
+            'schema': 'rehab.mag_calibration.1',
+            'sensor_model': 'ICM-20948',
+            'axis_convention': 'xyz',
+            'calibration_id': 'lab-01',
+            'calibration_hash': 'sha256:abcdef0123456789',
+            'hard_iron_uT': [0, 0, 0],
+            'soft_iron': [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        }
+        cases = []
+        for key, value in (
+            ('sensor_model', 'x' * 65),
+            ('calibration_id', 'x' * 65),
+            ('calibration_hash', 'sha256:not-hex'),
+            ('axis_convention', 'guessed'),
+            ('hard_iron_uT', [float('nan'), 0, 0]),
+            ('soft_iron', [[1, 0], [0, 1], [0, 0]]),
+        ):
+            candidate = copy.deepcopy(valid)
+            candidate[key] = value
+            cases.append(candidate)
+        for candidate in cases:
+            with self.subTest(candidate=candidate):
+                with self.assertRaisesRegex(ValueError, '^calibration_invalid$'):
+                    validate_magnetometer_calibration(candidate)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
