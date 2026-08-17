@@ -51,7 +51,7 @@ Declared values for Phase 26 additions, all on the project 4-point grid:
 | 2xl | 48px | Reserved; no Phase 26 component requires it |
 | 3xl | 64px | Reserved; no Phase 26 component requires it |
 
-Exceptions: preserve the existing 10px `.dash-panel` inset, 28px panel/table header height, and 40px compact source-summary row height. At viewport widths below 768px, unit controls and disclosure buttons have a 44px minimum target height. All exceptions remain multiples of 4 except the inherited 10px panel inset, which Phase 26 must reuse rather than duplicate as a new token.
+Exceptions: preserve the existing 28px panel/table header height and 40px compact source-summary row height. At viewport widths below 768px, unit controls and disclosure buttons have a 44px minimum target height. For this surface, override the inherited 10px `.dash-panel` inset with the Phase 26 `sm` spacing token (8px); the inherited 10px rule must not apply. Every declared Phase 26 spacing value is a multiple of 4.
 
 ---
 
@@ -151,6 +151,7 @@ The components may be placed in `src/components/dashboard/SignalContractPanel.ts
 ### Panel
 
 - Reuse `.dash-panel`, `.dash-head`, `.status-badge`, `.kv-grid`, `.btn`/`.mini-btn`, `.validation-msg`, and existing status colors where semantically correct.
+- Apply the Phase 26-specific override `.dash-panel.signal-contract-panel { padding: 8px; }` so this surface does not inherit the existing 10px `.dash-panel` inset.
 - Place `SignalContractPanel` first in `Dashboard`, before Acquisition Health, so trust/availability is read before derived readouts.
 - Maximum width remains the existing Front Panel width of 960px. No new tab, sidebar, modal, toast, or floating overlay.
 - Panel heading row contains `Signal Contract` left and a compact summary right: `{n} accepted` or `{n} accepted · {n} rejected`. Rejection count uses fault color and text.
