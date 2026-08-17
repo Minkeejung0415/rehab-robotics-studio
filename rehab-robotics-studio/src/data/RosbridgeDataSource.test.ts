@@ -1103,15 +1103,44 @@ describe('24-02 parseMappingCurrent / parseFleetRegistry / parseNCalibrationStat
       applied_revision: 0,
       model_hash: 'abc',
       assignments: { 'esp32:aa': { segment: 's', frame: 'f', state: 'assigned' } },
+      applied_assignments: { 'esp32:aa': { segment: '', frame: '', state: 'unassigned' } },
     });
     assert.ok(result !== null, 'should return non-null for valid payload');
     assert.equal(result!.revision, 1);
     assert.equal(result!.applied_revision, 0);
     assert.ok('esp32:aa' in result!.assignments);
+    assert.deepEqual(result!.applied_assignments['esp32:aa'], {
+      segment: '', frame: '', state: 'unassigned',
+    });
+    assert.ok(Object.isFrozen(result!.applied_assignments));
   });
 
   it('05 parseMappingCurrent revision not number returns null', () => {
     assert.equal(parseMappingCurrent({ revision: 'bad' }), null);
+  });
+
+  it('05b parseMappingCurrent rejects malformed applied labels and hash atomically', () => {
+    const base = {
+      revision: 2,
+      applied_revision: 1,
+      model_hash: 'model-hash',
+      assignments: { 'esp32:aabbccddeeff': { segment: 'draft', frame: 'draft/frame', state: 'assigned' } },
+      applied_assignments: { 'esp32:aabbccddeeff': { segment: 'applied', frame: 'applied/frame', state: 'assigned' } },
+    };
+    assert.equal(parseMappingCurrent({
+      ...base,
+      applied_assignments: {
+        'esp32:aabbccddeeff': { segment: 'x'.repeat(65), frame: 'applied/frame', state: 'assigned' },
+      },
+    }), null);
+    assert.equal(parseMappingCurrent({ ...base, model_hash: 'x'.repeat(129) }), null);
+    assert.equal(parseMappingCurrent({
+      ...base,
+      applied_assignments: {
+        ...base.applied_assignments,
+        'esp32:001122334455': { segment: 'partial' },
+      },
+    }), null);
   });
 
   it('06 parseFleetRegistry valid payload returns snapshot with devices array', () => {

@@ -43,6 +43,7 @@ function resetStore(): void {
     mappingRevision: 0,
     appliedRevision: 0,
     mappingModelHash: null,
+    appliedAssignments: Object.freeze({}),
     applyStatus: 'idle',
     applyError: null,
     calibrationInterlocked: false,
@@ -118,6 +119,9 @@ describe('mappingStore — 24-01', () => {
       assignments: {
         [DEVICE_A]: { segment: 'femur', frame: 'femur/frame', state: 'assigned' },
       },
+      applied_assignments: {
+        [DEVICE_A]: { segment: 'pelvis', frame: 'pelvis/frame', state: 'assigned' },
+      },
     });
 
     const row = getRow(DEVICE_A);
@@ -132,6 +136,11 @@ describe('mappingStore — 24-01', () => {
     assert.equal(store.mappingRevision, 5);
     assert.equal(store.appliedRevision, 3);
     assert.equal(store.mappingModelHash, 'abc123');
+    assert.deepEqual(store.appliedAssignments, {
+      [DEVICE_A]: { segment: 'pelvis', frame: 'pelvis/frame', state: 'assigned' },
+    });
+    assert.ok(Object.isFrozen(store.appliedAssignments));
+    assert.ok(Object.isFrozen(store.appliedAssignments[DEVICE_A]));
   });
 
   // ── Test 4: updateFromCatalog sets catalog fields ─────────────────────────
@@ -367,5 +376,80 @@ describe('mappingStore — 24-01', () => {
     useMappingStore.getState().updateFromMappingCurrent({ revision: 'not-a-number' });
 
     assert.equal(useMappingStore.getState().mappingRevision, before, 'revision must not change on invalid payload');
+  });
+
+  it('21 draft/save updates never relabel the separately applied snapshot', () => {
+    useMappingStore.getState().updateFromMappingCurrent({
+      revision: 9,
+      applied_revision: 7,
+      model_hash: 'model-v7',
+      assignments: {
+        [DEVICE_A]: { segment: 'draft_tibia', frame: 'draft/tibia', state: 'assigned' },
+      },
+      applied_assignments: {
+        [DEVICE_A]: { segment: 'applied_femur', frame: 'applied/femur', state: 'assigned' },
+      },
+    });
+
+    useMappingStore.getState().setDraftSegment(DEVICE_A, 'local_pelvis', 'local/pelvis');
+
+    const state = useMappingStore.getState();
+    assert.equal(state.rows[DEVICE_A]?.backendSegment, 'draft_tibia');
+    assert.equal(state.rows[DEVICE_A]?.draftSegment, 'local_pelvis');
+    assert.deepEqual(state.appliedAssignments[DEVICE_A], {
+      segment: 'applied_femur', frame: 'applied/femur', state: 'assigned',
+    });
+  });
+
+  it('22 revision zero preserves an explicit immutable unassigned applied snapshot', () => {
+    useMappingStore.getState().updateFromMappingCurrent({
+      revision: 0,
+      applied_revision: 0,
+      model_hash: 'initial-model',
+      assignments: {
+        [DEVICE_B]: { segment: '', frame: '', state: 'unassigned' },
+      },
+      applied_assignments: {
+        [DEVICE_B]: { segment: '', frame: '', state: 'unassigned' },
+      },
+    });
+
+    assert.deepEqual(useMappingStore.getState().appliedAssignments[DEVICE_B], {
+      segment: '', frame: '', state: 'unassigned',
+    });
+  });
+
+  it('23 malformed applied payload is an atomic no-op', () => {
+    useMappingStore.getState().updateFromMappingCurrent({
+      revision: 2,
+      applied_revision: 1,
+      model_hash: 'good-hash',
+      assignments: {
+        [DEVICE_A]: { segment: 'draft', frame: 'draft/frame', state: 'assigned' },
+      },
+      applied_assignments: {
+        [DEVICE_A]: { segment: 'applied', frame: 'applied/frame', state: 'assigned' },
+      },
+    });
+    const before = useMappingStore.getState();
+
+    useMappingStore.getState().updateFromMappingCurrent({
+      revision: 3,
+      applied_revision: 3,
+      model_hash: 'x'.repeat(129),
+      assignments: {
+        [DEVICE_A]: { segment: 'new-draft', frame: 'new/frame', state: 'assigned' },
+      },
+      applied_assignments: {
+        [DEVICE_A]: { segment: 'x'.repeat(65), frame: 'new/frame', state: 'assigned' },
+      },
+    });
+
+    const after = useMappingStore.getState();
+    assert.equal(after.mappingRevision, before.mappingRevision);
+    assert.equal(after.appliedRevision, before.appliedRevision);
+    assert.equal(after.mappingModelHash, before.mappingModelHash);
+    assert.equal(after.rows[DEVICE_A]?.backendSegment, before.rows[DEVICE_A]?.backendSegment);
+    assert.equal(after.appliedAssignments, before.appliedAssignments);
   });
 });
