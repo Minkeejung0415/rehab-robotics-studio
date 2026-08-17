@@ -13,6 +13,7 @@ import type {
   NCalibrationStatusSnapshot,
   InputValiditySnapshot,
 } from '../state/mappingStore';
+import { parseMappingCurrentSnapshot } from '../state/mappingStore';
 import {
   isValidRosStamp,
   normalizeLiveKneeReason,
@@ -394,29 +395,7 @@ export function parseModelCatalog(payload: unknown): ModelCatalogSnapshot | null
 }
 
 export function parseMappingCurrent(payload: unknown): MappingCurrentSnapshot | null {
-  if (!isRecord(payload)) return null;
-  if (typeof payload.revision !== 'number') return null;
-  if (typeof payload.applied_revision !== 'number') return null;
-  if (!isRecord(payload.assignments)) return null;
-  const assignments: MappingCurrentSnapshot['assignments'] = {};
-  for (const [deviceId, assignment] of Object.entries(payload.assignments)) {
-    if (!isRecord(assignment)) return null;
-    if (typeof assignment.segment !== 'string') return null;
-    if (typeof assignment.frame !== 'string') return null;
-    if (typeof assignment.state !== 'string') return null;
-    assignments[deviceId] = {
-      segment: assignment.segment,
-      frame: assignment.frame,
-      state: assignment.state,
-    };
-  }
-  return {
-    schema: typeof payload.schema === 'string' ? payload.schema : undefined,
-    revision: payload.revision,
-    applied_revision: payload.applied_revision,
-    model_hash: typeof payload.model_hash === 'string' ? payload.model_hash : undefined,
-    assignments,
-  };
+  return parseMappingCurrentSnapshot(payload);
 }
 
 export function parseFleetRegistry(payload: unknown): FleetRegistrySnapshot | null {

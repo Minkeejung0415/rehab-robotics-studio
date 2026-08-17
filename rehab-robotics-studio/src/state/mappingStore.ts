@@ -25,7 +25,14 @@ export interface MappingCurrentSnapshot {
   revision: number;
   applied_revision: number;
   model_hash?: string;
-  assignments: Record<string, { segment: string; frame: string; state: string }>;
+  assignments: Readonly<Record<string, MappingAssignmentSnapshot>>;
+  applied_assignments: Readonly<Record<string, MappingAssignmentSnapshot>>;
+}
+
+export interface MappingAssignmentSnapshot {
+  readonly segment: string;
+  readonly frame: string;
+  readonly state: 'assigned' | 'not_used' | 'unassigned';
 }
 
 export interface FleetRegistrySnapshot {
@@ -83,6 +90,7 @@ export interface MappingStore {
   mappingRevision: number;
   appliedRevision: number;
   mappingModelHash: string | null;
+  appliedAssignments: Readonly<Record<string, MappingAssignmentSnapshot>>;
   applyStatus: 'idle' | 'applying' | 'error';
   applyError: string | null;
   calibrationInterlocked: boolean;
@@ -105,6 +113,46 @@ export interface MappingStore {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const MAX_MAPPING_LABEL_LENGTH = 64;
+const MAX_MAPPING_HASH_LENGTH = 128;
+
+function isRevision(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function parseAssignments(value: unknown): Readonly<Record<string, MappingAssignmentSnapshot>> | null {
+  if (!isRecord(value)) return null;
+  const result: Record<string, MappingAssignmentSnapshot> = {};
+  for (const [deviceId, assignment] of Object.entries(value)) {
+    if (!isRecord(assignment)) return null;
+    const { segment, frame, state } = assignment;
+    if (state !== 'assigned' && state !== 'not_used' && state !== 'unassigned') return null;
+    if (typeof segment !== 'string' || typeof frame !== 'string') return null;
+    if (segment.length > MAX_MAPPING_LABEL_LENGTH || frame.length > MAX_MAPPING_LABEL_LENGTH) return null;
+    if (state === 'assigned' ? segment.length === 0 || frame.length === 0 : segment !== '' || frame !== '') return null;
+    result[deviceId] = Object.freeze({ segment, frame, state });
+  }
+  return Object.freeze(result);
+}
+
+/** Strict, atomic parser shared by rosbridge ingress and direct store updates. */
+export function parseMappingCurrentSnapshot(payload: unknown): MappingCurrentSnapshot | null {
+  if (!isRecord(payload) || !isRevision(payload['revision']) || !isRevision(payload['applied_revision'])) return null;
+  const modelHash = payload['model_hash'];
+  if (modelHash !== undefined && (typeof modelHash !== 'string' || modelHash.length > MAX_MAPPING_HASH_LENGTH)) return null;
+  const assignments = parseAssignments(payload['assignments']);
+  const appliedAssignments = parseAssignments(payload['applied_assignments']);
+  if (!assignments || !appliedAssignments) return null;
+  return Object.freeze({
+    schema: typeof payload['schema'] === 'string' ? payload['schema'] : undefined,
+    revision: payload['revision'],
+    applied_revision: payload['applied_revision'],
+    model_hash: modelHash as string | undefined,
+    assignments,
+    applied_assignments: appliedAssignments,
+  });
 }
 
 function defaultRow(deviceId: string): MappingRow {
@@ -163,6 +211,7 @@ const INITIAL_STATE = {
   mappingRevision: 0,
   appliedRevision: 0,
   mappingModelHash: null as string | null,
+  appliedAssignments: Object.freeze({}) as Readonly<Record<string, MappingAssignmentSnapshot>>,
   applyStatus: 'idle' as const,
   applyError: null as string | null,
   calibrationInterlocked: false,
@@ -200,19 +249,13 @@ export const useMappingStore = create<MappingStore>((set) => ({
   // ── updateFromMappingCurrent ────────────────────────────────────────────
   // D-06: fills in backend assignment fields; never touches draftSegment/draftFrame/draftNotUsed.
   updateFromMappingCurrent: (payload) => {
-    if (
-      !isRecord(payload) ||
-      typeof payload['revision'] !== 'number' ||
-      typeof payload['applied_revision'] !== 'number' ||
-      !isRecord(payload['assignments'])
-    ) {
-      return; // guard: silently drop invalid payloads (T-24-02)
-    }
+    const parsed = parseMappingCurrentSnapshot(payload);
+    if (!parsed) return; // guard: atomically drop invalid payloads (T-24-02, T-26-18)
 
-    const newRevision = payload['revision'] as number;
-    const newAppliedRevision = payload['applied_revision'] as number;
-    const newModelHash = typeof payload['model_hash'] === 'string' ? payload['model_hash'] : null;
-    const assignments = payload['assignments'] as Record<string, unknown>;
+    const newRevision = parsed.revision;
+    const newAppliedRevision = parsed.applied_revision;
+    const newModelHash = parsed.model_hash ?? null;
+    const assignments = parsed.assignments;
 
     set((s) => {
       const rows = { ...s.rows };
@@ -248,6 +291,7 @@ export const useMappingStore = create<MappingStore>((set) => ({
         mappingRevision: newRevision,
         appliedRevision: newAppliedRevision,
         mappingModelHash: newModelHash ?? s.mappingModelHash,
+        appliedAssignments: parsed.applied_assignments,
       };
     });
   },
