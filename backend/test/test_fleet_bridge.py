@@ -6,6 +6,7 @@ import json
 import struct
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from pathlib import Path
@@ -1463,3 +1464,37 @@ class FleetLiveSessionContractTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+class AppliedMappingCacheConcurrencyTest(unittest.TestCase):
+    def test_snapshot_epoch_and_labels_are_one_atomic_state(self):
+        cache = fleet.AppliedMappingCache()
+        device_id = 'esp32:aabbccddeeff'
+        states = [
+            {
+                'applied_revision': revision,
+                'model_hash': f'model-{revision}',
+                'applied_assignments': {
+                    device_id: {'state': 'assigned', 'segment': f's{revision}', 'frame': f'f{revision}'},
+                },
+            }
+            for revision in range(1, 100)
+        ]
+        failures: list[tuple[int, dict[str, object]]] = []
+
+        def writer() -> None:
+            for state in states:
+                cache.update(state)
+
+        thread = threading.Thread(target=writer)
+        thread.start()
+        while thread.is_alive():
+            epoch, snapshot = cache.snapshot_with_epoch(device_id)
+            revision = snapshot['revision']
+            if revision != 0 and (
+                epoch != revision
+                or snapshot['model_hash'] != f'model-{revision}'
+                or snapshot['segment'] != f's{revision}'
+                or snapshot['frame'] != f'f{revision}'
+            ):
+                failures.append((epoch, snapshot))
+        thread.join()
+        self.assertEqual(failures, [])

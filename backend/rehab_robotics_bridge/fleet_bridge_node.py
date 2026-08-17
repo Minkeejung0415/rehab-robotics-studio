@@ -161,15 +161,26 @@ def canonical_topic_paths(device_id: str) -> tuple[str, str]:
     return f'/esp/raw/{token}', f'/esp/status/{token}'
 
 
+@dataclass(frozen=True)
+class AppliedMappingState:
+    epoch: int
+    revision: int
+    model_hash: str
+    assignments: Mapping[str, tuple[str | None, str | None]]
+    signature: tuple[Any, ...] | None
+
+
 class AppliedMappingCache:
     """Strict immutable snapshots of authoritative ``applied_*`` mapping state."""
 
     def __init__(self) -> None:
-        self.epoch = 0
-        self._revision = 0
-        self._model_hash = 'unavailable'
-        self._assignments: dict[str, tuple[str | None, str | None]] = {}
-        self._signature: tuple[Any, ...] | None = None
+        self._lock = threading.Lock()
+        self._state = AppliedMappingState(0, 0, 'unavailable', {}, None)
+
+    @property
+    def epoch(self) -> int:
+        with self._lock:
+            return self._state.epoch
 
     @staticmethod
     def _label(value: object) -> str:
@@ -211,24 +222,28 @@ class AppliedMappingCache:
                 raise ValueError('applied_mapping_invalid')
 
         signature = (revision, model_hash, tuple(sorted(parsed.items())))
-        if signature == self._signature:
-            return False
-        self._revision = revision
-        self._model_hash = model_hash
-        self._assignments = parsed
-        self._signature = signature
-        self.epoch += 1
-        return True
+        with self._lock:
+            if signature == self._state.signature:
+                return False
+            self._state = AppliedMappingState(
+                self._state.epoch + 1, revision, model_hash, parsed, signature,
+            )
+            return True
 
     def snapshot(self, device_id: str) -> dict[str, Any]:
+        return self.snapshot_with_epoch(device_id)[1]
+
+    def snapshot_with_epoch(self, device_id: str) -> tuple[int, dict[str, Any]]:
         canonical = normalize_device_id(device_id)
-        segment, frame = self._assignments.get(canonical, (None, None))
-        return {
-            'revision': self._revision,
-            'segment': segment,
-            'frame': frame,
-            'model_hash': self._model_hash,
-        }
+        with self._lock:
+            state = self._state
+            segment, frame = state.assignments.get(canonical, (None, None))
+            return state.epoch, {
+                'revision': state.revision,
+                'segment': segment,
+                'frame': frame,
+                'model_hash': state.model_hash,
+            }
 
 
 def parse_signal_status(
@@ -1316,12 +1331,12 @@ class FleetBridgeNode(Node):
                 magnetometer_calibration=calibration_input,
             )
             mapping_cache = getattr(self, '_mapping_cache', None)
-            mapping = (
-                mapping_cache.snapshot(device_id)
-                if mapping_cache is not None else {
+            mapping_epoch, mapping = (
+                mapping_cache.snapshot_with_epoch(device_id)
+                if mapping_cache is not None else (0, {
                     'revision': 0, 'segment': None, 'frame': None,
                     'model_hash': 'unavailable',
-                }
+                })
             )
             reconnect_epoch = (
                 registry_state.reconnect_generation if registry_state is not None else 0
@@ -1338,7 +1353,7 @@ class FleetBridgeNode(Node):
                         'acquisition_clock': None,
                         'bridge_monotonic_time_us': now_us,
                         'reconnect_epoch': reconnect_epoch,
-                        'mapping_epoch': mapping_cache.epoch if mapping_cache is not None else 0,
+                        'mapping_epoch': mapping_epoch,
                         'capabilities': status['capabilities'],
                         'raw': dict(raw_payload['imu']),
                         'quaternion': {
