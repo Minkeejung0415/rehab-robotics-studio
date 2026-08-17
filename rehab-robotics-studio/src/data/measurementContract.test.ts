@@ -19,6 +19,7 @@ import {
   validateSensorConfig,
   accelCountToMps2,
   gyroCountToRad_s,
+  magnetometerCountsToUT,
   type SensorConfig,
 } from './measurementContract.js';
 
@@ -39,6 +40,26 @@ type FixtureCase = {
 };
 
 const cases: FixtureCase[] = JSON.parse(readFileSync(casesPath, 'utf-8')) as FixtureCase[];
+
+const signalCasesPath = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../backend/test/fixtures/signal_contract_cases.json',
+);
+type SignalMeasurementCase = {
+  id: string;
+  accel_range_g?: number;
+  gyro_range_dps?: number;
+  raw?: number | [number, number, number];
+  expected_accel_mps2?: number;
+  expected_gyro_rad_s?: number;
+  sensitivity_uT_per_count?: number;
+  calibration?: Record<string, unknown>;
+  expected_uT?: [number, number, number];
+  reason?: string;
+};
+const signalMeasurementCases = (
+  JSON.parse(readFileSync(signalCasesPath, 'utf-8')) as { measurement_cases: SignalMeasurementCase[] }
+).measurement_cases;
 
 // ── Helper: build a canonical SensorConfig ─────────────────────────────────────
 
@@ -218,4 +239,64 @@ describe('measurementContract — 09-02-01', () => {
     );
   });
 
+});
+
+describe('measurementContract — canonical signal fixture parity', () => {
+  it('matches the shared deterministic accel and gyro conversion', () => {
+    const c = signalMeasurementCases.find((entry) => entry.id === 'accel_gyro_valid');
+    assert.ok(c && typeof c.raw === 'number');
+    const config = makeConfig(c.accel_range_g!, c.gyro_range_dps!);
+    assert.ok(Math.abs(accelCountToMps2(c.raw, config) - c.expected_accel_mps2!) < 1e-9);
+    assert.ok(Math.abs(gyroCountToRad_s(c.raw, config) - c.expected_gyro_rad_s!) < 1e-9);
+  });
+
+  it('retains raw access and returns calibration_invalid for malformed provenance', () => {
+    const c = signalMeasurementCases.find((entry) => entry.id === 'mag_calibration_invalid');
+    assert.ok(c);
+    const wire = makeWireConfig(2, 250);
+    wire.magnetometer = {
+      sensitivity_uT_per_count: 0.15,
+      calibration: c.calibration,
+    };
+    const validated = validateSensorConfig(wire);
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+    assert.equal(validated.value.magnetometer_availability, c.reason);
+    assert.deepEqual(magnetometerCountsToUT([10, 20, -30], validated.value), {
+      ok: false,
+      reason: c.reason,
+    });
+  });
+
+  it('requires calibration in addition to sensitivity before exposing microtesla', () => {
+    const wire = makeWireConfig(2, 250);
+    wire.magnetometer = { sensitivity_uT_per_count: 0.15, calibration: null };
+    const validated = validateSensorConfig(wire);
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+    assert.equal(validated.value.magnetometer_availability, 'calibration_missing');
+    assert.deepEqual(magnetometerCountsToUT([10, 20, -30], validated.value), {
+      ok: false,
+      reason: 'calibration_missing',
+    });
+  });
+
+  it('matches the shared calibrated magnetometer conversion', () => {
+    const c = signalMeasurementCases.find((entry) => entry.id === 'mag_calibrated');
+    assert.ok(c && Array.isArray(c.raw));
+    const wire = makeWireConfig(2, 250);
+    wire.magnetometer = {
+      sensitivity_uT_per_count: c.sensitivity_uT_per_count,
+      calibration: c.calibration,
+    };
+    const validated = validateSensorConfig(wire);
+    assert.equal(validated.ok, true);
+    if (!validated.ok) return;
+    const converted = magnetometerCountsToUT(c.raw, validated.value);
+    assert.equal(converted.ok, true);
+    if (!converted.ok) return;
+    converted.value.forEach((value, index) => {
+      assert.ok(Math.abs(value - c.expected_uT![index]) < 1e-9);
+    });
+  });
 });
