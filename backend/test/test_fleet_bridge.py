@@ -1226,13 +1226,15 @@ class FleetLiveSessionContractTest(unittest.TestCase):
             # Protocol sequence:
             #   [recv] IDENTITY_OK ...   → records[0] (IDENTITY_OK self line)
             #   [recv] IDENTITY_END ...  → records[1] (peer_count=0 → 0+1=1 extra line)
+            #   [send] SIGNAL_STATUS? then identity-bound capability response
             #   [send] REDPITAYA\n
             #   [recv] OK\n              → discarded REDPITAYA acknowledgement
             #   [send] START\n
             #   [recv] STARTED BIN:...  → StartedOK
             reader = asyncio.StreamReader()
-            # Feed: identity lines, then REDPITAYA ack ('OK\n'), then STARTED line
-            reader.feed_data(identity_bytes + b'OK\n' + self.STARTED_TCP)
+            # Feed: identity, capability, REDPITAYA ack, then STARTED line.
+            status = FleetSignalStatusProtocolTest.VALID_STATUS.encode('ascii') + b'\n'
+            reader.feed_data(identity_bytes + status + b'OK\n' + self.STARTED_TCP)
             reader.feed_eof()
             writer = _MockWriter()
             return await node._fleet_handshake(0, session, reader, writer)
@@ -1376,7 +1378,20 @@ class FleetLiveSessionContractTest(unittest.TestCase):
         node._manager = manager
         node._sessions = manager.sessions
         node._imu_pubs = {'master': None, 'slave': None}
+        node._mac_imu_pubs = {}
         node._body_segments = {}
+        node._health_snapshots = {}
+        node._signal_calibrations = {}
+        node._mapping_cache = fleet.AppliedMappingCache()
+        node._mapping_cache.update({
+            'applied_revision': 0,
+            'applied_assignments': {},
+            'model_hash': 'unavailable',
+        })
+        manager.sessions[0].signal_status = fleet.parse_signal_status(
+            FleetSignalStatusProtocolTest.VALID_STATUS,
+            'esp32:aabbccddeeff',
+        )
 
         # 14-channel, 1 sample/period, 2 bytes/sample → 28 bytes all zeros
         n_ch = 14
@@ -1391,8 +1406,17 @@ class FleetLiveSessionContractTest(unittest.TestCase):
         self.assertIn('node_role', data)
         self.assertIn('quat', data)
         self.assertIn('imu', data)
+        self.assertEqual(data['sensor_config']['accel_range_g'], 2)
+        self.assertEqual(data['sensor_config']['gyro_range_dps'], 250)
         self.assertEqual(data['device_id'], 'esp32:aabbccddeeff')
         self.assertEqual(data['node_role'], 'master')
+        self.assertEqual(data['topic_schema'], 'oe_esp32.raw.v1')
+        canonical = data['sample_contract']
+        self.assertEqual(canonical['schema'], 'rehab.signal_sample.1')
+        self.assertEqual(canonical['sequence_origin'], 'bridge_session')
+        self.assertIsNone(canonical['acquisition_time_us'])
+        self.assertIsNone(canonical['acquisition_clock'])
+        self.assertEqual(canonical['applied_mapping']['revision'], 0)
 
     # --- test 6 ---
     def test_apply_udp_drop_count_called_on_reconnect(self):

@@ -11,6 +11,7 @@ import time
 from collections import deque
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
 import rclpy
@@ -19,6 +20,13 @@ from sensor_msgs.msg import Imu
 from std_msgs.msg import Header, String
 from rehab_robotics_interfaces.srv import IdentifyDevice
 
+from rehab_robotics_bridge.measurement_contract import (
+    calibration_as_json,
+    config_as_json,
+    measurement_config,
+    validate_magnetometer_calibration,
+)
+from rehab_robotics_bridge.signal_contract import build_canonical_signal_sample
 from rehab_robotics_bridge.esp32_bridge_node import (
     device_topic_token,
     display_mac,
@@ -49,6 +57,7 @@ from rehab_robotics_bridge.esp32_bridge_node import (
 # circular import concerns if esp32_bridge_node ever imports from fleet_bridge_node).
 ACC_SCALE = 9.80665 / 16384.0       # m/s² per LSB at ±2g
 GYR_SCALE = (math.pi / 180.0) / 131.072  # rad/s per LSB at ±250 dps
+DEFAULT_MEASUREMENT_CONFIG = measurement_config(2, 250)
 
 FLEET_REGISTRY_TOPIC = '/esp/fleet/registry'
 FLEET_REGISTRY_SCHEMA = 'oe_esp32.fleet_registry.v1'
@@ -66,6 +75,13 @@ MAPPING_CURRENT_TOPIC = '/rehab/mapping/current'
 MAX_MAPPING_DEVICES = 256
 MAX_MAPPING_LABEL_BYTES = 64
 MAX_MODEL_HASH_BYTES = 128
+SIGNAL_STATUS_QUERY = b'SIGNAL_STATUS?\\n'
+SIGNAL_STATUS_PROTOCOL = 'signal-cap-v1'
+SIGNAL_STATUS_FIELDS = frozenset({
+    'protocol', 'device_id', 'accel', 'gyro', 'magnetometer', 'quaternion',
+    'magnetometer_model', 'magnetometer_sensitivity_uT_per_count',
+    'sequence_transport', 'acquisition_clock',
+})
 
 
 async def run_isolated_session_tasks(
@@ -215,6 +231,93 @@ class AppliedMappingCache:
         }
 
 
+def parse_signal_status(
+    line: str,
+    expected_device_id: str,
+    *,
+    expected_capabilities: Mapping[str, bool] | None = None,
+) -> dict[str, Any]:
+    """Strictly bind one bounded firmware capability declaration to identity."""
+    if not isinstance(line, str) or len(line) > MAX_CONTROL_LINE_BYTES:
+        raise ValueError('capability_invalid')
+    parts = line.strip().split()
+    if not parts or parts[0] != 'SIGNAL_STATUS_OK':
+        raise ValueError('capability_invalid')
+    fields: dict[str, str] = {}
+    for token in parts[1:]:
+        if token.count('=') != 1:
+            raise ValueError('capability_invalid')
+        key, value = token.split('=', 1)
+        if not key or not value or key in fields:
+            raise ValueError('capability_invalid')
+        fields[key] = value
+    if set(fields) != SIGNAL_STATUS_FIELDS or fields['protocol'] != SIGNAL_STATUS_PROTOCOL:
+        raise ValueError('capability_invalid')
+    device_id = normalize_device_id(fields['device_id'])
+    if device_id != normalize_device_id(expected_device_id):
+        raise ValueError('device_id_mismatch')
+    capabilities: dict[str, bool] = {}
+    for key in ('accel', 'gyro', 'magnetometer', 'quaternion'):
+        if fields[key] not in ('0', '1'):
+            raise ValueError('capability_invalid')
+        capabilities[key] = fields[key] == '1'
+    if fields['magnetometer_model'] != 'AK09916':
+        raise ValueError('capability_invalid')
+    try:
+        sensitivity = float(fields['magnetometer_sensitivity_uT_per_count'])
+    except ValueError as exc:
+        raise ValueError('capability_invalid') from exc
+    if not math.isfinite(sensitivity) or sensitivity <= 0:
+        raise ValueError('capability_invalid')
+    if fields['sequence_transport'] != 'none' or fields['acquisition_clock'] != 'none':
+        raise ValueError('capability_invalid')
+    if expected_capabilities is not None:
+        if (set(expected_capabilities) != set(capabilities)
+                or any(not isinstance(value, bool) for value in expected_capabilities.values())
+                or dict(expected_capabilities) != capabilities):
+            raise ValueError('capability_expectation_mismatch')
+    return {
+        'protocol': SIGNAL_STATUS_PROTOCOL,
+        'device_id': device_id,
+        'capabilities': capabilities,
+        'magnetometer_model': 'AK09916',
+        'magnetometer_sensitivity_uT_per_count': sensitivity,
+        'sequence_transport': 'none',
+        'acquisition_clock': 'none',
+    }
+
+
+def load_signal_calibrations(
+    path: str,
+    *,
+    expected_device_id: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Load identity-scoped calibration artifacts without promoting capability."""
+    if not path:
+        return {}
+    source = Path(path)
+    try:
+        payload = json.loads(source.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError('calibration_invalid') from exc
+    artifacts = payload if isinstance(payload, list) else [payload]
+    result: dict[str, dict[str, Any]] = {}
+    for artifact in artifacts:
+        if not isinstance(artifact, Mapping):
+            raise ValueError('calibration_invalid')
+        device_id = normalize_device_id(artifact.get('device_id'))
+        if expected_device_id is not None and device_id != normalize_device_id(expected_device_id):
+            raise ValueError('calibration_invalid')
+        if device_id in result:
+            raise ValueError('calibration_invalid')
+        calibration_input = {key: value for key, value in artifact.items() if key != 'device_id'}
+        validated = validate_magnetometer_calibration(calibration_input)
+        serialized = calibration_as_json(validated)
+        assert serialized is not None
+        result[device_id] = {'device_id': device_id, **serialized}
+    return result
+
+
 def parse_routes_json(raw: str) -> list[dict[str, Any]]:
     """Parse the operator route table (JSON list of host/port/expected_device_id)."""
     if not isinstance(raw, str) or not raw.strip():
@@ -248,6 +351,16 @@ def parse_routes_json(raw: str) -> list[dict[str, Any]]:
         if device_id in seen_ids:
             raise ValueError(f'duplicate expected_device_id: {device_id}')
         seen_ids.add(device_id)
+        expected_capabilities = entry.get('expected_signal_capabilities')
+        if expected_capabilities is not None:
+            required = {'accel', 'gyro', 'magnetometer', 'quaternion'}
+            if (not isinstance(expected_capabilities, dict)
+                    or set(expected_capabilities) != required
+                    or any(not isinstance(value, bool)
+                           for value in expected_capabilities.values())):
+                raise ValueError(
+                    f'routes_json[{index}].expected_signal_capabilities is invalid'
+                )
         routes.append({
             'host': host,
             'port': int(port),
@@ -255,6 +368,7 @@ def parse_routes_json(raw: str) -> list[dict[str, Any]]:
             'role': role,
             'esp_port': int(entry.get('esp_port', 5000)),
             'body_segment': str(entry.get('body_segment', '') or ''),
+            'expected_signal_capabilities': expected_capabilities,
         })
     return routes
 
@@ -500,6 +614,7 @@ class FleetDeviceSession:
         expected_device_id: str,
         role: str = '',
         esp_port: int = 5000,
+        expected_signal_capabilities: Mapping[str, bool] | None = None,
         create_publisher: Callable[..., Any] | None = None,
         string_message_type: type = String,
     ) -> None:
@@ -508,6 +623,13 @@ class FleetDeviceSession:
         self.esp_port = esp_port
         self.expected_device_id = normalize_device_id(expected_device_id)
         self.role = role
+        self.expected_signal_capabilities = (
+            dict(expected_signal_capabilities)
+            if expected_signal_capabilities is not None else None
+        )
+        self.signal_status: dict[str, Any] | None = None
+        self.canonical_rejection_reason: str | None = 'capability_missing'
+        self.canonical_rejection_count = 0
         self._create_publisher = create_publisher
         self._string_type = string_message_type
         self._bound_device_id: str | None = None
@@ -606,6 +728,7 @@ class FleetSessionManager:
                 expected_device_id=route['expected_device_id'],
                 role=route.get('role', ''),
                 esp_port=int(route.get('esp_port', 5000)),
+                expected_signal_capabilities=route.get('expected_signal_capabilities'),
                 create_publisher=create_publisher,
                 string_message_type=string_message_type,
             )
@@ -814,6 +937,7 @@ class FleetBridgeNode(Node):
         self.declare_parameter('reconnect_delay_s', 5.0)
         self.declare_parameter('handshake_timeout_s', 15.0)
         self.declare_parameter('identify_timeout_s', 3.0)
+        self.declare_parameter('signal_calibration_path', '')
         self._reconnect_delay_s = float(self.get_parameter('reconnect_delay_s').value)
         self._handshake_timeout_s = float(self.get_parameter('handshake_timeout_s').value)
         self._identify_timeout_s = float(self.get_parameter('identify_timeout_s').value)
@@ -846,6 +970,8 @@ class FleetBridgeNode(Node):
         self._sessions = self._manager.sessions
         self._registry = self._manager.registry
         self._mapping_cache = AppliedMappingCache()
+        calibration_path = str(self.get_parameter('signal_calibration_path').value or '')
+        self._signal_calibrations = load_signal_calibrations(calibration_path)
         self._pub_registry = self.create_publisher(String, FLEET_REGISTRY_TOPIC, 10)
         self._mapping_subscription = self.create_subscription(
             String, MAPPING_CURRENT_TOPIC, self._on_mapping_current, 10
@@ -981,6 +1107,30 @@ class FleetBridgeNode(Node):
         if reported != session.expected_device_id:
             raise RuntimeError(
                 f'[fleet:{index}] expected {session.expected_device_id}, got {reported}'
+            )
+        session.signal_status = None
+        session.canonical_rejection_reason = 'capability_missing'
+        writer.write(SIGNAL_STATUS_QUERY)
+        await writer.drain()
+        try:
+            remaining = max(0.01, min(1.0, deadline - asyncio.get_running_loop().time()))
+            status_raw = await asyncio.wait_for(reader.readline(), timeout=remaining)
+            if status_raw:
+                session.signal_status = parse_signal_status(
+                    status_raw.decode('ascii', errors='replace').rstrip('\r\n'),
+                    reported,
+                    expected_capabilities=session.expected_signal_capabilities,
+                )
+                session.canonical_rejection_reason = None
+        except asyncio.TimeoutError:
+            session.canonical_rejection_reason = 'capability_timeout'
+        except ValueError as exc:
+            reason = str(exc)
+            session.canonical_rejection_reason = (
+                reason if reason in {
+                    'capability_invalid', 'capability_expectation_mismatch',
+                    'device_id_mismatch',
+                } else 'capability_invalid'
             )
         self.on_session_bound(
             session,
@@ -1126,7 +1276,11 @@ class FleetBridgeNode(Node):
         device_id = session._bound_device_id or session.expected_device_id
         now_us = time.monotonic_ns() // 1000
 
-        raw_json = json.dumps({
+        registry_state = self._manager.registry._devices.get(device_id)
+        config = getattr(self, '_measurement_configs', {}).get(
+            session.role, DEFAULT_MEASUREMENT_CONFIG
+        )
+        raw_payload = {
             'sample_index': frame_index,
             'seq': frame_index,
             'time_us': now_us,
@@ -1142,7 +1296,71 @@ class FleetBridgeNode(Node):
                 'qw': s16(9), 'qx': s16(10), 'qy': s16(11), 'qz': s16(12),
             },
             'dio': s16(13),
-        }, sort_keys=True, separators=(',', ':'))
+            'sensor_config': config_as_json(config),
+        }
+
+        status = session.signal_status
+        if status is not None and session._bound_device_id == device_id:
+            calibration = getattr(self, '_signal_calibrations', {}).get(device_id)
+            calibration_input = (
+                {key: value for key, value in calibration.items() if key != 'device_id'}
+                if calibration is not None else None
+            )
+            canonical_measurement = measurement_config(
+                config.accel_range_g,
+                config.gyro_range_dps,
+                magnetometer_sensitivity_uT_per_count=(
+                    status['magnetometer_sensitivity_uT_per_count']
+                    if status['capabilities']['magnetometer'] else None
+                ),
+                magnetometer_calibration=calibration_input,
+            )
+            mapping_cache = getattr(self, '_mapping_cache', None)
+            mapping = (
+                mapping_cache.snapshot(device_id)
+                if mapping_cache is not None else {
+                    'revision': 0, 'segment': None, 'frame': None,
+                    'model_hash': 'unavailable',
+                }
+            )
+            reconnect_epoch = (
+                registry_state.reconnect_generation if registry_state is not None else 0
+            )
+            try:
+                canonical = build_canonical_signal_sample(
+                    topic_token=device_topic_token(device_id),
+                    sample={
+                        'schema': 'rehab.signal_sample.1',
+                        'device_id': device_id,
+                        'sequence': frame_index,
+                        'sequence_origin': 'bridge_session',
+                        'acquisition_time_us': None,
+                        'acquisition_clock': None,
+                        'bridge_monotonic_time_us': now_us,
+                        'reconnect_epoch': reconnect_epoch,
+                        'mapping_epoch': mapping_cache.epoch if mapping_cache is not None else 0,
+                        'capabilities': status['capabilities'],
+                        'raw': dict(raw_payload['imu']),
+                        'quaternion': {
+                            'status': 'available',
+                            'values': [s16(ch) * QUAT_SCALE for ch in (9, 10, 11, 12)],
+                        },
+                        'applied_mapping': mapping,
+                    },
+                    measurement=canonical_measurement,
+                )
+                raw_payload['sample_contract'] = canonical.as_dict()
+                session.canonical_rejection_reason = None
+            except ValueError as exc:
+                session.canonical_rejection_count += 1
+                reason = str(exc)
+                session.canonical_rejection_reason = (
+                    reason if len(reason) <= 64 else 'canonical_sample_rejected'
+                )
+        else:
+            session.canonical_rejection_count += 1
+
+        raw_json = json.dumps(raw_payload, sort_keys=True, separators=(',', ':'))
 
         self._manager.publish_session_raw(session, raw_json)
 

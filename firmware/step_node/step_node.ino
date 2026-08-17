@@ -2787,6 +2787,23 @@ static void printIdentityInventory() {
   replyToHost(line);
 }
 
+static void printSignalStatus() {
+  IdentityPacket self = {};
+  readLocalIdentity(&self);
+  char device_id[20], line[420];
+  formatCanonicalDeviceId(self.base_mac, device_id, sizeof(device_id));
+  snprintf(
+      line, sizeof(line),
+      "SIGNAL_STATUS_OK protocol=signal-cap-v1 device_id=%s "
+      "accel=%u gyro=%u magnetometer=%u quaternion=%u "
+      "magnetometer_model=AK09916 magnetometer_sensitivity_uT_per_count=0.15 "
+      "sequence_transport=none acquisition_clock=none\n",
+      device_id, (unsigned)(icm_ok ? 1 : 0), (unsigned)(icm_ok ? 1 : 0),
+      (unsigned)(mag_ok ? 1 : 0),
+      (unsigned)((icm_ok && g_filter_on) ? 1 : 0));
+  replyToHost(line);
+}
+
 static void recReplyToHost(const char *text) {
 #if ENABLE_TCP && !ENABLE_SERIAL_BENCH
   tcpWriteBytes((const uint8_t *)text, strlen(text), TCP_WRITE_TIMEOUT_MS);
@@ -3017,6 +3034,8 @@ static void handleRecLine(const String &line) {
 static void handleLine(const String &line) {
   if (line.equalsIgnoreCase("IDENTITY?")) {
     printIdentityInventory();
+  } else if (line.equalsIgnoreCase("SIGNAL_STATUS?")) {
+    printSignalStatus();
   } else if (line.startsWith("IDENTIFY ")) {
     handleIdentifyLine(line);
   } else if (line.startsWith("REC ")) {

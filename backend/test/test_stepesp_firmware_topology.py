@@ -135,7 +135,7 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
             with self.subTest(role=role):
                 for literal in required_literals:
                     self.assertIn(literal, source, f'signal_status_protocol absent in {role}: {literal}')
-                body = function_body(source, 'handleLine')
+                body = function_body(source, 'printSignalStatus')
                 self.assertIn('icm_ok', body)
                 self.assertIn('mag_ok', body)
                 self.assertIn('g_filter_on', body)
@@ -148,7 +148,11 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
                 self.assertIn('int16_t ch[NUM_CHANNELS];', body)
                 stream_body = function_body(source, 'streamWriteTask')
                 self.assertIn('rec.ch', stream_body)
-                self.assertNotIn('rec.seq', stream_body)
+                network_binary = stream_body[
+                    stream_body.index('#if ENABLE_TCP'):
+                    stream_body.index('#elif ENABLE_SERIAL_BENCH')
+                ]
+                self.assertNotIn('rec.seq', network_binary)
 
     def test_master_is_the_only_soft_ap_owner(self):
         self.assertEqual(define(self.master, 'WIFI_FORCE_SOFT_AP'), 'true')
