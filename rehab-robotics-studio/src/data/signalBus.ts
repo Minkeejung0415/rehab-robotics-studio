@@ -1,5 +1,6 @@
-import type { Frame, MotorState } from '../types/signals';
+import type { CanonicalSignalSample, Frame, MotorState } from '../types/signals';
 import type { LiveKneeAngleSnapshot } from '../types/health';
+import type { CanonicalSignalRejectionMetadata } from './DataSource';
 import { appDataSource } from './appDataSource';
 import { runMockExecutor, type ExecMemory } from '../graph/mockExecutor';
 import { useGraphStore } from '../state/graphStore';
@@ -37,6 +38,15 @@ export interface SignalSnapshot {
   forceSeries: number[];
   emgSeries: number[];
   kneeSeries: number[];
+  /** Current-browser-session latest accepted sample, keyed only by canonical full MAC. */
+  readonly canonicalSamplesByMac: Readonly<Record<string, CanonicalSignalSample>>;
+  readonly canonicalAcceptedCount: number;
+  readonly canonicalRejectedCount: number;
+  readonly canonicalRejectionsBySource: Readonly<Record<string, CanonicalSignalRejectionState>>;
+}
+
+export interface CanonicalSignalRejectionState extends CanonicalSignalRejectionMetadata {
+  readonly last_update_rejected: boolean;
 }
 
 const emptyMotor: MotorState = {
@@ -62,11 +72,21 @@ function emptySnapshot(): SignalSnapshot {
     forceSeries: new Array(240).fill(0),
     emgSeries: new Array(240).fill(0),
     kneeSeries: [],
+    canonicalSamplesByMac: Object.freeze({}),
+    canonicalAcceptedCount: 0,
+    canonicalRejectedCount: 0,
+    canonicalRejectionsBySource: Object.freeze({}),
   };
 }
 
-interface SignalBusOptions {
+export interface SignalBusOptions {
   subscribeFrames?: (callback: (frame: Frame) => void) => () => void;
+  subscribeCanonicalAccepted?: (
+    callback: (sample: CanonicalSignalSample) => void,
+  ) => () => void;
+  subscribeCanonicalRejected?: (
+    callback: (rejection: CanonicalSignalRejectionMetadata) => void,
+  ) => () => void;
   getGraph?: () => Pick<ReturnType<typeof useGraphStore.getState>, 'nodes' | 'edges'>;
   getLiveKneeAngle?: () => LiveKneeAngleSnapshot;
   subscribeLiveKneeAngle?: (
@@ -100,6 +120,10 @@ export class SignalBus {
   private readonly unsubscribers: Array<() => void> = [];
   private frameHandle: number | null = null;
   private disposed = false;
+  private canonicalSamples = new Map<string, CanonicalSignalSample>();
+  private canonicalRejections = new Map<string, CanonicalSignalRejectionState>();
+  private canonicalAcceptedCount = 0;
+  private canonicalRejectedCount = 0;
 
   private latest: SignalSnapshot = emptySnapshot();
   private snapshot: SignalSnapshot = this.latest;
@@ -140,6 +164,14 @@ export class SignalBus {
         (frame) => this.ingest(frame),
       ),
       subscribeLiveKneeAngle((snapshot) => this.setLiveKneeAngle(snapshot)),
+      (options.subscribeCanonicalAccepted
+        ?? ((callback) => appDataSource.subscribeCanonicalAccepted(callback)))(
+        (sample) => this.ingestCanonicalAccepted(sample),
+      ),
+      (options.subscribeCanonicalRejected
+        ?? ((callback) => appDataSource.subscribeCanonicalRejected(callback)))(
+        (rejection) => this.ingestCanonicalRejected(rejection),
+      ),
     );
 
     if (this.requestFrame) {
@@ -214,6 +246,7 @@ export class SignalBus {
     else this.kneeBuf.push(kneeAngle);
 
     this.latest = {
+      ...this.latest,
       t: frame.t,
       forceRaw: frame.force.fz,
       forceProcessed,
@@ -229,6 +262,52 @@ export class SignalBus {
     if (!this.requestFrame) this.publish();
   }
 
+  private ingestCanonicalAccepted(sample: CanonicalSignalSample): void {
+    this.canonicalSamples.set(sample.device_id, sample);
+    this.canonicalAcceptedCount = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      this.canonicalAcceptedCount + 1,
+    );
+    const priorRejection = this.canonicalRejections.get(sample.device_id);
+    if (priorRejection?.last_update_rejected) {
+      this.canonicalRejections.set(sample.device_id, Object.freeze({
+        ...priorRejection,
+        should_announce: false,
+        last_update_rejected: false,
+      }));
+    }
+    this.markDirty();
+  }
+
+  private ingestCanonicalRejected(rejection: CanonicalSignalRejectionMetadata): void {
+    const sourceKey = rejection.device_id ?? 'unknown';
+    const priorRejection = this.canonicalRejections.get(sourceKey);
+    this.canonicalRejectedCount = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      this.canonicalRejectedCount + 1,
+    );
+    this.canonicalRejections.set(sourceKey, Object.freeze({
+      device_id: rejection.device_id,
+      reason: rejection.reason,
+      rejected_at_ms: Math.min(
+        Number.MAX_SAFE_INTEGER,
+        Math.max(0, Math.trunc(rejection.rejected_at_ms)),
+      ),
+      count: Math.min(
+        Number.MAX_SAFE_INTEGER,
+        Math.max(priorRejection?.count ?? 0, Math.max(0, Math.trunc(rejection.count))),
+      ),
+      should_announce: priorRejection?.reason !== rejection.reason,
+      last_update_rejected: true,
+    }));
+    this.markDirty();
+  }
+
+  private markDirty(): void {
+    this.dirty = true;
+    if (!this.requestFrame) this.publish();
+  }
+
   private publish(): void {
     this.dirty = false;
     this.snapshot = {
@@ -236,6 +315,10 @@ export class SignalBus {
       forceSeries: this.forceBuf.toArray(),
       emgSeries: this.emgBuf.toArray(),
       kneeSeries: this.kneeBuf.toArray(),
+      canonicalSamplesByMac: Object.freeze(Object.fromEntries(this.canonicalSamples)),
+      canonicalAcceptedCount: this.canonicalAcceptedCount,
+      canonicalRejectedCount: this.canonicalRejectedCount,
+      canonicalRejectionsBySource: Object.freeze(Object.fromEntries(this.canonicalRejections)),
     };
     this.listeners.forEach((listener) => listener());
   }

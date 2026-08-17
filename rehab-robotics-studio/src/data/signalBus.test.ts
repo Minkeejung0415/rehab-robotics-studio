@@ -23,8 +23,7 @@ function sampleFor(
   input.device_id = `esp32:${mac}`;
   Object.assign(input, overrides);
   const parsed = parseCanonicalSignalSample(input, `mac_${mac}`);
-  assert.equal(parsed.ok, true, parsed.ok ? '' : parsed.reason);
-  if (!parsed.ok) throw new Error(parsed.reason);
+  if (!parsed.ok) throw new Error(`sample fixture rejected: ${parsed.reason}`);
   return parsed.value;
 }
 
@@ -123,16 +122,22 @@ describe('SignalBus canonical snapshot', () => {
       bus.subscribe(() => { notifications += 1; });
       assert.ok(onAccepted);
       assert.ok(onRejected);
+      const emitAccepted = onAccepted as (sample: CanonicalSignalSample) => void;
+      const emitRejected = onRejected as (rejection: CanonicalSignalRejectionMetadata) => void;
+      const tick = (timestamp: number) => {
+        const callback = scheduledFrame as FrameRequestCallback | null;
+        assert.ok(callback);
+        callback(timestamp);
+      };
 
       const macA = 'aabbccddeeff';
       const macB = '001122334455';
       for (let sequence = 0; sequence < 100; sequence += 1) {
-        onAccepted(sampleFor(sequence % 2 === 0 ? macA : macB, { sequence }));
+        emitAccepted(sampleFor(sequence % 2 === 0 ? macA : macB, { sequence }));
       }
       assert.equal(bus.getSnapshot().canonicalAcceptedCount, 0, 'ingest must not publish synchronously');
       assert.equal(notifications, 0);
-      assert.ok(scheduledFrame);
-      scheduledFrame(34);
+      tick(34);
 
       const firstPublished = bus.getSnapshot();
       assert.equal(notifications, 1);
@@ -148,7 +153,7 @@ describe('SignalBus canonical snapshot', () => {
       assert.equal(Object.isFrozen(firstPublished.canonicalSamplesByMac[`esp32:${macA}`].raw), true);
 
       const retainedSample = firstPublished.canonicalSamplesByMac[`esp32:${macA}`];
-      onRejected({
+      emitRejected({
         device_id: `esp32:${macA}`,
         reason: 'schema_invalid',
         rejected_at_ms: 200,
@@ -156,8 +161,7 @@ describe('SignalBus canonical snapshot', () => {
         should_announce: true,
       });
       assert.equal(notifications, 1);
-      assert.ok(scheduledFrame);
-      scheduledFrame(68);
+      tick(68);
       const rejectedOnce = bus.getSnapshot();
       assert.equal(rejectedOnce.canonicalSamplesByMac[`esp32:${macA}`], retainedSample);
       assert.equal(rejectedOnce.canonicalRejectedCount, 1);
@@ -170,22 +174,21 @@ describe('SignalBus canonical snapshot', () => {
         last_update_rejected: true,
       });
 
-      onRejected({
+      emitRejected({
         device_id: `esp32:${macA}`,
         reason: 'schema_invalid',
         rejected_at_ms: 201,
         count: 2,
         should_announce: true,
       });
-      onRejected({
+      emitRejected({
         device_id: null,
         reason: 'device_id_invalid',
         rejected_at_ms: 202,
         count: Number.MAX_SAFE_INTEGER,
         should_announce: true,
       });
-      assert.ok(scheduledFrame);
-      scheduledFrame(102);
+      tick(102);
       const rejectedAgain = bus.getSnapshot();
       assert.equal(rejectedAgain.canonicalRejectedCount, 3);
       assert.equal(rejectedAgain.canonicalRejectionsBySource[`esp32:${macA}`].should_announce, false);
@@ -195,9 +198,8 @@ describe('SignalBus canonical snapshot', () => {
       assert.equal(Object.isFrozen(rejectedAgain.canonicalRejectionsBySource.unknown), true);
 
       // A reconnect epoch explicitly permits a new low sequence without joining sessions.
-      onAccepted(sampleFor(macA, { sequence: 0, reconnect_epoch: 3 }));
-      assert.ok(scheduledFrame);
-      scheduledFrame(136);
+      emitAccepted(sampleFor(macA, { sequence: 0, reconnect_epoch: 3 }));
+      tick(136);
       const reconnected = bus.getSnapshot();
       assert.equal(reconnected.canonicalSamplesByMac[`esp32:${macA}`].sequence, 0);
       assert.equal(reconnected.canonicalSamplesByMac[`esp32:${macA}`].reconnect_epoch, 3);
