@@ -64,7 +64,7 @@ describe('canonical signal contract shared-fixture parity', () => {
   for (const testCase of fixture.accepted) {
     it(`accepts ${testCase.id} with the expected canonical shape`, () => {
       const result = parseCanonicalSignalSample(applyCase(testCase), testCase.topic_token);
-      assert.equal(result.ok, true, result.ok ? undefined : result.reason);
+      assert.equal(result.ok, true, result.ok ? 'expected accepted sample' : result.reason);
       if (result.ok) assertSubset(result.value, testCase.expect);
     });
   }
@@ -80,7 +80,7 @@ describe('canonical signal contract shared-fixture parity', () => {
     const testCase = fixture.accepted[0];
     const input = applyCase(testCase);
     const result = parseCanonicalSignalSample(input, testCase.topic_token);
-    assert.equal(result.ok, true, result.ok ? undefined : result.reason);
+    assert.equal(result.ok, true, result.ok ? 'expected accepted sample' : result.reason);
     if (!result.ok) return;
 
     const raw = input.raw as Record<string, number>;
