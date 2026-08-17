@@ -181,6 +181,82 @@ class FleetSignalStatusProtocolTest(unittest.TestCase):
                         loader(str(path), expected_device_id=self.DEVICE_ID)
 
 
+class FleetAppliedMappingProvenanceTest(unittest.TestCase):
+    DEVICE_ID = 'esp32:aabbccddeeff'
+    MODEL_HASH = 'sha256:' + 'b' * 64
+
+    def _document(self, *, draft_frame='draft_frame', applied_frame='femur_r_imu'):
+        return {
+            'schema_version': 'map.v1',
+            'revision': 9,
+            'assignments': {
+                self.DEVICE_ID: {
+                    'state': 'assigned', 'segment': 'draft_segment', 'frame': draft_frame,
+                },
+            },
+            'applied_revision': 3,
+            'applied_assignments': {
+                self.DEVICE_ID: {
+                    'state': 'assigned', 'segment': 'femur_r', 'frame': applied_frame,
+                },
+            },
+            'model_hash': self.MODEL_HASH,
+        }
+
+    def test_applied_provenance_ignores_draft_and_snapshots_authoritative_fields(self):
+        cache = fleet.AppliedMappingCache()
+        self.assertTrue(cache.update(self._document()))
+        first = cache.snapshot(self.DEVICE_ID)
+        self.assertEqual(first['revision'], 3)
+        self.assertEqual(first['segment'], 'femur_r')
+        self.assertEqual(first['frame'], 'femur_r_imu')
+        self.assertEqual(first['model_hash'], self.MODEL_HASH)
+        self.assertEqual(cache.epoch, 1)
+
+        draft_only = self._document(draft_frame='another_draft')
+        draft_only['revision'] = 10
+        self.assertFalse(cache.update(draft_only))
+        self.assertEqual(cache.epoch, 1)
+        self.assertEqual(cache.snapshot(self.DEVICE_ID), first)
+
+    def test_applied_provenance_apply_changes_only_subsequent_immutable_snapshot(self):
+        cache = fleet.AppliedMappingCache()
+        cache.update(self._document())
+        before = cache.snapshot(self.DEVICE_ID)
+        applied = self._document(applied_frame='tibia_r_imu')
+        applied['applied_revision'] = 10
+        self.assertTrue(cache.update(applied))
+        after = cache.snapshot(self.DEVICE_ID)
+        self.assertEqual(before['frame'], 'femur_r_imu')
+        self.assertEqual(after['frame'], 'tibia_r_imu')
+        self.assertEqual(cache.epoch, 2)
+
+    def test_applied_provenance_unassigned_and_reconnect_epochs_are_independent(self):
+        cache = fleet.AppliedMappingCache()
+        unassigned = self._document()
+        unassigned['applied_revision'] = 0
+        unassigned['applied_assignments'] = {}
+        cache.update(unassigned)
+        snapshot = cache.snapshot(self.DEVICE_ID)
+        self.assertEqual(snapshot['revision'], 0)
+        self.assertIsNone(snapshot['segment'])
+        self.assertIsNone(snapshot['frame'])
+
+        store = fleet.FleetRegistryStore()
+        store.upsert_connected(
+            device_id=self.DEVICE_ID, role='master', host='127.0.0.1', esp_port=5000,
+            listen_port=5002, configured_hz=100, observed_hz=100, last_seen_us=1,
+        )
+        mapping_epoch = cache.epoch
+        store.mark_reconnecting(self.DEVICE_ID, last_seen_us=2)
+        store.upsert_connected(
+            device_id=self.DEVICE_ID, role='master', host='127.0.0.1', esp_port=5000,
+            listen_port=5002, configured_hz=100, observed_hz=100, last_seen_us=3,
+        )
+        self.assertEqual(cache.epoch, mapping_epoch)
+        self.assertEqual(store._devices[self.DEVICE_ID].reconnect_generation, 2)
+
+
 class FleetCanonicalTopicContractsTest(unittest.TestCase):
     def test_device_topic_token_maps_to_canonical_raw_and_status_topics(self):
         device_id = 'esp32:aabbccddeeff'
