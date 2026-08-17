@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { CanonicalSignalRejectionState } from '../../data/signalBus';
+import type { CanonicalSignalRejectionState, SignalSnapshot } from '../../data/signalBus';
 import type {
   CanonicalSignalRejectionReason,
   CanonicalSignalSample,
@@ -410,3 +410,63 @@ export function SignalSourceCard({
 }
 
 export { RejectionNotice };
+
+export interface SignalContractPanelViewProps {
+  readonly snapshot: SignalSnapshot;
+}
+
+export function SignalContractPanelView({ snapshot }: SignalContractPanelViewProps) {
+  const samples = Object.values(snapshot.canonicalSamplesByMac)
+    .sort((left, right) => left.device_id.localeCompare(right.device_id));
+  const rejectionOnly = Object.entries(snapshot.canonicalRejectionsBySource)
+    .filter(([source, rejection]) => (
+      rejection.last_update_rejected && !snapshot.canonicalSamplesByMac[source]
+    ))
+    .sort(([left], [right]) => left.localeCompare(right));
+  const summary = snapshot.canonicalRejectedCount === 0
+    ? <>{snapshot.canonicalAcceptedCount} accepted</>
+    : (
+      <>
+        {snapshot.canonicalAcceptedCount} accepted ·{' '}
+        <span className="signal-summary-rejected">{snapshot.canonicalRejectedCount} rejected</span>
+      </>
+    );
+
+  return (
+    <section className="dash-panel signal-contract-panel">
+      <div className="dash-head">
+        <h3>Signal Contract</h3>
+        <span className="signal-contract-summary" role="status" aria-live="polite">
+          {summary}
+        </span>
+      </div>
+
+      {samples.length === 0 && rejectionOnly.length === 0 && (
+        <div className="signal-empty-state">
+          <strong>No canonical samples</strong>
+          <span>Start acquisition or check the ROS bridge connection.</span>
+        </div>
+      )}
+
+      <div className="signal-source-list">
+        {samples.map((canonicalSample) => (
+          <SignalSourceCard
+            key={canonicalSample.device_id}
+            sample={canonicalSample}
+            rejection={snapshot.canonicalRejectionsBySource[canonicalSample.device_id]}
+          />
+        ))}
+        {rejectionOnly.map(([source, rejection]) => (
+          <div className="signal-rejection-only" key={source}>
+            {rejection.device_id !== null && <strong>{rejection.device_id}</strong>}
+            <RejectionNotice rejection={rejection} hasAcceptedSample={false} />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function SignalContractPanel({ snapshot }: SignalContractPanelViewProps) {
+  return <SignalContractPanelView snapshot={snapshot} />;
+}

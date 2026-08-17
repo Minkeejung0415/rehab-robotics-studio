@@ -6,10 +6,12 @@ import type {
   SignalAvailabilityReason,
 } from '../../types/signals';
 import {
+  SignalContractPanelView,
   SignalSourceCard,
   availabilityReasonText,
   buildChannelPresentation,
 } from './SignalContractPanel';
+import type { SignalSnapshot } from '../../data/signalBus';
 
 function sample(
   overrides: Partial<CanonicalSignalSample> = {},
@@ -209,5 +211,97 @@ describe('Signal Contract presentation', () => {
     assert.match(markup, /Show SI Values<\/button>/);
     assert.match(markup, /disabled="" aria-describedby="signal-si-disabled-esp32-aabbccddeeff"/);
     assert.match(markup, /SI values are unavailable for every channel group/);
+  });
+});
+
+function snapshot(overrides: Partial<SignalSnapshot> = {}): SignalSnapshot {
+  return {
+    t: 0,
+    forceRaw: 0,
+    forceProcessed: 0,
+    emgRaw: 0,
+    emgEnvelope: 0,
+    kneeAngle: null,
+    motor: {
+      position: 0, velocity: 0, torque: 0, current: 0,
+      temperature: 0, enabled: false, fault: false, t: 0,
+    },
+    forceSeries: [],
+    emgSeries: [],
+    kneeSeries: [],
+    canonicalSamplesByMac: {},
+    canonicalAcceptedCount: 0,
+    canonicalRejectedCount: 0,
+    canonicalRejectionsBySource: {},
+    ...overrides,
+  };
+}
+
+describe('Signal Contract panel composition', () => {
+  it('renders the exact empty state without synthesizing a source', () => {
+    const markup = renderToStaticMarkup(<SignalContractPanelView snapshot={snapshot()} />);
+    assert.match(markup, /role="status" aria-live="polite">0 accepted/);
+    assert.match(markup, /No canonical samples/);
+    assert.match(markup, /Start acquisition or check the ROS bridge connection\./);
+    assert.doesNotMatch(markup, /signal-source-card/);
+  });
+
+  it('sorts accepted cards by canonical full MAC and summarizes accepted and rejected counts', () => {
+    const later = sample({ device_id: 'esp32:ffeeddccbbaa', topic_token: 'mac_ffeeddccbbaa' });
+    const earlier = sample();
+    const markup = renderToStaticMarkup(<SignalContractPanelView snapshot={snapshot({
+      canonicalSamplesByMac: {
+        [later.device_id]: later,
+        [earlier.device_id]: earlier,
+      },
+      canonicalAcceptedCount: 12,
+      canonicalRejectedCount: 2,
+    })} />);
+    assert.match(markup, /12 accepted · <span class="signal-summary-rejected">2 rejected<\/span>/);
+    assert.ok(markup.indexOf(earlier.device_id) < markup.indexOf(later.device_id));
+  });
+
+  it('keeps the last accepted values visible beside bounded persistent rejection feedback', () => {
+    const value = sample();
+    const markup = renderToStaticMarkup(<SignalContractPanelView snapshot={snapshot({
+      canonicalSamplesByMac: { [value.device_id]: value },
+      canonicalAcceptedCount: 1,
+      canonicalRejectedCount: 1,
+      canonicalRejectionsBySource: {
+        [value.device_id]: {
+          device_id: value.device_id,
+          reason: 'topic_device_mismatch',
+          rejected_at_ms: 1_700_000_000_000,
+          count: 1,
+          should_announce: true,
+          last_update_rejected: true,
+        },
+      },
+    })} />);
+    assert.match(markup, /Last update rejected/);
+    assert.match(markup, /Topic identity does not match the canonical full MAC/);
+    assert.match(markup, /role="alert"/);
+    assert.match(markup, />-32768</);
+  });
+
+  it('renders rejection-only feedback without a value card and suppresses duplicate alerts', () => {
+    const rejectedMac = 'esp32:112233445566';
+    const markup = renderToStaticMarkup(<SignalContractPanelView snapshot={snapshot({
+      canonicalRejectedCount: 3,
+      canonicalRejectionsBySource: {
+        [rejectedMac]: {
+          device_id: rejectedMac,
+          reason: 'schema_invalid',
+          rejected_at_ms: 1_700_000_000_000,
+          count: 3,
+          should_announce: false,
+          last_update_rejected: true,
+        },
+      },
+    })} />);
+    assert.match(markup, /Sample rejected/);
+    assert.match(markup, /Canonical schema is invalid/);
+    assert.match(markup, /role="status"/);
+    assert.doesNotMatch(markup, /signal-source-card/);
   });
 });
