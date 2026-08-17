@@ -1,4 +1,30 @@
-import type { Frame } from '../types/signals';
+import type {
+  CanonicalSignalRejectionReason,
+  CanonicalSignalSample,
+  Frame,
+} from '../types/signals';
+
+export type DataSourceUnsubscribe = () => void;
+export type CanonicalSignalAcceptedCallback = (sample: CanonicalSignalSample) => void;
+
+/** Bounded, allowlisted metadata for a canonical payload rejected at ingress. */
+export interface CanonicalSignalRejectionMetadata {
+  readonly device_id: `esp32:${string}` | null;
+  readonly reason: CanonicalSignalRejectionReason;
+  readonly rejected_at_ms: number;
+  readonly count: number;
+  readonly should_announce: boolean;
+}
+
+export type CanonicalSignalRejectedCallback = (
+  rejection: CanonicalSignalRejectionMetadata,
+) => void;
+
+/** Optional high-rate canonical stream kept separate from legacy acquisition frames. */
+export interface CanonicalSignalDataSource {
+  subscribeCanonicalAccepted(callback: CanonicalSignalAcceptedCallback): DataSourceUnsubscribe;
+  subscribeCanonicalRejected(callback: CanonicalSignalRejectedCallback): DataSourceUnsubscribe;
+}
 
 /**
  * Abstraction over a stream of acquisition frames.
@@ -23,7 +49,7 @@ export interface DataSource {
    * Frames may arrive at the data rate — consumers must NOT assume this maps
    * to React render rate (see `signalBus`).
    */
-  subscribe(callback: (frame: Frame) => void): () => void;
+  subscribe(callback: (frame: Frame) => void): DataSourceUnsubscribe;
 }
 
 /**

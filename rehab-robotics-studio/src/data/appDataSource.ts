@@ -1,4 +1,4 @@
-import type { DataSource } from './DataSource';
+import type { CanonicalSignalDataSource, DataSource } from './DataSource';
 import { mockDataSource } from './MockDataSource';
 import { RosbridgeDataSource, type ImuControlParameter } from './RosbridgeDataSource';
 import { LiveKneeAngleTracker, normalizeLiveKneeReason } from './liveKneeAngle';
@@ -66,7 +66,7 @@ if (sourceMode !== 'mock') active = rosbridgeDataSource;
  * Application-level source selection. Real ROS data is the default; mock data
  * keeps the editor usable when rosbridge is intentionally not running.
  */
-export const appDataSource: DataSource = {
+export const appDataSource: DataSource & CanonicalSignalDataSource = {
   start(rateHz) {
     requestedRate = rateHz;
     running = true;
@@ -85,6 +85,16 @@ export const appDataSource: DataSource = {
   subscribe(callback) {
     const unsubscribers = [mockDataSource.subscribe(callback), rosbridgeDataSource.subscribe(callback)];
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
+  },
+  subscribeCanonicalAccepted(callback) {
+    return rosbridgeDataSource.subscribeCanonicalAccepted((sample) => {
+      if (active === rosbridgeDataSource) callback(sample);
+    });
+  },
+  subscribeCanonicalRejected(callback) {
+    return rosbridgeDataSource.subscribeCanonicalRejected((rejection) => {
+      if (active === rosbridgeDataSource) callback(rejection);
+    });
   },
 };
 
