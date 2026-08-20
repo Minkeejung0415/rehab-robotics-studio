@@ -24,8 +24,9 @@ const STYLES = `
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  max-width: 1200px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
   padding: 0 0 16px;
 }
 .mapping-workspace-header {
@@ -85,6 +86,16 @@ const STYLES = `
   align-items: flex-start;
   gap: 8px;
   flex-wrap: wrap;
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  box-shadow: 0 -8px 20px #111416cc;
+}
+.mapping-apply-guidance {
+  flex-basis: 100%;
+  margin: 0;
+  color: #8b969c;
+  font-size: 11px;
 }
 .mapping-segment-select {
   border: 1px solid #3b484e;
@@ -120,6 +131,23 @@ function connectionStateColor(state: string): string {
 }
 
 type PanelBadgeState = 'no_model' | 'draft' | 'saved' | 'applied' | 'runtime_ready';
+
+const MAPPING_OPTION_SEPARATOR = '\u001f';
+
+export function mappingFrameOptionValue(segment: string, frame: string): string {
+  return `${segment}${MAPPING_OPTION_SEPARATOR}${frame}`;
+}
+
+export function parseMappingFrameOptionValue(
+  value: string,
+): { segment: string; frame: string } | null {
+  const separator = value.indexOf(MAPPING_OPTION_SEPARATOR);
+  if (separator <= 0 || separator === value.length - 1) return null;
+  return {
+    segment: value.slice(0, separator),
+    frame: value.slice(separator + MAPPING_OPTION_SEPARATOR.length),
+  };
+}
 
 function computePanelBadgeState(
   catalogModelHash: string | null,
@@ -340,7 +368,11 @@ function MappingDeviceRow({
   const badgeLabel = rowBadgeLabel(mappingStatus);
   const identifyOutcome = identifyResult !== null ? identifyOutcomeLabel(identifyResult) : null;
 
-  const selectValue = draftSegment ?? backendSegment ?? '';
+  const selectedSegment = draftSegment ?? backendSegment ?? '';
+  const selectedFrame = row.draftFrame ?? row.backendFrame ?? '';
+  const selectValue = selectedSegment && selectedFrame
+    ? mappingFrameOptionValue(selectedSegment, selectedFrame)
+    : '';
   const rateDisplay = rateHz !== null ? `${rateHz.toFixed(1)} Hz` : '—';
   const dropsDisplay = rateHz !== null ? `${dropCount} drops` : '—';
 
@@ -394,7 +426,12 @@ function MappingDeviceRow({
           >
             <option value="">— Select segment —</option>
             {catalogFrameList.map((f) => (
-              <option key={f.path} value={f.path}>{f.name}</option>
+              <option
+                key={mappingFrameOptionValue(f.path, f.name)}
+                value={mappingFrameOptionValue(f.path, f.name)}
+              >
+                {f.path === f.name ? f.path : `${f.path} — ${f.name}`}
+              </option>
             ))}
           </select>
         )}
@@ -576,9 +613,10 @@ function MappingFooter({
   resetConfirm,
 }: MappingFooterProps) {
   const applyEnabled =
-    applyStatus !== 'applying' && !calibrationInterlocked && mappingRevision > 0;
-
-  void catalogModelHash; // used by parent's onReset handler via closure
+    applyStatus !== 'applying'
+    && !calibrationInterlocked
+    && catalogModelHash !== null
+    && mappingRevision > 0;
 
   return (
     <>
@@ -593,6 +631,9 @@ function MappingFooter({
         </div>
       )}
       <div className="mapping-workspace-footer">
+        <p className="mapping-apply-guidance">
+          Select a body segment for each ESP, Save each sensor assignment, then Apply Mapping.
+        </p>
         <button
           className="btn"
           style={{ borderColor: applyEnabled ? '#4a90d6' : undefined }}
@@ -662,7 +703,13 @@ export function MappingWorkspace() {
 
   // ── Segment selector change handler (D-16) ───────────────────────────────
   const handleSegmentChange = useCallback((deviceId: string, value: string) => {
-    useMappingStore.getState().setDraftSegment(deviceId, value, value);
+    const selected = parseMappingFrameOptionValue(value);
+    if (!selected) return;
+    useMappingStore.getState().setDraftSegment(
+      deviceId,
+      selected.segment,
+      selected.frame,
+    );
   }, []);
 
   // ── Not Used checkbox change handler (D-16) ──────────────────────────────
@@ -838,6 +885,16 @@ export function MappingWorkspace() {
           <p style={{ padding: '16px', color: '#8b969c', fontSize: '12px' }}>
             No model loaded — connect to ROS and load an .osim file to begin.
           </p>
+          <MappingFooter
+            applyStatus={applyStatus}
+            applyError={applyError}
+            calibrationInterlocked={calibrationInterlocked}
+            mappingRevision={mappingRevision}
+            catalogModelHash={catalogModelHash}
+            onApply={() => void handleApply()}
+            onReset={() => void handleReset()}
+            resetConfirm={resetConfirm}
+          />
         </div>
       </>
     );

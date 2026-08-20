@@ -8,19 +8,23 @@ equivalent right-handed active 3x3 rotation matrix consumed by the visualizer
 adapter.
 
 This module intentionally performs no sensor calibration, heading correction,
-timestamp pairing, inverse kinematics, joint-state solving, or model-pose
-mutation.
+timestamp pairing, inverse kinematics, or joint-state solving.  The visualizer
+adapter does apply already-solved joint coordinates to its display-only model
+state so anatomical geometry follows the IK result.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
+import logging
 import math
+_log = logging.getLogger(__name__)
 import os
 from pathlib import Path
 import shutil
-from typing import Any, Mapping, Protocol
+import time
+from typing import Any, Callable, Mapping, Protocol
 
 
 _MIN_QUATERNION_NORM = 1e-8
@@ -148,6 +152,13 @@ class VisualizerAdapter(Protocol):
     ) -> bool:
         """Update only ``sensor_id`` and return whether the update was accepted."""
 
+    def update_pose(
+        self,
+        coordinate_names: list[str],
+        positions_rad: list[float],
+    ) -> bool:
+        """Apply a validated IK solution to the visualized model pose."""
+
     def status(self) -> dict[str, object]:
         """Return JSON-safe availability, state, and stable reason fields."""
 
@@ -179,6 +190,14 @@ class UnavailableVisualizerAdapter:
         del sensor_id, frame_name, rotation
         return True
 
+    def update_pose(
+        self,
+        coordinate_names: list[str],
+        positions_rad: list[float],
+    ) -> bool:
+        del coordinate_names, positions_rad
+        return True
+
     def status(self) -> dict[str, object]:
         return {
             "available": False,
@@ -196,9 +215,9 @@ class _AdapterInitializationError(RuntimeError):
 class OpenSimVisualizerAdapter:
     """Single-owner OpenSim model and native Simbody visualizer adapter.
 
-    Mapped model frames supply only the displayed triads' ground positions.
-    Each ROS message supplies an absolute sensor orientation; model coordinates
-    and articulated-body transforms are never mutated.
+    Raw sensor updates are validated and cached without independently rotating
+    ground-fixed triads. Solved IK coordinates mutate the adapter-owned model
+    state so anatomical geometry and its attached sensor triads move together.
     """
 
     _ROLE_COLORS = {
@@ -212,6 +231,7 @@ class OpenSimVisualizerAdapter:
         frame_mappings: Mapping[str, str],
         *,
         opensim_module: Any | None = None,
+        monotonic_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._opensim = opensim_module or import_module("opensim")
         self._frame_mappings = dict(frame_mappings)
@@ -220,11 +240,15 @@ class OpenSimVisualizerAdapter:
         self._decoration_groups: dict[str, Any] = {}
         self._decoration_indices: dict[str, int] = {}
         self._latest_transforms: dict[str, Any] = {}
+        self._latest_sensor_rotations: dict[str, OpenSimRotation] = {}
         self._decoration_generator: Any | None = None
         self._mode = ""
         self._available = False
         self._state_name = "initializing"
         self._reason = ""
+        self._monotonic_clock = monotonic_clock
+        self._display_epoch = float(monotonic_clock())
+        self._display_time_s = 0.0
 
         try:
             configure_opensim_geometry_search_paths(
@@ -443,6 +467,13 @@ class OpenSimVisualizerAdapter:
 
         try:
             self._model_visualizer.show(self._state)
+            zoom_to_geometry = getattr(
+                self._simbody_visualizer,
+                "zoomCameraToShowAllGeometry",
+                None,
+            )
+            if callable(zoom_to_geometry):
+                zoom_to_geometry()
         except Exception:
             self._available = False
             self._state_name = "failed"
@@ -468,22 +499,60 @@ class OpenSimVisualizerAdapter:
         if not isinstance(rotation, OpenSimRotation):
             raise ValueError("rotation_value_required")
 
+        self._latest_sensor_rotations[sensor_id] = rotation
+        return True
+
+    def update_pose(
+        self,
+        coordinate_names: list[str],
+        positions_rad: list[float],
+    ) -> bool:
+        if len(coordinate_names) != len(positions_rad):
+            raise ValueError("pose_coordinate_length_mismatch")
+        if not coordinate_names:
+            raise ValueError("pose_coordinates_required")
+        if not all(math.isfinite(float(value)) for value in positions_rad):
+            raise ValueError("pose_position_non_finite")
+
         try:
-            transform = self._opensim.Transform(
-                self._rotation_for_native(rotation),
-                self._anchor_positions[sensor_id],
+            coordinate_set = self._model.getCoordinateSet()
+            coordinates: list[Any] = []
+            for name in coordinate_names:
+                normalized_name = str(name).strip().lstrip("/")
+                if not normalized_name:
+                    raise ValueError("pose_coordinate_name_invalid")
+                coordinates.append(coordinate_set.get(normalized_name))
+            for coordinate, value in zip(coordinates, positions_rad):
+                coordinate.setValue(self._state, float(value), False)
+
+            elapsed = max(
+                0.0,
+                float(self._monotonic_clock()) - self._display_epoch,
             )
-            self._latest_transforms[sensor_id] = transform
-            if self._mode == "retained_decorations":
-                decoration = self._simbody_visualizer.updDecoration(
-                    self._decoration_indices[sensor_id],
-                )
-                decoration.setTransform(transform)
+            self._display_time_s = max(elapsed, self._display_time_s + 1e-6)
+            self._state.setTime(self._display_time_s)
+            self._model.realizePosition(self._state)
+            for sensor_id, frame in self._frames.items():
+                transform = frame.getTransformInGround(self._state)
+                self._latest_transforms[sensor_id] = transform
+                if self._mode == "retained_decorations":
+                    decoration = self._simbody_visualizer.updDecoration(
+                        self._decoration_indices[sensor_id]
+                    )
+                    decoration.setTransform(transform)
             self._model.updVisualizer().show(self._state)
-        except Exception:
+        except ValueError:
+            raise
+        except Exception as exc:
+            _log.warning(
+                "update_pose failed — coord_names=%r exc=%s: %s",
+                coordinate_names,
+                type(exc).__name__,
+                exc,
+            )
             self._available = False
             self._state_name = "unavailable"
-            self._reason = "visualizer_update_failed"
+            self._reason = "visualizer_pose_update_failed"
             return False
         self._available = True
         self._state_name = "ready"

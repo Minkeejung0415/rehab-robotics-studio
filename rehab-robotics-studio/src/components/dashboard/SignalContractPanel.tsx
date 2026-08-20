@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { MiniChart } from '../common/MiniChart';
 import type { CanonicalSignalRejectionState, SignalSnapshot } from '../../data/signalBus';
 import type {
   CanonicalSignalRejectionReason,
@@ -251,7 +252,37 @@ function badgeClass(badge: SignalAvailabilityBadge): string {
   return 'signal-availability--unavailable';
 }
 
-function ChannelRow({ row, sourceId }: { row: ChannelPresentation; sourceId: string }) {
+const TRACE_COLORS = ['#4a90d6', '#46c47a', '#e0a64a', '#b78cff'] as const;
+
+function channelSeries(
+  history: readonly CanonicalSignalSample[],
+  mode: SignalUnitMode,
+  channelKey: ChannelPresentation['key'],
+  valueLabel: string,
+): number[] {
+  const series: number[] = [];
+  for (const historicalSample of history) {
+    const channel = buildChannelPresentation(historicalSample, mode)
+      .find((candidate) => candidate.key === channelKey);
+    const value = channel?.values.find((candidate) => candidate.label === valueLabel)?.value;
+    if (value === undefined || value === '—') continue;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) series.push(numeric);
+  }
+  return series;
+}
+
+function ChannelRow({
+  row,
+  sourceId,
+  history,
+  unitMode,
+}: {
+  row: ChannelPresentation;
+  sourceId: string;
+  history: readonly CanonicalSignalSample[];
+  unitMode: SignalUnitMode;
+}) {
   const reasonId = row.reason ? `${sourceId}-${row.key}-reason` : undefined;
   return (
     <div className="signal-channel-row" aria-describedby={reasonId}>
@@ -274,6 +305,20 @@ function ChannelRow({ row, sourceId }: { row: ChannelPresentation; sourceId: str
       <div className="signal-channel-availability">
         {row.unit !== null && <span className="signal-channel-unit">{row.unit}</span>}
         {row.reason !== null && <span id={reasonId} className="signal-channel-reason">{row.reason}</span>}
+      </div>
+      <div className="signal-channel-graphs">
+        {row.values.map((value, index) => (
+          <div className="signal-component-graph" key={value.label}>
+            <span>{value.label}</span>
+            <MiniChart
+              data={channelSeries(history, unitMode, row.key, value.label)}
+              color={TRACE_COLORS[index % TRACE_COLORS.length]!}
+              height={48}
+              fill={false}
+              ariaLabel={`${value.label} history for ${sourceId}`}
+            />
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -305,6 +350,7 @@ function RejectionNotice({ rejection, hasAcceptedSample }: RejectionNoticeProps)
 export interface SignalSourceCardProps {
   readonly sample: CanonicalSignalSample;
   readonly rejection?: CanonicalSignalRejectionState;
+  readonly history?: readonly CanonicalSignalSample[];
   readonly initialUnitMode?: SignalUnitMode;
   readonly initialProvenanceOpen?: boolean;
 }
@@ -312,6 +358,7 @@ export interface SignalSourceCardProps {
 export function SignalSourceCard({
   sample,
   rejection,
+  history,
   initialUnitMode = 'raw',
   initialProvenanceOpen = false,
 }: SignalSourceCardProps) {
@@ -327,6 +374,7 @@ export function SignalSourceCard({
   );
   const [provenanceOpen, setProvenanceOpen] = useState(initialProvenanceOpen);
   const rows = buildChannelPresentation(sample, unitMode);
+  const boundedHistory = history?.length ? history : [sample];
 
   return (
     <section className="signal-source-card" aria-labelledby={sourceId}>
@@ -373,7 +421,13 @@ export function SignalSourceCard({
 
       <div className="signal-channel-table" aria-label={`Latest canonical values for ${sample.device_id}`}>
         {rows.map((channelRow) => (
-          <ChannelRow row={channelRow} sourceId={safeId} key={channelRow.key} />
+          <ChannelRow
+            row={channelRow}
+            sourceId={sample.device_id}
+            history={boundedHistory}
+            unitMode={unitMode}
+            key={channelRow.key}
+          />
         ))}
       </div>
 
@@ -453,6 +507,7 @@ export function SignalContractPanelView({ snapshot }: SignalContractPanelViewPro
           <SignalSourceCard
             key={canonicalSample.device_id}
             sample={canonicalSample}
+            history={snapshot.canonicalHistoryByMac[canonicalSample.device_id]}
             rejection={snapshot.canonicalRejectionsBySource[canonicalSample.device_id]}
           />
         ))}

@@ -407,11 +407,15 @@ export function parseModelCatalog(payload: unknown): ModelCatalogSnapshot | null
   const frame_list: Array<{ path: string; name: string }> = [];
   for (const item of payload.frame_list) {
     if (!isRecord(item)) return null;
-    if (typeof item.path !== 'string' || typeof item.name !== 'string') return null;
-    frame_list.push({ path: item.path, name: item.name });
+    const segment = typeof item.segment === 'string' ? item.segment : item.path;
+    const frame = typeof item.frame === 'string' ? item.frame : item.name;
+    if (typeof segment !== 'string' || typeof frame !== 'string') return null;
+    frame_list.push({ path: segment, name: frame });
   }
   return {
-    schema: typeof payload.schema === 'string' ? payload.schema : undefined,
+    schema: typeof payload.schema === 'string'
+      ? payload.schema
+      : (typeof payload.schema_version === 'string' ? payload.schema_version : undefined),
     model_hash: payload.model_hash,
     model_path: payload.model_path,
     frame_list,

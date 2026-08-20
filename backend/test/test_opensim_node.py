@@ -1311,12 +1311,12 @@ class IkOneContractTests(unittest.TestCase):
         node = self._make_node()
         node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
 
-        mac_subs = [s for s in node.subscriptions if "/esp/raw/mac_" in s.topic]
+        mac_subs = [s for s in node.subscriptions if "/esp/imu/mac_" in s.topic]
         self.assertEqual(len(mac_subs), 2)
 
         mac_topics = {s.topic for s in mac_subs}
-        self.assertIn("/esp/raw/mac_aabbccddeeff", mac_topics)
-        self.assertIn("/esp/raw/mac_112233445566", mac_topics)
+        self.assertIn("/esp/imu/mac_aabbccddeeff", mac_topics)
+        self.assertIn("/esp/imu/mac_112233445566", mac_topics)
 
     def test_ik01_b_remap_destroys_removed_subscription_creates_new(self):
         """IK-01-B: Re-calling _on_mapping_current replaces old subscriptions with new ones."""
@@ -1324,21 +1324,21 @@ class IkOneContractTests(unittest.TestCase):
         node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
 
         # First mapping: aabbccddeeff + 112233445566
-        initial_mac_subs = [s for s in node.subscriptions if "/esp/raw/mac_" in s.topic]
+        initial_mac_subs = [s for s in node.subscriptions if "/esp/imu/mac_" in s.topic]
         self.assertEqual(len(initial_mac_subs), 2)
 
         # Remap: keep aabbccddeeff, remove 112233445566, add ffeeddccbbaa
         node._on_mapping_current(self._mapping_msg(self._MAPPING_ONE_NEW_ONE_REMOVED))
 
-        mac_subs_after = [s for s in node.subscriptions if "/esp/raw/mac_" in s.topic]
+        mac_subs_after = [s for s in node.subscriptions if "/esp/imu/mac_" in s.topic]
         mac_topics_after = {s.topic for s in mac_subs_after}
 
         # Old device 112233445566 must be gone
-        self.assertNotIn("/esp/raw/mac_112233445566", mac_topics_after)
+        self.assertNotIn("/esp/imu/mac_112233445566", mac_topics_after)
         # Kept device must remain
-        self.assertIn("/esp/raw/mac_aabbccddeeff", mac_topics_after)
+        self.assertIn("/esp/imu/mac_aabbccddeeff", mac_topics_after)
         # New device must be present
-        self.assertIn("/esp/raw/mac_ffeeddccbbaa", mac_topics_after)
+        self.assertIn("/esp/imu/mac_ffeeddccbbaa", mac_topics_after)
         # Exactly 2 MAC subscriptions
         self.assertEqual(len(mac_subs_after), 2)
 

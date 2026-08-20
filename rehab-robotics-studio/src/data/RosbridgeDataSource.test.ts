@@ -1087,6 +1087,21 @@ describe('24-02 parseModelCatalog', () => {
     assert.equal(result!.frame_list[0].name, 'Tibia');
   });
 
+  it('01b maps backend segment/frame catalog entries without losing either identity', () => {
+    const result = parseModelCatalog({
+      schema_version: 'rehab.model_catalog.1',
+      model_hash: 'abc',
+      model_path: '/foo.osim',
+      frame_list: [{ segment: 'tibia_r', frame: 'tibia_r_imu' }],
+    });
+    assert.deepEqual(result, {
+      schema: 'rehab.model_catalog.1',
+      model_hash: 'abc',
+      model_path: '/foo.osim',
+      frame_list: [{ path: 'tibia_r', name: 'tibia_r_imu' }],
+    });
+  });
+
   it('02 null input returns null', () => {
     assert.equal(parseModelCatalog(null), null);
   });

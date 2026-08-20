@@ -1,0 +1,68 @@
+diff --git a/Simbody/Visualizer/simbody-visualizer/simbody-visualizer.cpp b/Simbody/Visualizer/simbody-visualizer/simbody-visualizer.cpp
+index 12f6a1e..24e5ad4 100644
+--- a/Simbody/Visualizer/simbody-visualizer/simbody-visualizer.cpp
++++ b/Simbody/Visualizer/simbody-visualizer/simbody-visualizer.cpp
+@@ -1583,15 +1583,21 @@ static void redrawDisplay() {
+     glLoadIdentity();
+     glDisable(GL_LIGHTING);
+     glDisable(GL_DEPTH_TEST);
+-    int menux = 10;
+-    for (int i = 0; i < (int) menus.size(); i++)
+-        menux += menus[i].draw(menux, viewHeight-10);
++    {
++        // DefineMenu and DefineSlider arrive on the listener thread. Protect
++        // their vectors while GLUT reads them so push_back cannot invalidate
++        // a Menu or Slider during drawing.
++        std::lock_guard<std::mutex> lock(sceneMutex);
++        int menux = 10;
++        for (int i = 0; i < (int) menus.size(); i++)
++            menux += menus[i].draw(menux, viewHeight-10);
+ 
+-    // Draw sliders.
+-    // ------------------------------------------------------------
+-    int slidery = viewHeight-35;
+-    for (int i = 0; i < (int) sliders.size(); i++)
+-        slidery = sliders[i].draw(slidery);
++        // Draw sliders.
++        // ------------------------------------------------------------
++        int slidery = viewHeight-35;
++        for (int i = 0; i < (int) sliders.size(); i++)
++            slidery = sliders[i].draw(slidery);
++    }
+ 
+     // Draw the "heads-up" display.
+     // ------------------------------------------------------------
+@@ -1747,10 +1753,13 @@ static void mouseButtonPressedOrReleased(int button, int state, int x, int y) {
+ 
+     // See if this click was on a slider.
+     clickedSlider = -1;
+-    for (int i = 0; i < (int) sliders.size(); i++) {
+-        if (sliders[i].mousePressed(x, y)) {
+-            clickedSlider = i;
+-            return;
++    {
++        std::lock_guard<std::mutex> lock(sceneMutex);
++        for (int i = 0; i < (int) sliders.size(); i++) {
++            if (sliders[i].mousePressed(x, y)) {
++                clickedSlider = i;
++                return;
++            }
+         }
+     }
+ 
+@@ -1781,6 +1790,7 @@ static void mouseButtonPressedOrReleased(int button, int state, int x, int y) {
+ // the graphics window.)
+ static void mouseDragged(int x, int y) {
+     if (clickedSlider > -1) {
++        std::lock_guard<std::mutex> lock(sceneMutex);
+         sliders[clickedSlider].mouseDragged(x);
+         return;
+     }
+@@ -1847,6 +1857,7 @@ static void mouseDragged(int x, int y) {
+ // menu item that would be selected upon clicking.
+ // TODO: pass this to the simulator otherwise.
+ static void mouseMoved(int x, int y) {
++    std::lock_guard<std::mutex> lock(sceneMutex);
+     for (int i = 0; i < (int) menus.size(); i++)
+         menus[i].mouseMoved(x, y);
+ }

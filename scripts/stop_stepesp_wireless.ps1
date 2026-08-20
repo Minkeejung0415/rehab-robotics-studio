@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent $PSScriptRoot
 $guiRoot = Join-Path $workspace 'rehab-robotics-studio'
 
-wsl -d $Distro -- bash -lc "pkill -f '[e]sp32_bridge_node' || true; pkill -f '[r]osbridge_websocket' || true; pkill -f '[p]rocessing_block_observer' || true; pkill -f '[o]pensim_live_link.launch.py' || true; pkill -f '[o]pensim_bridge' || true"
+wsl -d $Distro -- bash -lc "pkill -f '[f]leet_bridge_node' || true; pkill -f '[e]sp32_bridge_node' || true; pkill -f '[m]apping_node' || true; pkill -f '[m]odel_catalog_node' || true; pkill -f '[r]osbridge_websocket' || true; pkill -f '[p]rocessing_block_observer' || true; pkill -f '[o]pensim_live_link.launch.py' || true; pkill -f '[o]pensim_bridge' || true"
 Get-CimInstance Win32_Process |
   Where-Object {
     $_.ProcessId -ne $PID -and

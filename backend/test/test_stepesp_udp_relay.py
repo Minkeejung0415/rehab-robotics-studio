@@ -428,7 +428,7 @@ class LauncherIdentityContractTests(unittest.TestCase):
             'rosbridge_websocket',
             'processing_block_observer',
             'opensim_bridge',
-            'npm.cmd run build',
+            'npm.cmd run preview',
         ):
             with self.subTest(preserved=preserved):
                 self.assertIn(preserved, self.launcher)

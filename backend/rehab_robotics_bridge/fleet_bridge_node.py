@@ -1000,11 +1000,18 @@ class FleetBridgeNode(Node):
         self._session_locks: list[asyncio.Lock | None] = [None] * n
         self._identify_queues: list[asyncio.Queue | None] = [None] * n
         self._imu_pubs: dict[str, Any] = {}
+        self._mac_imu_pubs: dict[str, Any] = {}
 
         # Typed Imu publishers for alias-bound roles (exist even if no alias is bound yet;
         # they publish only when a session with matching alias role streams frames).
         self._imu_pubs['master'] = self.create_publisher(Imu, '/esp32/master/imu', 10)
         self._imu_pubs['slave'] = self.create_publisher(Imu, '/esp32/slave/imu', 10)
+        for session in self._sessions:
+            device_id = session.expected_device_id
+            mac_hex = device_id.replace('esp32:', '')
+            self._mac_imu_pubs[device_id] = self.create_publisher(
+                Imu, f'/esp/imu/mac_{mac_hex}', 10
+            )
 
         # IdentifyDevice service routed to the correct per-session writer.
         self.create_service(IdentifyDevice, '/esp32/fleet/identify', self._identify_fleet_device)
@@ -1379,7 +1386,8 @@ class FleetBridgeNode(Node):
 
         self._manager.publish_session_raw(session, raw_json)
 
-        # Publish typed Imu when this session's role maps to an alias
+        # Publish an identity-stable typed Imu for mapping/OpenSim and retain
+        # the role alias for backward compatibility.
         role = session.role
         imu_pub = self._imu_pubs.get(role)
         alias_id = (
@@ -1387,11 +1395,13 @@ class FleetBridgeNode(Node):
             else self._manager._alias_slave if role == 'slave'
             else ''
         )
-        if imu_pub is not None and alias_id and device_id == alias_id:
+        mac_imu_pub = getattr(self, '_mac_imu_pubs', {}).get(device_id)
+        publish_alias = imu_pub is not None and alias_id and device_id == alias_id
+        if mac_imu_pub is not None or publish_alias:
             imu_msg = Imu()
             imu_msg.header = Header()
             imu_msg.header.stamp = self.get_clock().now().to_msg()
-            imu_msg.header.frame_id = f'esp32_{role}'
+            imu_msg.header.frame_id = f'esp32_{device_id.replace("esp32:", "")}'
             imu_msg.orientation.w = s16(9) * QUAT_SCALE
             imu_msg.orientation.x = s16(10) * QUAT_SCALE
             imu_msg.orientation.y = s16(11) * QUAT_SCALE
@@ -1405,7 +1415,11 @@ class FleetBridgeNode(Node):
             imu_msg.orientation_covariance[0] = -1.0
             imu_msg.linear_acceleration_covariance[0] = -1.0
             imu_msg.angular_velocity_covariance[0] = -1.0
-            imu_pub.publish(imu_msg)
+            if mac_imu_pub is not None:
+                mac_imu_pub.publish(imu_msg)
+            if publish_alias:
+                imu_msg.header.frame_id = f'esp32_{role}'
+                imu_pub.publish(imu_msg)
 
     async def _connect_and_stream_route(self, index: int) -> None:
         """Per-session reconnect loop with exponential backoff and drop_count propagation."""

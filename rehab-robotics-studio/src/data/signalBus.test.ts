@@ -81,6 +81,7 @@ describe('SignalBus canonical snapshot', () => {
       };
       type Snapshot = {
         readonly canonicalSamplesByMac: Readonly<Record<string, CanonicalSignalSample>>;
+        readonly canonicalHistoryByMac: Readonly<Record<string, readonly CanonicalSignalSample[]>>;
         readonly canonicalAcceptedCount: number;
         readonly canonicalRejectedCount: number;
         readonly canonicalRejectionsBySource: Readonly<Record<string, RejectionState>>;
@@ -132,7 +133,7 @@ describe('SignalBus canonical snapshot', () => {
 
       const macA = 'aabbccddeeff';
       const macB = '001122334455';
-      for (let sequence = 0; sequence < 100; sequence += 1) {
+      for (let sequence = 0; sequence < 500; sequence += 1) {
         emitAccepted(sampleFor(sequence % 2 === 0 ? macA : macB, { sequence }));
       }
       assert.equal(bus.getSnapshot().canonicalAcceptedCount, 0, 'ingest must not publish synchronously');
@@ -141,13 +142,19 @@ describe('SignalBus canonical snapshot', () => {
 
       const firstPublished = bus.getSnapshot();
       assert.equal(notifications, 1);
-      assert.equal(firstPublished.canonicalAcceptedCount, 100);
+      assert.equal(firstPublished.canonicalAcceptedCount, 500);
       assert.deepEqual(Object.keys(firstPublished.canonicalSamplesByMac).sort(), [
         `esp32:${macB}`,
         `esp32:${macA}`,
       ].sort());
-      assert.equal(firstPublished.canonicalSamplesByMac[`esp32:${macA}`].sequence, 98);
-      assert.equal(firstPublished.canonicalSamplesByMac[`esp32:${macB}`].sequence, 99);
+      assert.equal(firstPublished.canonicalSamplesByMac[`esp32:${macA}`].sequence, 498);
+      assert.equal(firstPublished.canonicalSamplesByMac[`esp32:${macB}`].sequence, 499);
+      assert.equal(firstPublished.canonicalHistoryByMac[`esp32:${macA}`].length, 240);
+      assert.equal(firstPublished.canonicalHistoryByMac[`esp32:${macB}`].length, 240);
+      assert.equal(firstPublished.canonicalHistoryByMac[`esp32:${macA}`][0]?.sequence, 20);
+      assert.equal(firstPublished.canonicalHistoryByMac[`esp32:${macA}`][239]?.sequence, 498);
+      assert.equal(Object.isFrozen(firstPublished.canonicalHistoryByMac), true);
+      assert.equal(Object.isFrozen(firstPublished.canonicalHistoryByMac[`esp32:${macA}`]), true);
       assert.equal(Object.isFrozen(firstPublished.canonicalSamplesByMac), true);
       assert.equal(Object.isFrozen(firstPublished.canonicalSamplesByMac[`esp32:${macA}`]), true);
       assert.equal(Object.isFrozen(firstPublished.canonicalSamplesByMac[`esp32:${macA}`].raw), true);

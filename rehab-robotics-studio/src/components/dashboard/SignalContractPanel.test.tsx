@@ -87,6 +87,24 @@ describe('Signal Contract presentation', () => {
     assert.match(markup, />-32768</);
   });
 
+  it('renders one bounded live graph for every available individual component', () => {
+    const first = sample({ sequence: 16 });
+    const second = sample({ sequence: 17, raw: {
+      ax: -32000, ay: 1, az: 32000,
+      gx: -2, gy: 5, gz: 6,
+      mx: 7, my: 8, mz: 9,
+    } });
+    const markup = renderToStaticMarkup(
+      <SignalSourceCard sample={second} history={[first, second]} />,
+    );
+    assert.equal((markup.match(/<canvas/g) ?? []).length, 13);
+    for (const component of [
+      'ax', 'ay', 'az', 'gx', 'gy', 'gz', 'mx', 'my', 'mz', 'qw', 'qx', 'qy', 'qz',
+    ]) {
+      assert.match(markup, new RegExp(`${component} history for esp32:aabbccddeeff`));
+    }
+  });
+
   it('uses only validated accel, gyro, and magnetometer SI representations', () => {
     assert.deepEqual(row(sample(), 'si', 'accel'), {
       key: 'accel', label: 'Acceleration', badge: 'AVAILABLE', unit: 'm/s²',
@@ -233,6 +251,7 @@ function snapshot(overrides: Partial<SignalSnapshot> = {}): SignalSnapshot {
     emgSeries: [],
     kneeSeries: [],
     canonicalSamplesByMac: {},
+    canonicalHistoryByMac: {},
     canonicalAcceptedCount: 0,
     canonicalRejectedCount: 0,
     canonicalRejectionsBySource: {},

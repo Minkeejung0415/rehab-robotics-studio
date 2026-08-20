@@ -40,6 +40,8 @@ export interface SignalSnapshot {
   kneeSeries: number[];
   /** Current-browser-session latest accepted sample, keyed only by canonical full MAC. */
   readonly canonicalSamplesByMac: Readonly<Record<string, CanonicalSignalSample>>;
+  /** Bounded current-session history keyed by canonical full MAC. */
+  readonly canonicalHistoryByMac: Readonly<Record<string, readonly CanonicalSignalSample[]>>;
   readonly canonicalAcceptedCount: number;
   readonly canonicalRejectedCount: number;
   readonly canonicalRejectionsBySource: Readonly<Record<string, CanonicalSignalRejectionState>>;
@@ -73,6 +75,7 @@ function emptySnapshot(): SignalSnapshot {
     emgSeries: new Array(240).fill(0),
     kneeSeries: [],
     canonicalSamplesByMac: Object.freeze({}),
+    canonicalHistoryByMac: Object.freeze({}),
     canonicalAcceptedCount: 0,
     canonicalRejectedCount: 0,
     canonicalRejectionsBySource: Object.freeze({}),
@@ -121,6 +124,7 @@ export class SignalBus {
   private frameHandle: number | null = null;
   private disposed = false;
   private canonicalSamples = new Map<string, CanonicalSignalSample>();
+  private canonicalHistory = new Map<string, CanonicalSignalSample[]>();
   private canonicalRejections = new Map<string, CanonicalSignalRejectionState>();
   private canonicalAcceptedCount = 0;
   private canonicalRejectedCount = 0;
@@ -264,6 +268,11 @@ export class SignalBus {
 
   private ingestCanonicalAccepted(sample: CanonicalSignalSample): void {
     this.canonicalSamples.set(sample.device_id, sample);
+    const history = this.canonicalHistory.get(sample.device_id) ?? [];
+    const nextHistory = history.length >= 240
+      ? [...history.slice(history.length - 239), sample]
+      : [...history, sample];
+    this.canonicalHistory.set(sample.device_id, nextHistory);
     this.canonicalAcceptedCount = Math.min(
       Number.MAX_SAFE_INTEGER,
       this.canonicalAcceptedCount + 1,
@@ -316,6 +325,12 @@ export class SignalBus {
       emgSeries: this.emgBuf.toArray(),
       kneeSeries: this.kneeBuf.toArray(),
       canonicalSamplesByMac: Object.freeze(Object.fromEntries(this.canonicalSamples)),
+      canonicalHistoryByMac: Object.freeze(Object.fromEntries(
+        [...this.canonicalHistory.entries()].map(([deviceId, history]) => [
+          deviceId,
+          Object.freeze([...history]),
+        ]),
+      )),
       canonicalAcceptedCount: this.canonicalAcceptedCount,
       canonicalRejectedCount: this.canonicalRejectedCount,
       canonicalRejectionsBySource: Object.freeze(Object.fromEntries(this.canonicalRejections)),

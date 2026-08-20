@@ -24,6 +24,21 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$workspace = Split-Path -Parent $PSScriptRoot
+$launcherLock = $null
+$launcherLockPath = Join-Path ([System.IO.Path]::GetTempPath()) 'rehab-stepesp-wireless-start.lock'
+try {
+  $launcherLock = [System.IO.File]::Open(
+    $launcherLockPath,
+    [System.IO.FileMode]::OpenOrCreate,
+    [System.IO.FileAccess]::ReadWrite,
+    [System.IO.FileShare]::None
+  )
+} catch [System.IO.IOException] {
+  throw 'Another STEP_ESP32 startup is already running. Wait for it to finish or stop that process first.'
+}
+
+try {
 # Firmware peer inventory capacity; relay CLI enforces the same cap.
 $MAX_SLAVE_ROUTES = 6
 
@@ -240,13 +255,14 @@ function Get-StepEspIdentity {
   }
 }
 
-$workspace = Split-Path -Parent $PSScriptRoot
 $relayScript = Join-Path $workspace 'scripts\stepesp_tcp_udp_relay.py'
 $serialDrainScript = Join-Path $workspace 'scripts\stepesp_serial_drain.py'
 $bridgeLog = '/home/justi/stepesp_fleet_bridge.log'
 $rosbridgeLog = '/home/justi/stepesp_rosbridge.log'
 $observerLog = '/home/justi/stepesp_processing_observer.log'
 $openSimLog = '/home/justi/stepesp_opensim_bridge.log'
+$modelCatalogLog = '/home/justi/stepesp_model_catalog.log'
+$mappingLog = '/home/justi/stepesp_mapping.log'
 $relayLog = Join-Path $workspace 'logs\stepesp_windows_relay.log'
 $relayErrorLog = Join-Path $workspace 'logs\stepesp_windows_relay.err.log'
 $serialLog = Join-Path $workspace 'logs\stepesp_master_serial.log'
@@ -384,7 +400,7 @@ if ($candidateSlaveHosts -contains $wifiAddress) {
 New-Item -ItemType Directory -Path (Split-Path -Parent $relayLog) -Force | Out-Null
 
 # Stop prior USB-backed or Wi-Fi ROS processes before launching this complete stack.
-wsl -d $Distro -- bash -lc "pkill -f '[f]leet_bridge_node' || true; pkill -f '[e]sp32_bridge_node' || true; pkill -f '[r]osbridge_websocket' || true; pkill -f '[p]rocessing_block_observer' || true; pkill -f '[o]pensim_live_link.launch.py' || true; pkill -f '[o]pensim_bridge' || true"
+wsl -d $Distro -- bash -lc "pkill -f '[f]leet_bridge_node' || true; pkill -f '[e]sp32_bridge_node' || true; pkill -f '[m]apping_node' || true; pkill -f '[m]odel_catalog_node' || true; pkill -f '[r]osbridge_websocket' || true; pkill -f '[p]rocessing_block_observer' || true; pkill -f '[o]pensim_live_link.launch.py' || true; pkill -f '[o]pensim_bridge' || true"
 Get-CimInstance Win32_Process |
   Where-Object {
     $_.ProcessId -ne $PID -and $_.CommandLine -match 'serial_tcp_bridge.py|stepesp_tcp_udp_relay.py|stepesp_serial_drain.py'
@@ -544,11 +560,15 @@ $routesJsonBash = $routesJson.Replace("'", "'\''")
 $fleet = "$rosEnvironment; exec ros2 run rehab_robotics_bridge fleet_bridge_node --ros-args -r __node:=esp_fleet_bridge -p routes_json:='$routesJsonBash' -p alias_master_device_id:=$verifiedMasterDeviceId -p alias_slave_device_id:=$verifiedSlaveDeviceId > $bridgeLog 2>&1"
 $rosbridge = "$rosEnvironment; exec ros2 run rosbridge_server rosbridge_websocket --ros-args -p port:=9090 -p address:=0.0.0.0 > $rosbridgeLog 2>&1"
 $observer = "$rosEnvironment; exec ros2 run rehab_robotics_bridge processing_block_observer > $observerLog 2>&1"
+$modelCatalog = "$rosEnvironment; exec ros2 run rehab_robotics_bridge model_catalog_node --ros-args -p opensim_model_path:=$OpenSimModel > $modelCatalogLog 2>&1"
+$mapping = "$rosEnvironment; exec ros2 run rehab_robotics_bridge mapping_node > $mappingLog 2>&1"
 $openSim = "export ROS_DOMAIN_ID=$RosDomainId; exec bash $openSimRunner $OpenSimModel false master_imu_topic:=/esp32/master/imu slave_imu_topic:=/esp32/slave/imu > $openSimLog 2>&1"
 
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $fleet -WindowStyle Hidden
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $rosbridge -WindowStyle Hidden
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $observer -WindowStyle Hidden
+Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $modelCatalog -WindowStyle Hidden
+Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $mapping -WindowStyle Hidden
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $openSim -WindowStyle Hidden
 
 $rosbridgeReady = $false
@@ -566,7 +586,10 @@ if (-not $rosbridgeReady) {
 if (-not $SkipGui) {
   # Vite dev mode cannot reliably resolve source URLs when this workspace path
   # contains '#'. Build first and serve dist so the existing folder name works.
-  $guiCommand = 'set VITE_DATA_SOURCE=rosbridge&& set VITE_ROSBRIDGE_URL=ws://127.0.0.1:9090&& set VITE_ESP_RAW_TOPIC=/esp/raw/master&& set VITE_ESP_SLAVE_TOPIC=/esp/raw/slave&& npm.cmd run build&& npm.cmd run preview -- --host 127.0.0.1 --port 5173 --strictPort'
+  # Serve the last verified production artifact. The historical source tree is
+  # incomplete, but dist is self-contained and is the exact operator UI used
+  # during the final Codex hardware session.
+  $guiCommand = 'set VITE_DATA_SOURCE=rosbridge&& set VITE_ROSBRIDGE_URL=ws://127.0.0.1:9090&& set VITE_ESP_RAW_TOPIC=/esp/raw/master&& set VITE_ESP_SLAVE_TOPIC=/esp/raw/slave&& npm.cmd run preview -- --host 127.0.0.1 --port 5173 --strictPort'
   Start-Process -FilePath cmd.exe -ArgumentList '/c', $guiCommand -WorkingDirectory $guiRoot -RedirectStandardOutput $guiLog -RedirectStandardError $guiErrorLog -WindowStyle Hidden
 
   $guiReady = $false
@@ -598,9 +621,16 @@ Write-Host "Verify deployment topics: source $RosInstall/setup.bash; ROS_DOMAIN_
 Write-Host "Fleet bridge log: $bridgeLog (kept after you return to ubcvisitor)"
 Write-Host "rosbridge log: $rosbridgeLog"
 Write-Host "observer log: $observerLog"
+Write-Host "model catalog log: $modelCatalogLog"
+Write-Host "mapping log: $mappingLog"
 Write-Host "OpenSim status: source $OpenSimInstall/setup.bash; ROS_DOMAIN_ID=$RosDomainId ros2 topic echo /opensim/status --once --full-length"
 Write-Host "OpenSim log: $openSimLog"
 Write-Host "Relay log: $relayLog"
 if ($DiagnosticPort -and $availableSerialPorts -contains $DiagnosticPort) { Write-Host "USB diagnostic log: $serialLog" }
 if (-not $SkipGui) { Write-Host "GUI logs: $guiLog and $guiErrorLog" }
 Write-Host "Stay on $WifiProfile while acquiring. Restore normal Wi-Fi with: .\scripts\stop_stepesp_wireless.ps1"
+} finally {
+  if ($null -ne $launcherLock) {
+    $launcherLock.Dispose()
+  }
+}

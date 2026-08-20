@@ -403,7 +403,7 @@ class OpenSimBridgeNode(Node):
                 frame = entry.get("frame", "")
                 if device_id not in self._mac_inputs:
                     mac_hex = device_id.replace("esp32:", "")
-                    topic = f"/esp/raw/mac_{mac_hex}"
+                    topic = f"/esp/imu/mac_{mac_hex}"
                     sub = self.create_subscription(
                         Imu,
                         topic,
@@ -668,6 +668,23 @@ class OpenSimBridgeNode(Node):
 
         # Publish JointState when solution is valid (N-sensor gate: all_valid + calib + valid)
         if solution is not None and solution.solution_valid and source_ts is not None:
+            pose_names = (
+                list(solution.visualization_coordinate_names)
+                or list(solution.joint_names)
+            )
+            pose_positions = (
+                list(solution.visualization_positions_rad)
+                or list(solution.positions_rad)
+            )
+            try:
+                pose_accepted = self._adapter.update_pose(
+                    pose_names,
+                    pose_positions,
+                )
+                if not pose_accepted and self._recover_visualizer_adapter():
+                    self._adapter.update_pose(pose_names, pose_positions)
+            except Exception:
+                pass
             message = JointState()
             message.name = [str(name) for name in solution.joint_names]
             message.position = [float(v) for v in solution.positions_rad]
@@ -862,6 +879,10 @@ class OpenSimBridgeNode(Node):
         sensor.updates += 1
         self._set_sensor_state(role, "live", "")
         self._feed_calibration_if_capturing()
+        with self._input_lock:
+            mapped_route_active = bool(self._mac_inputs)
+        if mapped_route_active:
+            return
         self._publish_joint_angle_if_ready()
         self._solve_and_publish_ik()
 
@@ -1022,20 +1043,21 @@ class OpenSimBridgeNode(Node):
                 list(solution.visualization_positions_rad)
                 or list(solution.positions_rad)
             )
-            try:
-                pose_accepted = self._adapter.update_pose(
-                    pose_names,
-                    pose_positions,
-                )
-                if not pose_accepted and self._recover_visualizer_adapter():
-                    self._adapter.update_pose(
+            with self._input_lock:
+                mac_mapping_active = bool(self._mac_inputs)
+            if not mac_mapping_active:
+                try:
+                    pose_accepted = self._adapter.update_pose(
                         pose_names,
                         pose_positions,
                     )
-            except Exception:
-                # Visualization remains orthogonal to acquisition and product
-                # JointState publication.  The adapter owns its failure state.
-                pass
+                    if not pose_accepted and self._recover_visualizer_adapter():
+                        self._adapter.update_pose(
+                            pose_names,
+                            pose_positions,
+                        )
+                except Exception:
+                    pass
             self._ik_solution = {
                 "name": list(solution.joint_names),
                 "position": list(solution.positions_rad),
