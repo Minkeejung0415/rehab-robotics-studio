@@ -391,9 +391,12 @@ class LauncherIdentityContractTests(unittest.TestCase):
             "'--expected-device-id', $verifiedMasterDeviceId",
             '--slave-route',
             'fleet_bridge_node',
-            'alias_master_device_id:=$verifiedMasterDeviceId',
-            'alias_slave_device_id:=$verifiedSlaveDeviceId',
-            'routes_json:=',
+            'alias_master_device_id:',
+            '$verifiedMasterDeviceId',
+            'alias_slave_device_id:',
+            '$verifiedSlaveDeviceId',
+            'routes_json:',
+            '--params-file $fleetParamsWsl',
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, self.launcher)
@@ -405,9 +408,12 @@ class LauncherIdentityContractTests(unittest.TestCase):
 
     def test_launcher_starts_single_fleet_process_with_alias_bindings(self):
         self.assertIn('fleet_bridge_node', self.launcher)
-        self.assertIn('alias_master_device_id:=$verifiedMasterDeviceId', self.launcher)
-        self.assertIn('alias_slave_device_id:=$verifiedSlaveDeviceId', self.launcher)
-        self.assertIn('routes_json:=', self.launcher)
+        self.assertIn('alias_master_device_id:', self.launcher)
+        self.assertIn('$verifiedMasterDeviceId', self.launcher)
+        self.assertIn('alias_slave_device_id:', self.launcher)
+        self.assertIn('$verifiedSlaveDeviceId', self.launcher)
+        self.assertIn('routes_json:', self.launcher)
+        self.assertIn('--params-file $fleetParamsWsl', self.launcher)
         self.assertEqual(
             self.launcher.count('ros2 run rehab_robotics_bridge fleet_bridge_node'),
             1,

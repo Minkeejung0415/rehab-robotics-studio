@@ -1,6 +1,6 @@
 param(
   [string]$Distro = 'Ubuntu-22.04',
-  [string]$WifiProfile = 'STEP_ESP32',
+  [string]$WifiProfile = 'iPhone (111)',
   [string]$InternetProfile = 'ubcsecure',
   [string]$WifiInterface = 'Wi-Fi'
 )

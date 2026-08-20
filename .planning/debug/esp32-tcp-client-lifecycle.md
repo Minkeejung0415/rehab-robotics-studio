@@ -1,8 +1,8 @@
 ---
-status: verifying
+status: resolved
 trigger: "서버 재시작이 아닌 클라이언트 수명 관리와 연결 큐 처리를 직접 계측해서 수정"
 created: "2026-08-11"
-updated: "2026-08-11T17:00:00-07:00"
+updated: "2026-08-20T15:04:00-07:00"
 ---
 
 # ESP32 TCP Client Lifecycle
@@ -51,6 +51,10 @@ updated: "2026-08-11T17:00:00-07:00"
 - timestamp: 2026-08-11; a clean full-stack run bound both verified identities but measured roughly 5.5 seconds from fleet connection to identity bind; with the 5000 ms firmware limit, both sockets closed at REDPITAYA and the fleet retried. A relay-only handshake outside WSL scheduling completed REDPITAYA, STARTED, and SENSORS, isolating the remaining failure to the production startup timing boundary.
 - timestamp: 2026-08-11; raised TCP_IDLE_CLIENT_TIMEOUT_MS from 5000 ms to 30000 ms in both sketches, compiled both XIAO ESP32-S3 images, and flashed COM3 master and COM4 slave successfully with esptool hash verification and hard reset.
 - timestamp: 2026-08-11; post-flash physical matrix returned JSON `ok: true`: all 12 delayed identity reconnects passed, master and slave each completed REDPITAYA/START/SENSORS, emitted a valid 50-byte UDP frame with 14-channel/28-byte payload header, and acknowledged STOP. The process exit was nonzero only because a Windows serial-reader thread raised ClearCommError during port teardown after the successful result was printed; this is a test-harness shutdown issue, not a device/protocol failure.
+- timestamp: 2026-08-20; restored the iPhone hotspot defaults and lifecycle firmware, flashed COM3 master and COM4 slave with verified images, and confirmed routes master=172.20.10.3 and slave=172.20.10.2 on iPhone (111).
+- timestamp: 2026-08-20; found the launcher readiness check opened real connections to relay ports 5002/5003, which the relay treated as fleet clients and used to consume the ESP single-client slots. Replaced startup readiness probes with non-invasive Windows LISTEN-state inspection.
+- timestamp: 2026-08-20; added exclusive launcher locking, deterministic COM3/COM4 preflight reset, one bounded dual-board fleet recovery reset, null-safe empty fleet-log handling, and startup/cleanup of mapping and model-catalog nodes.
+- timestamp: 2026-08-20; fully autonomous launcher run completed on iPhone (111): master and slave identities bound, relay ports 5002/5003, rosbridge 9090, GUI 5173, and GUI HTTP 200. ROS graph exposed `/esp/raw/master`, `/esp/raw/slave`, `/esp/fleet/registry`, `/esp/status/pair`, and OpenSim topics.
 
 ## Eliminated
 
@@ -60,5 +64,5 @@ updated: "2026-08-11T17:00:00-07:00"
 
 - root_cause: Three lifecycle defects combined: (1) a 500 ms idle timeout matched normal 0.5-1.0 s handshake delays and closed valid sockets before commands; (2) newly accepted sockets could be ignored based on stale old-client buffered state even though NetworkServer::available() returns only a new accept; (3) temporary per-command Serial.printf instrumentation ran before handleLine and blocked TCP processing when USB CDC was not drained, so replies occurred only after host timeout.
 - fix: Set TCP_IDLE_CLIENT_TIMEOUT_MS to 30000 ms; always replace the old control client for a newly accepted socket when not protecting a TCP data stream (UDP streaming remains replaceable); remove blocking hot-path TCP serial diagnostics; update smoke test to recognize the field-bearing IDENTITY_END line; make the Windows relay own the physical identity exchange and serve its bounded verified inventory to the fleet client.
-- verification: Physical firmware lifecycle and UDP matrix passes on both flashed boards. Final post-change ROS/OpenSim/GUI end-to-end rerun remains pending by explicit wrap-up request.
+- verification: Physical firmware lifecycle/UDP matrix passes, both boards are flashed and connected to iPhone (111), and a no-manual-intervention launcher run reached the complete stack with both fleet identities bound and GUI HTTP 200. OpenSim observed intermittent live packets; steady-rate motion remains a separate sensor/data-quality concern rather than a hotspot launcher failure.
 - files_changed: [firmware/step_node/step_node.ino, firmware/step_node_slave/step_node_slave.ino, scripts/test_stepesp_shaw.py, scripts/stepesp_tcp_udp_relay.py, scripts/start_stepesp_wireless.ps1, backend/rehab_robotics_bridge/fleet_bridge_node.py, backend/test/test_stepesp_udp_relay.py]

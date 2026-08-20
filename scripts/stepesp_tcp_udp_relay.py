@@ -442,7 +442,7 @@ def probe_identity_socket(
     *,
     endpoint: str,
     expected_device_id: str | None = None,
-    timeout_seconds: float = 3.0,
+    timeout_seconds: float = 8.0,
 ) -> tuple[IdentityInventory | None, bytes]:
     """Request and synchronously validate one bounded identity inventory."""
     esp_sock.sendall(b'IDENTITY?\n')

@@ -1,6 +1,6 @@
 param(
   [string]$Distro = 'Ubuntu-22.04',
-  [string]$MasterHost = '192.168.4.1',
+  [string]$MasterHost = '172.20.10.3',
   [int]$MasterPort = 5000,
   [string]$ExpectedMasterDeviceId = '',
   [string]$SlaveHost = 'auto',
@@ -16,15 +16,14 @@ param(
   [string]$OpenSimModel = '/home/justi/rehab_robotics_ws/opensim_quaternion_demo.osim',
   [int]$RosDomainId = 0,
   [string]$DiagnosticPort = 'COM3',
-  [string]$WifiProfile = 'STEP_ESP32',
-  [string]$InternetProfile = 'ubcvisitor',
+  [string]$WifiProfile = 'iPhone (111)',
+  [string]$InternetProfile = 'ubcsecure',
   [string]$WifiInterface = 'Wi-Fi',
   [switch]$SkipGui,
   [switch]$NoBrowser
 )
 
 $ErrorActionPreference = 'Stop'
-$workspace = Split-Path -Parent $PSScriptRoot
 $launcherLock = $null
 $launcherLockPath = Join-Path ([System.IO.Path]::GetTempPath()) 'rehab-stepesp-wireless-start.lock'
 try {
@@ -35,7 +34,7 @@ try {
     [System.IO.FileShare]::None
   )
 } catch [System.IO.IOException] {
-  throw 'Another STEP_ESP32 startup is already running. Wait for it to finish or stop that process first.'
+  throw 'Another iPhone hotspot STEP ESP startup is already running.'
 }
 
 try {
@@ -109,7 +108,7 @@ function Get-StepEspIdentity {
   $client = [System.Net.Sockets.TcpClient]::new()
   try {
     $connect = $client.ConnectAsync($HostAddress, $Port)
-    if (-not $connect.Wait([Math]::Min($TimeoutMs, 2000))) {
+    if (-not $connect.Wait($TimeoutMs)) {
       throw "Timed out connecting to identity endpoint $HostAddress`:$Port."
     }
     if ($connect.IsFaulted) {
@@ -255,6 +254,223 @@ function Get-StepEspIdentity {
   }
 }
 
+function Get-StepEspCurrentSsid {
+  $iface = netsh wlan show interfaces
+  foreach ($line in $iface -split "`r?`n") {
+    if ($line -match '^\s*SSID\s+:\s+(.+?)\s*$' -and $line -notmatch 'BSSID') {
+      $value = $Matches[1].Trim()
+      if ($value) { return $value }
+    }
+  }
+  return ''
+}
+
+function Get-StepEspIpv4Like {
+  param([Parameter(Mandatory = $true)][string]$Pattern)
+  Get-NetIPAddress -InterfaceAlias $WifiInterface -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object { $_.IPAddress -like $Pattern } |
+    Select-Object -First 1 -ExpandProperty IPAddress
+}
+
+function Disable-CampusWifiAutoconnect {
+  foreach ($name in @($InternetProfile, 'ubcsecure', 'ubcvisitor')) {
+    if (-not [string]::IsNullOrWhiteSpace($name)) {
+      netsh wlan set profileparameter name="$name" connectionmode=manual 2>$null | Out-Null
+    }
+  }
+}
+
+function Lock-StepEspWifi {
+  param([switch]$Quiet)
+  Disable-CampusWifiAutoconnect
+  netsh wlan set profileparameter name="$WifiProfile" connectionmode=auto autoswitch=no 2>$null | Out-Null
+  netsh wlan set profileorder name="$WifiProfile" interface="$WifiInterface" priority=1 2>$null | Out-Null
+  $ssid = Get-StepEspCurrentSsid
+  $hotspot = Get-StepEspIpv4Like -Pattern '172.20.10.*'
+  $ap = Get-StepEspIpv4Like -Pattern '192.168.4.*'
+  if ($ssid -eq $WifiProfile -and ($hotspot -or $ap)) {
+    if ($hotspot) { return $hotspot }
+    return $ap
+  }
+  if (-not $Quiet) {
+    Write-Host "Holding $WifiProfile (current SSID='$ssid'). Campus auto-connect is off."
+  }
+  netsh wlan connect name="$WifiProfile" interface="$WifiInterface" | Out-Null
+  Start-Sleep -Seconds 2
+  $hotspot = Get-StepEspIpv4Like -Pattern '172.20.10.*'
+  if ($hotspot) { return $hotspot }
+  return (Get-StepEspIpv4Like -Pattern '192.168.4.*')
+}
+
+function Repair-StepEspGuiDist {
+  $htmlPath = Join-Path $guiRoot 'dist\index.html'
+  $assets = Join-Path $guiRoot 'dist\assets'
+  if (-not (Test-Path -LiteralPath $htmlPath) -or -not (Test-Path -LiteralPath $assets)) {
+    return
+  }
+  $css = Get-ChildItem -LiteralPath $assets -Filter 'index-*.css' |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+  if (-not $css) { return }
+  $html = [IO.File]::ReadAllText($htmlPath)
+  $wanted = '/assets/' + $css.Name
+  if ($html -notlike "*$wanted*") {
+    $html = [regex]::Replace($html, '/assets/index-[A-Za-z0-9_-]+\.css', $wanted)
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [IO.File]::WriteAllText($htmlPath, $html, $utf8)
+    Write-Host "Repaired GUI stylesheet to $($css.Name)"
+  }
+}
+
+function Test-StepEspCssReady {
+  try {
+    $html = (Invoke-WebRequest -Uri 'http://127.0.0.1:5173/' -UseBasicParsing -TimeoutSec 2).Content
+    if ($html -notmatch 'href="(/assets/index-[^"]+\.css)"') {
+      return $false
+    }
+    $cssPath = $Matches[1]
+    $css = Invoke-WebRequest -Uri "http://127.0.0.1:5173$cssPath" -UseBasicParsing -TimeoutSec 2
+    $type = [string]$css.Headers['Content-Type']
+    return ($type -like 'text/css*') -or ($css.Content.StartsWith('*{') -or $css.Content.Contains('.app-shell'))
+  } catch {
+    return $false
+  }
+}
+
+function Stop-ArduinoSerialHolders {
+  Get-Process -Name 'serial-monitor' -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+function Reset-StepEspOverUsb {
+  param([string]$PortName)
+  if ([string]::IsNullOrWhiteSpace($PortName)) {
+    return
+  }
+  Stop-ArduinoSerialHolders
+  Start-Sleep -Milliseconds 400
+  $ports = [System.IO.Ports.SerialPort]::GetPortNames()
+  if ($ports -notcontains $PortName) {
+    Write-Warning "USB reset skipped: $PortName is not present."
+    return
+  }
+  $port = $null
+  try {
+    $port = New-Object System.IO.Ports.SerialPort $PortName, 115200
+    $port.DtrEnable = $true
+    $port.RtsEnable = $false
+    $port.Open()
+    Start-Sleep -Milliseconds 600
+    Write-Host "USB-reset $PortName (DTR) to recover IDENTITY."
+  } catch {
+    Write-Warning "USB reset of $PortName failed: $($_.Exception.Message)"
+  } finally {
+    if ($port) {
+      try { if ($port.IsOpen) { $port.Close() } } catch { }
+      $port.Dispose()
+    }
+  }
+}
+
+function Test-StepEspHttpReady {
+  param([string]$Uri = 'http://127.0.0.1:5173')
+  try {
+    $response = Invoke-WebRequest -Uri $Uri -UseBasicParsing -TimeoutSec 2
+    return ($response.StatusCode -eq 200)
+  } catch {
+    return $false
+  }
+}
+
+function Test-StepEspTcpOpen {
+  param(
+    [string]$TargetHost = '127.0.0.1',
+    [int]$Port,
+    [int]$TimeoutMs = 400
+  )
+  $client = $null
+  try {
+    $client = [System.Net.Sockets.TcpClient]::new()
+    $connect = $client.ConnectAsync($TargetHost, $Port)
+    if (-not $connect.Wait($TimeoutMs)) {
+      return $false
+    }
+    if ($connect.IsFaulted) {
+      return $false
+    }
+    return $client.Connected
+  } catch {
+    return $false
+  } finally {
+    if ($client) { $client.Dispose() }
+  }
+}
+
+function Wait-StepEspTcpState {
+  param(
+    [int[]]$Ports,
+    [bool]$ShouldBeOpen,
+    [int]$TimeoutSeconds = 20,
+    [string]$TargetHost = '127.0.0.1'
+  )
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    $allMatch = $true
+    foreach ($port in $Ports) {
+      $open = Test-StepEspTcpOpen -TargetHost $TargetHost -Port $port
+      if ($open -ne $ShouldBeOpen) {
+        $allMatch = $false
+        break
+      }
+    }
+    if ($allMatch) {
+      return $true
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  return $false
+}
+
+function Test-StepEspIcmp {
+  param([string]$HostAddress)
+  & ping.exe -n 1 -w 400 $HostAddress | Out-Null
+  return ($LASTEXITCODE -eq 0)
+}
+
+function Invoke-StepEspIdentityUntilReady {
+  param(
+    [Parameter(Mandatory = $true)][string]$HostAddress,
+    [Parameter(Mandatory = $true)][int]$Port,
+    [string]$ExpectedRole = '',
+    [int]$MaxAttempts = 80
+  )
+
+  $lastError = $null
+  for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+    try {
+      Write-Host "Identity probe $attempt/$MaxAttempts -> ${HostAddress}:${Port}"
+      $identity = Get-StepEspIdentity -HostAddress $HostAddress -Port $Port -TimeoutMs 8000
+      if ($ExpectedRole -and $identity.Role -ne $ExpectedRole) {
+        throw "role=$($identity.Role), expected $ExpectedRole"
+      }
+      return $identity
+    } catch {
+      $lastError = $_
+      Write-Warning $_.Exception.Message
+      [void](Lock-StepEspWifi -Quiet)
+      if ($DiagnosticPort -and (($attempt % 5) -eq 0)) {
+        Reset-StepEspOverUsb -PortName $DiagnosticPort
+        Start-Sleep -Seconds 8
+      } else {
+        Start-Sleep -Seconds 10
+      }
+    }
+  }
+  $detail = if ($lastError) { $lastError.Exception.Message } else { 'no response' }
+  throw "Identity never succeeded for ${HostAddress}:${Port} after $MaxAttempts attempts. Last error: $detail"
+}
+
+$workspace = Split-Path -Parent $PSScriptRoot
 $relayScript = Join-Path $workspace 'scripts\stepesp_tcp_udp_relay.py'
 $serialDrainScript = Join-Path $workspace 'scripts\stepesp_serial_drain.py'
 $bridgeLog = '/home/justi/stepesp_fleet_bridge.log'
@@ -277,9 +493,9 @@ if ((wsl -d $Distro -- bash -lc "test -f '$RosInstall/setup.bash'; echo `$?").Tr
   throw "ROS install not found at $RosInstall inside $Distro. Build the backend before starting wireless mode."
 }
 
-$rosReadiness = (wsl -d $Distro -- bash -lc "source /opt/ros/humble/setup.bash; source '$RosInstall/setup.bash'; ros2 pkg prefix rehab_robotics_interfaces >/dev/null 2>&1 && ros2 pkg executables rehab_robotics_bridge | grep -q processing_block_observer && ros2 pkg executables rosbridge_server | grep -q rosbridge_websocket; echo `$?").Trim()
+$rosReadiness = (wsl -d $Distro -- bash -lc "source /opt/ros/humble/setup.bash; source '$RosInstall/setup.bash'; ros2 pkg prefix rehab_robotics_interfaces >/dev/null 2>&1 && ros2 pkg executables rosbridge_server | grep -q rosbridge_websocket; echo `$?").Trim()
 if ($rosReadiness -ne '0') {
-  throw "The ROS install is missing rehab_robotics_interfaces, processing_block_observer, or rosbridge_websocket. Rebuild the v12 workspace before starting wireless mode."
+  throw "The ROS install is missing rehab_robotics_interfaces or rosbridge_websocket. Rebuild the v12 workspace before starting wireless mode."
 }
 
 # Install/build the OpenSim overlay before switching to the offline ESP access
@@ -311,36 +527,31 @@ if (-not $SkipGui) {
   }
 }
 
-# The ESP access point intentionally has no internet. Prevent Windows from
-# preferring the campus profile during an acquisition session, connect to the
-# ESP profile, and wait until the association is actually complete.
-netsh wlan set profileparameter name="$InternetProfile" connectionmode=manual | Out-Null
-netsh wlan set profileparameter name="$WifiProfile" connectionmode=auto autoswitch=no | Out-Null
-netsh wlan set profileorder name="$WifiProfile" interface="$WifiInterface" priority=1 | Out-Null
-netsh wlan connect name="$WifiProfile" interface="$WifiInterface" | Out-Null
-
-$wifiConnected = $false
-for ($attempt = 0; $attempt -lt 20; $attempt++) {
-  Start-Sleep -Seconds 1
-  $interfaceState = netsh wlan show interfaces
-  if ($interfaceState -match "SSID\s+:\s+$([regex]::Escape($WifiProfile))\s*") {
-    $wifiConnected = $true
+# Pin iPhone (or STEP_ESP32) and prevent campus profiles from stealing the NIC.
+$masterHostWasExplicit = $PSBoundParameters.ContainsKey('MasterHost')
+Disable-CampusWifiAutoconnect
+$wifiDeadline = (Get-Date).AddMinutes(8)
+$wifiAttempt = 0
+$wifiAddress = $null
+$activeWifiProfile = $WifiProfile
+while ((Get-Date) -lt $wifiDeadline) {
+  $wifiAttempt++
+  $wifiAddress = Lock-StepEspWifi
+  $currentSsid = Get-StepEspCurrentSsid
+  if ($wifiAddress) {
+    $activeWifiProfile = if ($currentSsid) { $currentSsid } else { $WifiProfile }
+    if (-not $masterHostWasExplicit) {
+      if ($wifiAddress -like '192.168.4.*') { $MasterHost = '192.168.4.1' }
+      elseif ($wifiAddress -like '172.20.10.*') { $MasterHost = '172.20.10.3' }
+    }
+    Write-Host "Using $activeWifiProfile at $wifiAddress, master=$MasterHost (campus Wi-Fi auto-connect disabled)"
     break
   }
+  Write-Host "Wi-Fi attempt ${wifiAttempt}: waiting for $WifiProfile address..."
+  Start-Sleep -Seconds 3
 }
-
-if (-not $wifiConnected) {
-  netsh wlan set profileparameter name="$WifiProfile" connectionmode=manual | Out-Null
-  netsh wlan set profileparameter name="$InternetProfile" connectionmode=auto | Out-Null
-  netsh wlan connect name="$InternetProfile" interface="$WifiInterface" | Out-Null
-  throw "Could not connect to STEP_ESP32. Check that the master is powered and its access point is visible."
-}
-
-$wifiAddress = Get-NetIPAddress -InterfaceAlias $WifiInterface -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-  Where-Object { $_.IPAddress -like '192.168.4.*' } |
-  Select-Object -First 1 -ExpandProperty IPAddress
 if (-not $wifiAddress) {
-  throw "STEP_ESP32 is associated, but $WifiInterface has no 192.168.4.x address."
+  throw "Could not obtain a $WifiProfile address on $WifiInterface. Stay on that SSID and retry."
 }
 
 $expectedMasterCanonical = if ($ExpectedMasterDeviceId) {
@@ -371,23 +582,24 @@ $expectedSlaveCanonical = if ($expectedSlaveFilterIds.Count -eq 1) {
 }
 
 $candidateSlaveHosts = @()
+$scanPrefix = ($wifiAddress -replace '\.\d+$', '.')
 if ($SlaveHost -eq 'auto') {
-  # Ping only discovers candidate routes. It never selects device identity.
   $responsiveStations = @()
-  for ($attempt = 0; $attempt -lt 15 -and $responsiveStations.Count -eq 0; $attempt++) {
+  for ($attempt = 0; $attempt -lt 40 -and $responsiveStations.Count -eq 0; $attempt++) {
+    Write-Host "Slave discovery attempt $($attempt + 1)/40 on ${scanPrefix}2-20"
     $responsiveStations = @(
-      2..10 |
-        ForEach-Object { "192.168.4.$_" } |
+      2..20 |
+        ForEach-Object { "$scanPrefix$_" } |
         Where-Object { $_ -ne $wifiAddress -and $_ -ne $MasterHost } |
         Where-Object {
           & ping.exe -n 1 -w 150 $_ | Out-Null
           $LASTEXITCODE -eq 0
         }
     )
-    if ($responsiveStations.Count -eq 0) { Start-Sleep -Seconds 1 }
+    if ($responsiveStations.Count -eq 0) { Start-Sleep -Seconds 2 }
   }
   if ($responsiveStations.Count -eq 0) {
-    throw "Could not discover the slave on STEP_ESP32. Power the slave, wait for it to join, then retry or pass -SlaveHost 192.168.4.x."
+    throw "Could not discover the slave on $scanPrefix*. Power the slave, wait for it to join, then retry or pass -SlaveHost."
   }
   $candidateSlaveHosts = @($responsiveStations | Sort-Object -Unique)
 } else {
@@ -417,13 +629,138 @@ if (-not $SkipGui) {
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 }
 
-# Give each ESP TCP server time to observe the old relay's FIN and release its
-# single active client before the bounded identity probes connect.
-Start-Sleep -Seconds 6
+# Old WSL clients and the Windows relay both occupy the ESP's single TCP
+# session. Wait until the listen ports drop, then give the boards time to FIN.
+if (-not (Wait-StepEspTcpState -Ports @($RelayPort, $SlaveRelayPort, 9090) -ShouldBeOpen $false -TimeoutSeconds 15)) {
+  Write-Warning "Prior relay/rosbridge ports are still open; continuing anyway."
+}
+Start-Sleep -Seconds 10
+Stop-ArduinoSerialHolders
 
-$masterIdentity = Get-StepEspIdentity -HostAddress $MasterHost -Port $MasterPort
-if ($masterIdentity.Role -ne 'master') {
-  throw "Master route $MasterHost reported role=$($masterIdentity.Role), not master."
+# Clear any single-client TCP slot left behind by an interrupted prior run.
+# Native USB DTR resets are optional: Wi-Fi-only deployments continue when the
+# ports are absent, while the standard COM3/COM4 bench starts from clean queues.
+$preflightResetPorts = @($DiagnosticPort, 'COM4') |
+  Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+  Select-Object -Unique
+$availablePreflightPorts = [System.IO.Ports.SerialPort]::GetPortNames()
+$didPreflightReset = $false
+foreach ($portName in $preflightResetPorts) {
+  if ($availablePreflightPorts -contains $portName) {
+    Reset-StepEspOverUsb -PortName $portName
+    $didPreflightReset = $true
+  }
+}
+
+function Test-StepEspTcpListening {
+  param([int]$Port)
+  return $null -ne (
+    Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+  )
+}
+
+function Wait-StepEspListenState {
+  param(
+    [int[]]$Ports,
+    [int]$TimeoutSeconds = 20
+  )
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    $allListening = $true
+    foreach ($port in $Ports) {
+      if (-not (Test-StepEspTcpListening -Port $port)) {
+        $allListening = $false
+        break
+      }
+    }
+    if ($allListening) { return $true }
+    Start-Sleep -Milliseconds 250
+  }
+  return $false
+}
+if ($didPreflightReset) {
+  Write-Host 'Waiting for reset ESP nodes to rejoin the hotspot.'
+  Start-Sleep -Seconds 10
+}
+
+$pingDeadline = (Get-Date).AddMinutes(2)
+while ((Get-Date) -lt $pingDeadline) {
+  [void](Lock-StepEspWifi -Quiet)
+  $masterUp = Test-StepEspIcmp -HostAddress $MasterHost
+  $slaveUp = $true
+  foreach ($candidateHost in $candidateSlaveHosts) {
+    if (-not (Test-StepEspIcmp -HostAddress $candidateHost)) {
+      $slaveUp = $false
+      break
+    }
+  }
+  if ($masterUp -and $slaveUp) {
+    Write-Host "ICMP reachable: master=$MasterHost slave=$($candidateSlaveHosts -join ', ')"
+    break
+  }
+  Write-Host "Waiting for ESP ICMP (master=$masterUp slave=$slaveUp) on $WifiProfile..."
+  $availableNow = [System.IO.Ports.SerialPort]::GetPortNames()
+  if (-not $slaveUp -and ($availableNow -contains 'COM4')) {
+    Reset-StepEspOverUsb -PortName 'COM4'
+    Start-Sleep -Seconds 8
+  } else {
+    Start-Sleep -Seconds 2
+  }
+}
+
+if (-not $SkipGui) {
+  Repair-StepEspGuiDist
+  $guiEnv = 'set VITE_DATA_SOURCE=rosbridge&& set VITE_ROSBRIDGE_URL=ws://127.0.0.1:9090&& set VITE_ESP_RAW_TOPIC=/esp/raw/master&& set VITE_ESP_SLAVE_TOPIC=/esp/raw/slave&& '
+  $guiDist = Join-Path $guiRoot 'dist\index.html'
+  $earlyGuiCommand = if (Test-Path -LiteralPath $guiDist) {
+    $guiEnv + 'npm.cmd run preview -- --host 127.0.0.1 --port 5173 --strictPort'
+  } else {
+    $guiEnv + 'npm.cmd run build&& npm.cmd run preview -- --host 127.0.0.1 --port 5173 --strictPort'
+  }
+  Write-Host 'Starting GUI before IDENTITY so the browser can open on iPhone (111) without COM3.'
+  Start-Process -FilePath cmd.exe -ArgumentList '/c', $earlyGuiCommand -WorkingDirectory $guiRoot -RedirectStandardOutput $guiLog -RedirectStandardError $guiErrorLog -WindowStyle Hidden
+}
+
+$masterIdentity = $null
+$identityDeadline = (Get-Date).AddMinutes(12)
+$identityAttempt = 0
+while ((Get-Date) -lt $identityDeadline -and -not $masterIdentity) {
+  $identityAttempt++
+  try {
+    $masterIdentity = Invoke-StepEspIdentityUntilReady -HostAddress $MasterHost -Port $MasterPort -ExpectedRole 'master' -MaxAttempts 8
+  } catch {
+    Write-Warning "Master identity batch $identityAttempt failed: $($_.Exception.Message)"
+    if (-not $masterHostWasExplicit) {
+      $scanHosts = @(
+        1..20 | ForEach-Object { "$scanPrefix$_" } |
+          Where-Object { $_ -ne $wifiAddress }
+      )
+      foreach ($candidate in $scanHosts) {
+        try {
+          $probe = Get-StepEspIdentity -HostAddress $candidate -Port $MasterPort -TimeoutMs 2500
+          if ($probe.Role -eq 'master') {
+            $MasterHost = $candidate
+            $masterIdentity = $probe
+            Write-Host "Discovered master identity at $MasterHost ($($probe.DeviceId))"
+            break
+          }
+        } catch { }
+      }
+    }
+    if (-not $masterIdentity) {
+      [void](Lock-StepEspWifi -Quiet)
+      if ($DiagnosticPort) {
+        Reset-StepEspOverUsb -PortName $DiagnosticPort
+      } else {
+        Write-Warning "COM diagnostic port is not connected; retrying identity over Wi-Fi only."
+      }
+      Start-Sleep -Seconds 4
+    }
+  }
+}
+if (-not $masterIdentity) {
+  throw "Master identity at $MasterHost never returned IDENTITY_OK. Reflash firmware/step_node/step_node.ino, close Arduino Serial Monitor, then retry."
 }
 if ($expectedMasterCanonical -and $masterIdentity.DeviceId -ne $expectedMasterCanonical) {
   throw "Master route $MasterHost reported $($masterIdentity.DeviceId), expected $expectedMasterCanonical."
@@ -431,16 +768,33 @@ if ($expectedMasterCanonical -and $masterIdentity.DeviceId -ne $expectedMasterCa
 $verifiedMasterDeviceId = $masterIdentity.DeviceId
 
 $slaveIdentityProbes = @()
-foreach ($candidateHost in $candidateSlaveHosts) {
-  try {
-    $probe = Get-StepEspIdentity -HostAddress $candidateHost -Port $SlavePort
-    if ($probe.Role -ne 'slave') {
-      Write-Warning "Ignoring candidate $candidateHost because its verified self role is $($probe.Role), not slave."
-      continue
+$slaveDeadline = (Get-Date).AddMinutes(8)
+$slaveAttempt = 0
+while ((Get-Date) -lt $slaveDeadline -and $slaveIdentityProbes.Count -eq 0) {
+  $slaveAttempt++
+  Write-Host "Slave identity attempt $slaveAttempt on $($candidateSlaveHosts -join ', ')"
+  foreach ($candidateHost in $candidateSlaveHosts) {
+    try {
+      $probe = Get-StepEspIdentity -HostAddress $candidateHost -Port $SlavePort -TimeoutMs 8000
+      if ($probe.Role -ne 'slave') {
+        Write-Warning "Ignoring candidate $candidateHost because its verified self role is $($probe.Role), not slave."
+        continue
+      }
+      $slaveIdentityProbes += $probe
+    } catch {
+      Write-Warning "Identity probe rejected candidate $candidateHost`: $($_.Exception.Message)"
     }
-    $slaveIdentityProbes += $probe
-  } catch {
-    Write-Warning "Identity probe rejected candidate $candidateHost`: $($_.Exception.Message)"
+  }
+  if ($slaveIdentityProbes.Count -eq 0) {
+    [void](Lock-StepEspWifi -Quiet)
+    $availableNow = [System.IO.Ports.SerialPort]::GetPortNames()
+    if (($slaveAttempt % 6) -eq 0 -and $availableNow -contains 'COM4') {
+      Write-Host 'Slave IDENTITY stalled; USB-resetting COM4.'
+      Reset-StepEspOverUsb -PortName 'COM4'
+      Start-Sleep -Seconds 8
+    } else {
+      Start-Sleep -Seconds 10
+    }
   }
 }
 
@@ -493,10 +847,11 @@ $slaveRouteSummaries = @(
     "$($route.DeviceId)@$($route.Host):$listenPort"
   }
 )
-Write-Host "STEP_ESP32 routes: master=$MasterHost ($verifiedMasterDeviceId), slaves=$($slaveRouteSummaries -join ', '), Windows=$wifiAddress"
+Write-Host "STEP ESP routes: master=$MasterHost ($verifiedMasterDeviceId), slaves=$($slaveRouteSummaries -join ', '), Windows=$wifiAddress"
 
-# The short-lived identity probe closes before the relay takes ownership.
-Start-Sleep -Seconds 2
+# The ESP TCP server is single-client. The identity probe must fully close
+# before the relay connects, or fleet_bridge sees "stream closed during identity".
+Start-Sleep -Seconds 4
 
 $wslGateway = (wsl -d $Distro -- bash -lc "ip route show default | cut -d' ' -f3").Trim()
 if (-not $wslGateway) {
@@ -527,11 +882,18 @@ if ($DiagnosticPort -and $availableSerialPorts -contains $DiagnosticPort) {
   $serialArgs = "`"$serialDrainScript`" $DiagnosticPort"
   Start-Process -FilePath python.exe -ArgumentList $serialArgs -RedirectStandardOutput $serialLog -RedirectStandardError $serialErrorLog -WindowStyle Hidden
   Start-Sleep -Milliseconds 750
-} else {
+} elseif ($DiagnosticPort) {
   Write-Warning "Diagnostic port $DiagnosticPort is not present; continuing in Wi-Fi-only mode."
 }
+if (Test-Path -LiteralPath $relayLog) {
+  Clear-Content -LiteralPath $relayLog -ErrorAction SilentlyContinue
+}
 Start-Process -FilePath python.exe -ArgumentList $relayArgs -RedirectStandardOutput $relayLog -RedirectStandardError $relayErrorLog -WindowStyle Hidden
-Start-Sleep -Milliseconds 750
+$relayReady = Wait-StepEspListenState -Ports @($RelayPort, $SlaveRelayPort) -TimeoutSeconds 20
+if (-not $relayReady) {
+  throw "Relay ports $RelayPort/$SlaveRelayPort did not open. Check $relayLog and $relayErrorLog"
+}
+Write-Host "Relay listening on $RelayPort (master) and $SlaveRelayPort (slave)."
 
 $rosEnvironment = "export ROS_DOMAIN_ID=$RosDomainId; source /opt/ros/humble/setup.bash; source $RosInstall/setup.bash; source $OpenSimInstall/setup.bash"
 $fleetRouteObjects = [System.Collections.Generic.List[object]]::new()
@@ -555,9 +917,18 @@ for ($index = 0; $index -lt $selectedSlaves.Count; $index++) {
   })
 }
 $routesJson = ConvertTo-Json -InputObject @($fleetRouteObjects.ToArray()) -Compress -Depth 6
-# Bash single-quotes wrap the JSON; only apostrophes need escaping.
-$routesJsonBash = $routesJson.Replace("'", "'\''")
-$fleet = "$rosEnvironment; exec ros2 run rehab_robotics_bridge fleet_bridge_node --ros-args -r __node:=esp_fleet_bridge -p routes_json:='$routesJsonBash' -p alias_master_device_id:=$verifiedMasterDeviceId -p alias_slave_device_id:=$verifiedSlaveDeviceId > $bridgeLog 2>&1"
+# rcl parses -p values as YAML. A JSON array is not a string, so write a params
+# file with routes_json quoted. Keep it off the workspace path (which contains '#').
+$fleetParamsWin = Join-Path $env:USERPROFILE 'stepesp_fleet_params.yaml'
+$fleetParamsWsl = '/mnt/c/Users/justi/stepesp_fleet_params.yaml'
+@(
+  'esp_fleet_bridge:'
+  '  ros__parameters:'
+  ("    routes_json: '{0}'" -f $routesJson.Replace("'", "''"))
+  "    alias_master_device_id: `"$verifiedMasterDeviceId`""
+  "    alias_slave_device_id: `"$verifiedSlaveDeviceId`""
+) | Set-Content -LiteralPath $fleetParamsWin -Encoding ascii
+$fleet = "$rosEnvironment; exec ros2 run rehab_robotics_bridge fleet_bridge_node --ros-args -r __node:=esp_fleet_bridge --params-file $fleetParamsWsl > $bridgeLog 2>&1"
 $rosbridge = "$rosEnvironment; exec ros2 run rosbridge_server rosbridge_websocket --ros-args -p port:=9090 -p address:=0.0.0.0 > $rosbridgeLog 2>&1"
 $observer = "$rosEnvironment; exec ros2 run rehab_robotics_bridge processing_block_observer > $observerLog 2>&1"
 $modelCatalog = "$rosEnvironment; exec ros2 run rehab_robotics_bridge model_catalog_node --ros-args -p opensim_model_path:=$OpenSimModel > $modelCatalogLog 2>&1"
@@ -566,59 +937,121 @@ $openSim = "export ROS_DOMAIN_ID=$RosDomainId; exec bash $openSimRunner $OpenSim
 
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $fleet -WindowStyle Hidden
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $rosbridge -WindowStyle Hidden
-Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $observer -WindowStyle Hidden
+try {
+  Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $observer -WindowStyle Hidden
+} catch {
+  Write-Warning "processing_block_observer did not start: $($_.Exception.Message)"
+}
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $modelCatalog -WindowStyle Hidden
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $mapping -WindowStyle Hidden
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $openSim -WindowStyle Hidden
 
-$rosbridgeReady = $false
-for ($attempt = 0; $attempt -lt 30; $attempt++) {
-  Start-Sleep -Milliseconds 500
-  if (Test-NetConnection -ComputerName 127.0.0.1 -Port 9090 -InformationLevel Quiet -WarningAction SilentlyContinue) {
-    $rosbridgeReady = $true
-    break
-  }
-}
+$rosbridgeReady = Wait-StepEspListenState -Ports @(9090) -TimeoutSeconds 60
 if (-not $rosbridgeReady) {
   throw "rosbridge did not open port 9090. Check $rosbridgeLog inside WSL."
+}
+Write-Host 'rosbridge listening on 9090.'
+
+$fleetBound = $false
+$fleetRecoveryDone = $false
+$fleetDeadline = (Get-Date).AddMinutes(3)
+$fleetAttempt = 0
+while ((Get-Date) -lt $fleetDeadline -and -not $fleetBound) {
+  $fleetAttempt++
+  [void](Lock-StepEspWifi -Quiet)
+  $tailLines = @(wsl -d $Distro -- bash -lc "tail -n 80 '$bridgeLog' 2>/dev/null")
+  $tail = ($tailLines -join "`n").Trim()
+  if ($tail -match 'identity bound:.*role=master' -and $tail -match 'identity bound:.*role=slave') {
+    $fleetBound = $true
+    Write-Host 'Fleet bridge bound master and slave identities.'
+    break
+  }
+  if (($fleetAttempt % 8) -eq 0) {
+    Write-Host "Waiting for fleet identity bind (attempt $fleetAttempt)..."
+  }
+  if (-not $fleetRecoveryDone -and $fleetAttempt -ge 24) {
+    $fleetRecoveryDone = $true
+    $fleetRecoveryPorts = @($DiagnosticPort, 'COM4') |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+      Select-Object -Unique
+    $availableRecoveryPorts = [System.IO.Ports.SerialPort]::GetPortNames()
+    foreach ($portName in $fleetRecoveryPorts) {
+      if ($availableRecoveryPorts -contains $portName) {
+        Write-Host "Fleet bind recovery: USB-resetting $portName once."
+        Reset-StepEspOverUsb -PortName $portName
+      }
+    }
+    Start-Sleep -Seconds 10
+  }
+  Start-Sleep -Seconds 2
+}
+if (-not $fleetBound) {
+  Write-Warning "Fleet bridge has not bound both identities yet. GUI/rosbridge are up; check $bridgeLog and $relayLog."
 }
 
 if (-not $SkipGui) {
   # Vite dev mode cannot reliably resolve source URLs when this workspace path
   # contains '#'. Build first and serve dist so the existing folder name works.
-  # Serve the last verified production artifact. The historical source tree is
-  # incomplete, but dist is self-contained and is the exact operator UI used
-  # during the final Codex hardware session.
-  $guiCommand = 'set VITE_DATA_SOURCE=rosbridge&& set VITE_ROSBRIDGE_URL=ws://127.0.0.1:9090&& set VITE_ESP_RAW_TOPIC=/esp/raw/master&& set VITE_ESP_SLAVE_TOPIC=/esp/raw/slave&& npm.cmd run preview -- --host 127.0.0.1 --port 5173 --strictPort'
-  Start-Process -FilePath cmd.exe -ArgumentList '/c', $guiCommand -WorkingDirectory $guiRoot -RedirectStandardOutput $guiLog -RedirectStandardError $guiErrorLog -WindowStyle Hidden
-
+  $guiEnv = 'set VITE_DATA_SOURCE=rosbridge&& set VITE_ROSBRIDGE_URL=ws://127.0.0.1:9090&& set VITE_ESP_RAW_TOPIC=/esp/raw/master&& set VITE_ESP_SLAVE_TOPIC=/esp/raw/slave&& '
+  $guiBuildPreview = $guiEnv + 'npm.cmd run build&& npm.cmd run preview -- --host 127.0.0.1 --port 5173 --strictPort'
+  $guiPreviewOnly = $guiEnv + 'npm.cmd run preview -- --host 127.0.0.1 --port 5173 --strictPort'
+  $guiDist = Join-Path $guiRoot 'dist\index.html'
+  $guiStartedAt = Get-Date
+  $guiRestartEvery = New-TimeSpan -Minutes 4
+  $guiDeadline = (Get-Date).AddMinutes(8)
   $guiReady = $false
-  for ($attempt = 0; $attempt -lt 30; $attempt++) {
-    Start-Sleep -Milliseconds 500
-    try {
-      $response = Invoke-WebRequest -Uri 'http://127.0.0.1:5173' -UseBasicParsing -TimeoutSec 1
-      if ($response.StatusCode -eq 200) {
-        $guiReady = $true
-        break
-      }
-    } catch { }
+  $guiLaunchCount = 0
+
+  function Start-StepEspGuiProcess {
+    param([string]$Command)
+    $script:guiLaunchCount++
+    Write-Host "Starting GUI process #$guiLaunchCount"
+    Start-Process -FilePath cmd.exe -ArgumentList '/c', $Command -WorkingDirectory $guiRoot -RedirectStandardOutput $guiLog -RedirectStandardError $guiErrorLog -WindowStyle Hidden
   }
-  if (-not $guiReady) {
-    throw "GUI did not open port 5173. Check $guiErrorLog."
+
+  if (-not (Test-StepEspHttpReady -Uri 'http://127.0.0.1:5173') -or -not (Test-StepEspCssReady)) {
+    Repair-StepEspGuiDist
+    $initialCommand = if (Test-Path -LiteralPath $guiDist) { $guiPreviewOnly } else { $guiBuildPreview }
+    Start-StepEspGuiProcess -Command $initialCommand
+  }
+  while (-not $guiReady) {
+    if ((Get-Date) -ge $guiDeadline) {
+      throw "GUI did not become ready at http://127.0.0.1:5173 with a real stylesheet. Check $guiLog and $guiErrorLog"
+    }
+    if ((Test-StepEspHttpReady -Uri 'http://127.0.0.1:5173') -and (Test-StepEspCssReady)) {
+      $guiReady = $true
+      break
+    }
+    $elapsed = (Get-Date) - $guiStartedAt
+    Write-Host ("Waiting for GUI at http://127.0.0.1:5173 ({0:n0}s elapsed)" -f $elapsed.TotalSeconds)
+    if ($elapsed -ge $guiRestartEvery) {
+      $escapedGuiRoot = [regex]::Escape($guiRoot)
+      Get-CimInstance Win32_Process |
+        Where-Object {
+          $_.ProcessId -ne $PID -and $_.CommandLine -match $escapedGuiRoot -and
+          $_.CommandLine -match 'vite|npm(.cmd)?\s+run\s+(build|dev|preview)'
+        } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+      Repair-StepEspGuiDist
+      $restartCommand = if (Test-Path -LiteralPath $guiDist) { $guiPreviewOnly } else { $guiBuildPreview }
+      $guiStartedAt = Get-Date
+      Start-StepEspGuiProcess -Command $restartCommand
+    }
+    Start-Sleep -Seconds 3
   }
   if (-not $NoBrowser) {
     Start-Process 'http://127.0.0.1:5173'
   }
 }
 
-Write-Host "Started the complete STEP_ESP32 stack: N-route Windows relay, one fleet_bridge_node (aliases + registry), OpenSim live link, rosbridge, processing observer$(if (-not $SkipGui) { ', and GUI' })."
+Write-Host "Started the complete STEP ESP stack on $activeWifiProfile`: N-route Windows relay, one fleet_bridge_node (aliases + registry), OpenSim live link, rosbridge, processing observer$(if (-not $SkipGui) { ', and GUI' })."
 Write-Host "ROS domain: $RosDomainId"
 Write-Host "GUI: http://127.0.0.1:5173"
 Write-Host "rosbridge: ws://127.0.0.1:9090"
 Write-Host "Verify pair: source $RosInstall/setup.bash; ROS_DOMAIN_ID=$RosDomainId ros2 topic echo /esp/status/pair --once --field data"
 Write-Host "Verify registry: source $RosInstall/setup.bash; ROS_DOMAIN_ID=$RosDomainId ros2 topic echo /esp/fleet/registry --once --field data"
 Write-Host "Verify deployment topics: source $RosInstall/setup.bash; ROS_DOMAIN_ID=$RosDomainId ros2 topic list | grep processing_blocks"
-Write-Host "Fleet bridge log: $bridgeLog (kept after you return to ubcvisitor)"
+Write-Host "Fleet bridge log: $bridgeLog (kept after you return to $InternetProfile)"
 Write-Host "rosbridge log: $rosbridgeLog"
 Write-Host "observer log: $observerLog"
 Write-Host "model catalog log: $modelCatalogLog"
@@ -628,7 +1061,7 @@ Write-Host "OpenSim log: $openSimLog"
 Write-Host "Relay log: $relayLog"
 if ($DiagnosticPort -and $availableSerialPorts -contains $DiagnosticPort) { Write-Host "USB diagnostic log: $serialLog" }
 if (-not $SkipGui) { Write-Host "GUI logs: $guiLog and $guiErrorLog" }
-Write-Host "Stay on $WifiProfile while acquiring. Restore normal Wi-Fi with: .\scripts\stop_stepesp_wireless.ps1"
+Write-Host "Stay on $activeWifiProfile while acquiring. Restore normal Wi-Fi with: .\scripts\stop_stepesp_wireless.ps1"
 } finally {
   if ($null -ne $launcherLock) {
     $launcherLock.Dispose()

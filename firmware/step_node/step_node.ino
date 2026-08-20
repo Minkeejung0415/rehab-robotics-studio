@@ -47,6 +47,7 @@
 #include <WiFiClient.h>
 #include <WiFiUdp.h>
 #include <lwip/sockets.h>
+#include <errno.h>
 #include <lwip/tcp.h>
 #if ENABLE_ESPNOW
 #include <esp_now.h>
@@ -77,7 +78,7 @@ struct IdentifyAckPacket;
 
 #define DIO_DEBOUNCE_MS 15   // stable toggle within ~20 ms @ 100 Hz
 
-// Shared infrastructure network. Both nodes join the iPhone hotspot.
+// Optional infrastructure network. The lab topology below forces this master to own STEP_ESP32.
 #define WIFI_SSID "iPhone (111)"
 #define WIFI_PASS "1234567890"
 
@@ -94,7 +95,7 @@ struct IdentifyAckPacket;
 #define WIFI_TX_POWER_AP WIFI_POWER_8_5dBm
 
 #define TCP_PORT 5000
-#define TCP_IDLE_CLIENT_TIMEOUT_MS 2000UL
+#define TCP_IDLE_CLIENT_TIMEOUT_MS 30000UL
 #define TCP_WRITE_TIMEOUT_MS 500UL
 #define TCP_WRITE_FAILURE_LIMIT 3U
 #define UDP_STREAM_PORT 55001
@@ -257,10 +258,23 @@ WiFiClient client;
 static uint32_t tcp_client_last_activity_ms = 0;
 static volatile uint32_t g_tcp_consecutive_write_failures = 0;
 static volatile bool g_tcp_reset_requested = false;
+static uint8_t g_tcp_silent_accepts = 0;
+static char g_cached_route_ip[16] = "0.0.0.0";
 WiFiUDP stream_udp;
 bool streaming = false;
 bool wifi_up = false;
 bool wifi_soft_ap = false;
+
+static void cacheWifiRouteIp() {
+  const IPAddress ip = wifi_soft_ap ? WiFi.softAPIP() : WiFi.localIP();
+  snprintf(g_cached_route_ip, sizeof(g_cached_route_ip), "%u.%u.%u.%u",
+           ip[0], ip[1], ip[2], ip[3]);
+}
+
+static void markWifiUp() {
+  wifi_up = true;
+  cacheWifiRouteIp();
+}
 
 uint32_t seq = 0;
 int16_t channels[NUM_CHANNELS];
@@ -368,19 +382,35 @@ static void configureTcpClient(WiFiClient &tcp_client) {
   tcp_client.setSocketOption(IPPROTO_TCP, TCP_KEEPCNT, &probes, sizeof(probes));
 }
 
+static bool tcpPeerClosed(const WiFiClient &tcp_client) {
+  const int fd = tcp_client.fd();
+  if (fd < 0) {
+    return true;
+  }
+  uint8_t peek = 0;
+  const int n = recv(fd, &peek, 1, MSG_DONTWAIT | MSG_PEEK);
+  return n == 0;
+}
+
 static bool tcpWriteBytes(const uint8_t *data, size_t len, uint32_t timeout_ms) {
   if (!g_tcp_mutex ||
       xSemaphoreTake(g_tcp_mutex, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
     return false;
   }
   bool ok = false;
-  if (client && client.connected()) {
+  const int sock = client.fd();
+  if (sock >= 0) {
     size_t sent = 0;
     const uint32_t deadline = millis() + timeout_ms;
-    while (sent < len && client.connected() && millis() < deadline) {
-      const size_t n = client.write(data + sent, len - sent);
-      if (n > 0) sent += n;
-      else delay(1);
+    while (sent < len && millis() < deadline) {
+      const int n = send(sock, data + sent, len - sent, 0);
+      if (n > 0) {
+        sent += (size_t)n;
+      } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        delay(1);
+      } else {
+        break;
+      }
     }
     ok = sent == len;
   }
@@ -398,6 +428,15 @@ static void stopTcpClient() {
   g_tcp_consecutive_write_failures = 0;
   g_tcp_reset_requested = false;
   xSemaphoreGive(g_tcp_mutex);
+}
+
+static void resetTcpListener() {
+  stopTcpClient();
+  server.end();
+  delay(5);
+  server.begin();
+  tcp_client_last_activity_ms = 0;
+  g_stream_target_ip = 0;
 }
 
 static const float kAccLsbPerG[4] = {16384.0f, 8192.0f, 4096.0f, 2048.0f};
@@ -1597,7 +1636,7 @@ static void streamWriteTask(void *) {
     bool sent = false;
 #if ENABLE_TCP
 #if WIFI_STREAM_OVER_TCP
-    if (wifi_up && client && client.connected()) {
+    if (wifi_up && client.fd() >= 0) {
       static constexpr size_t kWireFrameBytes =
           sizeof(OeHeader) + NUM_CHANNELS * sizeof(int16_t);
       uint8_t wire_frame[kWireFrameBytes];
@@ -2734,8 +2773,6 @@ static void printIdentityInventory() {
   formatDisplayMac(self.sta_mac, sta_mac, sizeof(sta_mac));
   formatDisplayMac(self.ap_mac, ap_mac, sizeof(ap_mac));
   formatDisplayMac(self.espnow_mac, espnow_mac, sizeof(espnow_mac));
-  const String route_ip =
-      wifi_soft_ap ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
   snprintf(
       line, sizeof(line),
       "IDENTITY_OK protocol=id-v1 record=self peer_count=%d "
@@ -2743,7 +2780,7 @@ static void printIdentityInventory() {
       "espnow_mac=%s role=master route_ip=%s schema_version=%u verified=1 "
       "identify_supported=%u board_revision=%s\n",
       peer_count, device_id, display_mac, base_mac, sta_mac, ap_mac,
-      espnow_mac, route_ip.c_str(), (unsigned)self.version,
+      espnow_mac, g_cached_route_ip, (unsigned)self.version,
       (unsigned)((self.capabilities & IDENTITY_CAP_IDENTIFY) != 0),
       STEPESP_IDENTIFY_LED_BOARD_REVISION);
   replyToHost(line);
@@ -3242,7 +3279,7 @@ static void printWifiStatus() {
                   WiFi.subnetMask().toString().c_str(), WiFi.RSSI());
     Serial.printf("TCP listen :%d  client=%s  streaming=%s\n",
                   TCP_PORT,
-                  (client && client.connected()) ? "yes" : "no",
+                  (client.fd() >= 0) ? "yes" : "no",
                   streaming ? "yes" : "no");
     Serial.println("PC: ping IP above; Plugin/Ephys Socket -> IP:5000; send REDPITAYA then START");
   }
@@ -3271,8 +3308,8 @@ static bool startSoftApFallback() {
     return false;
   }
   delay(1500);  // let beacon stabilize before Windows scan
-  wifi_up = true;
   wifi_soft_ap = true;
+  markWifiUp();
   Serial.println("WiFi OK Soft AP started");
   printWifiStatus();
   Serial.println("PC: join Wi-Fi STEP_ESP32 (password step1234), then host 192.168.4.1:5000");
@@ -3379,8 +3416,8 @@ static void setupWifi() {
     }
   }
 
-  wifi_up = true;
   wifi_soft_ap = false;
+  markWifiUp();
   Serial.println();
   Serial.println("========================================");
   Serial.println("  WiFi STA CONNECTED — use this IP on PC");
@@ -3401,7 +3438,7 @@ static void setupEspNow() {
     WiFi.setSleep(true);
     esp_wifi_set_channel(ESPNOW_WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
     delay(100);
-    wifi_up = true;
+    markWifiUp();
     Serial.printf("ESP-NOW WiFi: STA mode ch=%d (no AP join, modem-sleep ON)\n", ESPNOW_WIFI_CHANNEL);
   }
   esp_err_t err = esp_now_init();
@@ -3485,6 +3522,12 @@ void setup() {
 
   setupWifi();
   setupEspNow();
+#if ENABLE_TCP && !ENABLE_SERIAL_BENCH
+  if (wifi_up) {
+    server.begin();
+    Serial.printf("TCP listen :%d\n", TCP_PORT);
+  }
+#endif
 
 #if ENABLE_SD
   g_sd_mutex = xSemaphoreCreateMutex();
@@ -3504,13 +3547,7 @@ void setup() {
   Serial.printf("Acquisition loop: core=%d priority=%u\n",
                 xPortGetCoreID(), (unsigned)uxTaskPriorityGet(NULL));
 
-
-#if ENABLE_TCP && !ENABLE_SERIAL_BENCH
-  if (wifi_up) {
-    server.begin();
-    Serial.printf("TCP listen :%d\n", TCP_PORT);
-  }
-#elif ENABLE_SERIAL_BENCH
+#if ENABLE_SERIAL_BENCH
   Serial.println("Serial bench active @115200");
   Serial.println(SERIAL_OUTPUT_BINARY
                      ? "Format: Open Ephys binary on Serial"
@@ -3521,6 +3558,47 @@ void setup() {
   Serial.printf("CSV/stream paused %d ms — read diagnostics above\n", BOOT_CSV_DELAY_MS);
   last_status_ms = millis();
 }
+
+#if ENABLE_TCP && !ENABLE_SERIAL_BENCH
+static char g_tcp_line[256];
+static size_t g_tcp_line_len = 0;
+
+static void pollTcpCommands() {
+  const int sock = client.fd();
+  if (sock < 0) {
+    g_tcp_line_len = 0;
+    return;
+  }
+  uint8_t tmp[128];
+  const int n = recv(sock, tmp, sizeof(tmp), MSG_DONTWAIT);
+  if (n == 0) {
+    Serial.println("TCP peer closed; releasing client slot");
+    streaming = false;
+    stopTcpClient();
+    recMarkControlDisconnected();
+    g_stream_target_ip = 0;
+    tcp_client_last_activity_ms = 0;
+    g_tcp_line_len = 0;
+    return;
+  }
+  if (n < 0) {
+    return;
+  }
+  tcp_client_last_activity_ms = millis();
+  for (int i = 0; i < n; i++) {
+    const char c = (char)tmp[i];
+    if (c == '\n') {
+      g_tcp_line[g_tcp_line_len] = '\0';
+      if (g_tcp_line_len > 0) {
+        handleLine(String(g_tcp_line));
+      }
+      g_tcp_line_len = 0;
+    } else if (c != '\r' && g_tcp_line_len + 1 < sizeof(g_tcp_line)) {
+      g_tcp_line[g_tcp_line_len++] = c;
+    }
+  }
+}
+#endif
 
 void loop() {
   pollSerialCommands();
@@ -3538,12 +3616,13 @@ void loop() {
       g_stream_target_ip = 0;
       tcp_client_last_activity_ms = 0;
     }
-    if (!client || !client.connected()) {
+    if (client.fd() < 0) {
       recMarkControlDisconnected();
       streaming = false;
       g_stream_target_ip = 0;
       WiFiClient incoming = server.available();
-      if (incoming && incoming.connected()) {
+      if (incoming.fd() >= 0) {
+        g_tcp_silent_accepts = 0;
         client = incoming;
         configureTcpClient(client);
         g_tcp_consecutive_write_failures = 0;
@@ -3551,26 +3630,22 @@ void loop() {
         streaming = false;
         g_stream_target_ip = (uint32_t)client.remoteIP();
         tcp_client_last_activity_ms = millis();
+        g_tcp_line_len = 0;
         recMarkControlConnected();
         Serial.printf("Client connected from %s\n",
                       client.remoteIP().toString().c_str());
       }
     } else if (!streaming
                && tcp_client_last_activity_ms != 0
-               && millis() - tcp_client_last_activity_ms > TCP_IDLE_CLIENT_TIMEOUT_MS
-               && !client.available()) {
+               && millis() - tcp_client_last_activity_ms > TCP_IDLE_CLIENT_TIMEOUT_MS) {
       Serial.println("TCP client idle before command; closing");
       stopTcpClient();
       recMarkControlDisconnected();
       g_stream_target_ip = 0;
       tcp_client_last_activity_ms = 0;
+      g_tcp_line_len = 0;
     }
-    while (client && client.available()) {
-      String line = client.readStringUntil('\n');
-      tcp_client_last_activity_ms = millis();
-      line.trim();
-      if (line.length()) handleLine(line);
-    }
+    pollTcpCommands();
   }
 #endif
 
