@@ -77,11 +77,11 @@ struct IdentifyAckPacket;
 
 #define DIO_DEBOUNCE_MS 15   // stable toggle within ~20 ms @ 100 Hz
 
-// Optional infrastructure network. The lab topology below forces this master to own STEP_ESP32.
+// Shared infrastructure network. Both nodes join the iPhone hotspot.
 #define WIFI_SSID "iPhone (111)"
 #define WIFI_PASS "1234567890"
 
-#define WIFI_FORCE_SOFT_AP true
+#define WIFI_FORCE_SOFT_AP false
 
 // Soft AP fallback after STA timeout (automatic — do not need to edit unless renaming lab AP)
 #define WIFI_AP_SSID "STEP_ESP32"

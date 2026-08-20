@@ -154,14 +154,14 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
                 ]
                 self.assertNotIn('rec.seq', network_binary)
 
-    def test_master_is_the_only_soft_ap_owner(self):
-        self.assertEqual(define(self.master, 'WIFI_FORCE_SOFT_AP'), 'true')
+    def test_both_nodes_use_infrastructure_mode_without_competing_soft_aps(self):
+        self.assertEqual(define(self.master, 'WIFI_FORCE_SOFT_AP'), 'false')
         self.assertEqual(define(self.slave, 'WIFI_FORCE_SOFT_AP'), 'false')
         self.assertEqual(define(self.slave, 'WIFI_ALLOW_SOFT_AP_FALLBACK'), 'false')
 
-    def test_slave_sta_credentials_match_master_ap(self):
-        self.assertEqual(define(self.slave, 'WIFI_SSID'), define(self.master, 'WIFI_AP_SSID'))
-        self.assertEqual(define(self.slave, 'WIFI_PASS'), define(self.master, 'WIFI_AP_PASS'))
+    def test_both_nodes_share_infrastructure_credentials(self):
+        self.assertEqual(define(self.slave, 'WIFI_SSID'), define(self.master, 'WIFI_SSID'))
+        self.assertEqual(define(self.slave, 'WIFI_PASS'), define(self.master, 'WIFI_PASS'))
 
     def test_slave_uses_dhcp_instead_of_a_conflicting_fixed_address(self):
         self.assertEqual(define(self.slave, 'SLAVE_STATIC_IP_OCTET'), '0')

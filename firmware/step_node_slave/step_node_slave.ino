@@ -76,9 +76,9 @@ struct IdentifyAckPacket;
 
 #define DIO_DEBOUNCE_MS 15   // stable toggle within ~20 ms @ 100 Hz
 
-// Default network. Slaves join the master's STEP_ESP32 Soft AP.
-#define WIFI_SSID "STEP_ESP32"
-#define WIFI_PASS "step1234"
+// Shared infrastructure network. Both nodes join the iPhone hotspot.
+#define WIFI_SSID "iPhone (111)"
+#define WIFI_PASS "1234567890"
 
 #define WIFI_FORCE_SOFT_AP false
 #define WIFI_ALLOW_SOFT_AP_FALLBACK false  // slave must not create a competing STEP_ESP32/.1 AP
