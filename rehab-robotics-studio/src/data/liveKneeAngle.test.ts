@@ -113,14 +113,14 @@ describe('live OpenSim knee angle contract', () => {
     assert.equal(IK_ANGLE_STALE_MS, 2_000);
   });
 
-  it('converts PI/2 exactly once and preserves a valid zero', () => {
+  it('uses a 180-degree clinical baseline for the calibrated straight pose', () => {
     const rightAngle = derive();
     assert.equal(rightAngle.state, 'live');
     assert.equal(rightAngle.valueDeg, 90);
 
     const zero = derive({ jointState: jointState(0) });
     assert.equal(zero.state, 'live');
-    assert.equal(zero.valueDeg, 0);
+    assert.equal(zero.valueDeg, 180);
   });
 
   it('selects knee_angle_r by name when coordinates are reordered', () => {
@@ -131,7 +131,7 @@ describe('live OpenSim knee angle contract', () => {
       }),
     });
     assert.equal(reordered.state, 'live');
-    assert.equal(reordered.valueDeg, -45);
+    assert.equal(reordered.valueDeg, 225);
   });
 
   it('fails closed when calibration, IK, or identity gates close', () => {
@@ -270,7 +270,7 @@ describe('LiveKneeAngleTracker timer and transition seam', () => {
       stamp: { sec: 2, nanosec: 0 },
     }));
     assert.equal(tracker.getSnapshot().state, 'live');
-    assert.ok(Math.abs((tracker.getSnapshot().valueDeg ?? 0) - 60) < 1e-10);
+    assert.ok(Math.abs((tracker.getSnapshot().valueDeg ?? 0) - 120) < 1e-10);
     assert.equal(transitions.filter((entry) => entry.startsWith('stale:')).length, 1);
     tracker.dispose();
   });

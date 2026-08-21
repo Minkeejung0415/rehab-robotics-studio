@@ -214,7 +214,10 @@ export function deriveLiveKneeAngle(input: LiveKneeAngleInput): LiveKneeAngleSna
 
   return {
     state: 'live',
-    valueDeg: radians * 180 / Math.PI,
+    // OpenSim's knee coordinate is zero at the calibrated straight reference
+    // pose.  The user-facing clinical knee angle is supplementary: a straight
+    // leg reads 180°, and flexion reduces the displayed angle.
+    valueDeg: 180 - (radians * 180 / Math.PI),
     reason: '',
     sourceStamp: { ...jointState.stamp },
     receivedAtMs: jointState.receivedAtMs,
