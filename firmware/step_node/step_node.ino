@@ -1701,7 +1701,10 @@ static void sdRecordStop();
 static void recReplyToHost(const char *text);
 
 static void controlPrintf(const char *fmt, ...) {
-  char buf[256];
+  // SD_FINAL/SD_STATUS carry end-of-recording diagnostics.  They must remain
+  // newline-terminated control records: a truncated 256-byte message used to
+  // make the TCP bridge consume following binary samples as one giant line.
+  char buf[768];
   va_list args;
   va_start(args, fmt);
   vsnprintf(buf, sizeof(buf), fmt, args);
@@ -2949,9 +2952,10 @@ static void handleRecLine(const String &line) {
     if (g_rec_start_at_us == 0) g_rec_start_at_us = recNowUs();
     g_rec_stop_at_us = recNowUs() + REC_SCHEDULE_MIN_LEAD_US;
     espNowRelayCmd(CMD_REC_STOP);
-    // A manual recording stop is also the end of this acquisition run.
-    streaming = false;
-    espNowRelayCmd(CMD_STOP_STREAM);
+    // Stopping SD recording must leave the live acquisition route intact.
+    // The GUI commonly stops a capture and immediately continues inspecting
+    // raw graphs and the 3-D pose; ending this stream made the TCP idle
+    // watchdog close the host route after every successful recording.
     if (g_sd_recording) {
       g_rec_finalized_reply_pending = true;
     } else {

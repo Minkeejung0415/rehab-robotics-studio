@@ -209,6 +209,24 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
             streaming = start_branch.index('streaming = true;')
             self.assertLess(sensors, streaming)
 
+    def test_recording_control_messages_have_room_for_a_complete_line(self):
+        """Long SD finalization facts must not lose their terminating newline."""
+        for role, source in (('master', self.master), ('slave', self.slave)):
+            with self.subTest(role=role):
+                body = function_body(source, 'controlPrintf')
+                self.assertIn('char buf[768];', body)
+                self.assertIn('recReplyToHost(buf);', body)
+
+    def test_recording_stop_does_not_stop_live_acquisition(self):
+        """Rec toggle finalizes SD only; live graphs/pose must continue."""
+        stop_branch = self.master[
+            self.master.index('if (line.startsWith("REC STOP")) {'):
+            self.master.index('if (line.startsWith("REC SESSION")) {')
+        ]
+        self.assertIn('espNowRelayCmd(CMD_REC_STOP);', stop_branch)
+        self.assertNotIn('streaming = false;', stop_branch)
+        self.assertNotIn('espNowRelayCmd(CMD_STOP_STREAM);', stop_branch)
+
     def test_slave_direct_tcp_start_is_not_preempted_by_espnow(self):
         relay_case = self.slave[
             self.slave.index('case CMD_START_STREAM:'):

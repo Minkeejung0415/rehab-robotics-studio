@@ -1644,7 +1644,10 @@ static void sdRecordStop();
 static void recReplyToHost(const char *text);
 
 static void controlPrintf(const char *fmt, ...) {
-  char buf[256];
+  // SD_FINAL/SD_STATUS carry end-of-recording diagnostics.  They must remain
+  // newline-terminated control records: a truncated 256-byte message used to
+  // make the TCP bridge consume following binary samples as one giant line.
+  char buf[768];
   va_list args;
   va_start(args, fmt);
   vsnprintf(buf, sizeof(buf), fmt, args);

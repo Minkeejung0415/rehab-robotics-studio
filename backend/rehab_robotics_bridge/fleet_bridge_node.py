@@ -1016,6 +1016,11 @@ class FleetBridgeNode(Node):
         self._frame_times_by_device: dict[str, deque[float]] = {}
         self._health_snapshots: dict[str, dict[str, Any]] = {}
         self._recording_by_device: dict[str, dict[str, Any]] = {}
+        # The firmware retains its rate across a reconnect, but the registry
+        # is rebuilt during every identity handshake.  Keep the requested
+        # fleet-wide rate here so a transient route reconnect cannot falsely
+        # report the 100 Hz default while the sensors continue at 500 Hz.
+        self._configured_sample_hz = 100.0
         self._imu_pubs: dict[str, Any] = {}
         self._mac_imu_pubs: dict[str, Any] = {}
 
@@ -1197,7 +1202,7 @@ class FleetBridgeNode(Node):
         self.on_session_bound(
             session,
             reported,
-            configured_hz=100.0,
+            configured_hz=getattr(self, '_configured_sample_hz', 100.0),
             observed_hz=0.0,
         )
         self.get_logger().info(
@@ -1664,8 +1669,9 @@ class FleetBridgeNode(Node):
             'file_checksum': None, 'checksum_type': None, 'finalization_reason': None,
         })
         if request.data:
+            sample_rate_hz = int(getattr(self, '_configured_sample_hz', 100.0))
             command = (
-                f'REC START sample_rate_hz=100 channels={NUM_CHANNELS} '
+                f'REC START sample_rate_hz={sample_rate_hz} channels={NUM_CHANNELS} '
                 f'format=sd-bin sd_required=true requested_session={time.strftime("%Y%m%d_%H%M%S")}'
             )
             expected = 'REC STARTED'
@@ -1731,6 +1737,7 @@ class FleetBridgeNode(Node):
                     ), self._loop,
                 ).result(timeout=8.0)
                 if line.startswith(f'OK FREQ:{hz}'):
+                    self._configured_sample_hz = float(hz)
                     for state in self._manager.registry._devices.values():
                         state.configured_hz = float(hz)
                     response.results.append(SetParametersResult(successful=True, reason=''))
