@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { RuntimeState, LogLevel } from '../types/system';
-import { mockDataSource } from '../data/MockDataSource';
+import { appDataSource } from '../data/appDataSource';
 import { useGraphStore } from './graphStore';
 import { useSystemStore } from './systemStore';
 import { signalBus } from '../data/signalBus';
@@ -59,7 +59,7 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => {
         log('WARN', `Cannot run from state "${state}"`);
         return;
       }
-      mockDataSource.start(sampleRate);
+      appDataSource.start(sampleRate);
       set({ state: 'running' });
       useGraphStore.getState().setAllNodeStatuses('running');
       log('INFO', 'Execution started');
@@ -68,7 +68,7 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => {
     pause: () => {
       const { state } = get();
       if (!can(state, 'paused')) return;
-      mockDataSource.pause();
+      appDataSource.pause();
       set({ state: 'paused' });
       log('INFO', 'Execution paused');
     },
@@ -76,7 +76,7 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => {
     resume: () => {
       const { state } = get();
       if (state !== 'paused') return;
-      mockDataSource.resume();
+      appDataSource.resume();
       set({ state: 'running' });
       useGraphStore.getState().setAllNodeStatuses('running');
       log('INFO', 'Execution resumed');
@@ -85,14 +85,14 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => {
     stop: () => {
       const { state } = get();
       if (!can(state, 'idle')) return;
-      mockDataSource.stop();
+      appDataSource.stop();
       set({ state: 'idle' });
       useGraphStore.getState().setAllNodeStatuses('idle');
       log('INFO', 'Execution stopped');
     },
 
     estop: () => {
-      mockDataSource.stop();
+      appDataSource.stop();
       set({ state: 'estopped' });
       useGraphStore.getState().setAllNodeStatuses('idle');
       useSystemStore.getState().setMotor('ESTOP', 'fault');
@@ -100,7 +100,7 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => {
     },
 
     raiseFault: (message) => {
-      mockDataSource.stop();
+      appDataSource.stop();
       set({ state: 'fault' });
       useGraphStore.getState().setAllNodeStatuses('idle');
       useSystemStore.getState().setFault(true, 'FAULT');
@@ -122,7 +122,7 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => {
 
     setSampleRate: (rateHz) => {
       set({ sampleRate: rateHz });
-      mockDataSource.setSampleRate(rateHz);
+      appDataSource.setSampleRate(rateHz);
       log('INFO', `Sample rate set to ${rateHz} Hz`);
     },
 

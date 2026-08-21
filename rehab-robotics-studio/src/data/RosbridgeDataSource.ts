@@ -433,13 +433,23 @@ export function parseFleetRegistry(payload: unknown): FleetRegistrySnapshot | nu
   for (const item of payload.devices) {
     if (!isRecord(item)) return null;
     if (typeof item.device_id !== 'string') return null;
+    const rate = isRecord(item.rate) ? item.rate : null;
+    const drops = isRecord(item.drops) ? item.drops : null;
+    const route = typeof item.route === 'string' ? item.route : undefined;
     devices.push({
       device_id: item.device_id,
       role: typeof item.role === 'string' ? item.role : undefined,
-      route_state: typeof item.route_state === 'string' ? item.route_state : undefined,
-      connection_state: typeof item.connection_state === 'string' ? item.connection_state : undefined,
-      rate_hz: typeof item.rate_hz === 'number' && Number.isFinite(item.rate_hz) ? item.rate_hz : undefined,
-      drop_count: typeof item.drop_count === 'number' ? item.drop_count : undefined,
+      route_state: typeof item.route_state === 'string' ? item.route_state : route,
+      connection_state: typeof item.connection_state === 'string'
+        ? item.connection_state
+        : (route === 'connected' ? 'connected' : route),
+      rate_hz: typeof item.rate_hz === 'number' && Number.isFinite(item.rate_hz)
+        ? item.rate_hz
+        : (typeof rate?.observed_hz === 'number' && Number.isFinite(rate.observed_hz)
+          ? rate.observed_hz : undefined),
+      drop_count: typeof item.drop_count === 'number'
+        ? item.drop_count
+        : (typeof drops?.udp_drop_count === 'number' ? drops.udp_drop_count : undefined),
     });
   }
   return { devices };
@@ -495,9 +505,9 @@ export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
   }>();
 
   constructor(
-    private readonly url = import.meta.env.VITE_ROSBRIDGE_URL || DEFAULT_URL,
-    private readonly masterTopic = import.meta.env.VITE_ESP_RAW_TOPIC || DEFAULT_MASTER_TOPIC,
-    private readonly slaveTopic = import.meta.env.VITE_ESP_SLAVE_TOPIC || DEFAULT_SLAVE_TOPIC,
+    private readonly url = import.meta.env?.VITE_ROSBRIDGE_URL || DEFAULT_URL,
+    private readonly masterTopic = import.meta.env?.VITE_ESP_RAW_TOPIC || DEFAULT_MASTER_TOPIC,
+    private readonly slaveTopic = import.meta.env?.VITE_ESP_SLAVE_TOPIC || DEFAULT_SLAVE_TOPIC,
     private readonly onUnavailable?: () => void,
     private readonly onConnectionChange?: (connected: boolean) => void,
     private readonly onFrameReceived?: () => void,

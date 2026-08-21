@@ -145,6 +145,8 @@ def _install_ros_stubs() -> None:
     # rclpy.qos
     rclpy_qos = types.ModuleType("rclpy.qos")
     rclpy_qos.HistoryPolicy = types.SimpleNamespace(KEEP_LAST="KEEP_LAST", KEEP_ALL="KEEP_ALL")
+    rclpy_qos.DurabilityPolicy = types.SimpleNamespace(TRANSIENT_LOCAL="TRANSIENT_LOCAL")
+    rclpy_qos.ReliabilityPolicy = types.SimpleNamespace(RELIABLE="RELIABLE")
     rclpy_qos.QoSProfile = _QoSProfile
     sys.modules["rclpy.qos"] = rclpy_qos
 
@@ -285,6 +287,9 @@ class MappingStoreTest(unittest.TestCase):
         self.assertEqual(fresh_store.revision, 0)
         self.assertEqual(fresh_store.applied_revision, 0)
         self.assertEqual(fresh_store.assignments, {})
+        # The /rehab/mapping/current browser contract carries both draft and
+        # applied snapshots atomically, even before any mapping is applied.
+        self.assertEqual(fresh_store.get_state_dict()["applied_assignments"], {})
 
     # MAP-01: set_assignment states
     def test_set_assignment_assigned_ok(self):

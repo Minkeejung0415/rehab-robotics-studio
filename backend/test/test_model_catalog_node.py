@@ -33,13 +33,18 @@ def _install_ros_stubs() -> None:
     # rclpy core
     rclpy = types.ModuleType("rclpy")
     rclpy.node = types.ModuleType("rclpy.node")
+    rclpy.qos = types.ModuleType("rclpy.qos")
     rclpy.node.Node = type("Node", (), {})
+    rclpy.qos.DurabilityPolicy = type("DurabilityPolicy", (), {"TRANSIENT_LOCAL": "transient_local"})
+    rclpy.qos.ReliabilityPolicy = type("ReliabilityPolicy", (), {"RELIABLE": "reliable"})
+    rclpy.qos.QoSProfile = type("QoSProfile", (), {"__init__": lambda self, **kwargs: self.__dict__.update(kwargs)})
     rclpy.ok = lambda: True
     rclpy.init = lambda *a, **k: None
     rclpy.spin = lambda *a, **k: None
     rclpy.try_shutdown = lambda *a, **k: None
     sys.modules.setdefault("rclpy", rclpy)
     sys.modules.setdefault("rclpy.node", rclpy.node)
+    sys.modules.setdefault("rclpy.qos", rclpy.qos)
 
     # rcl_interfaces
     rcl_iface = types.ModuleType("rcl_interfaces")

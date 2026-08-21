@@ -22,6 +22,7 @@ from typing import Any
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
 CATALOG_TOPIC = "/rehab/model/catalog"
@@ -185,7 +186,11 @@ class ModelCatalogNode(Node):
         self._catalog_publisher = self.create_publisher(
             String,
             CATALOG_TOPIC,
-            10,
+            QoSProfile(
+                depth=1,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                reliability=ReliabilityPolicy.RELIABLE,
+            ),
         )
 
         self._last_model_path: str = ""

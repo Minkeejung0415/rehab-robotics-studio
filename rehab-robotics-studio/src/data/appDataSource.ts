@@ -5,7 +5,9 @@ import { LiveKneeAngleTracker, normalizeLiveKneeReason } from './liveKneeAngle';
 import { useSystemStore } from '../state/systemStore';
 import { useMappingStore } from '../state/mappingStore';
 
-const sourceMode = import.meta.env.VITE_DATA_SOURCE || 'rosbridge';
+// `import.meta.env` exists in Vite, but optional access keeps the data-source
+// boundary testable in the Node test runner too.
+const sourceMode = import.meta.env?.VITE_DATA_SOURCE || 'rosbridge';
 let active: DataSource = mockDataSource;
 let requestedRate = 1000;
 let running = false;

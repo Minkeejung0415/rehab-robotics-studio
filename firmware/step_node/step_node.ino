@@ -296,7 +296,10 @@ static uint16_t g_sample_hz = SAMPLE_HZ_DEFAULT;
 static uint32_t g_sample_last_us = 0;
 static uint8_t g_acc_preset = 0;
 static uint8_t g_gyr_preset = 0;
-static bool g_filter_on = false;
+// Orientation is part of the advertised 14-channel stream contract. Keep it
+// enabled at boot just like the slave so a fleet launcher cannot publish a
+// false quaternion capability followed by [0,0,0,0] samples.
+static bool g_filter_on = true;
 
 static bool g_sd_ready = false;
 static bool g_sd_recording = false;

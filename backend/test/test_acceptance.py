@@ -184,11 +184,14 @@ def _install_ros_stubs():
     rclpy.node.Node = _StubNode
     rclpy.qos = types.ModuleType("rclpy.qos")
     rclpy.qos.HistoryPolicy = types.SimpleNamespace(KEEP_LAST="keep_last")
+    rclpy.qos.DurabilityPolicy = types.SimpleNamespace(TRANSIENT_LOCAL="transient_local")
+    rclpy.qos.ReliabilityPolicy = types.SimpleNamespace(RELIABLE="reliable")
 
     class QoSProfile:
-        def __init__(self, *, history, depth):
+        def __init__(self, *, history=None, depth=1, **kwargs):
             self.history = history
             self.depth = depth
+            self.__dict__.update(kwargs)
 
     rclpy.qos.QoSProfile = QoSProfile
     rclpy.init = lambda args=None: None

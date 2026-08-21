@@ -19,12 +19,20 @@ def _install_ros_stubs() -> None:
     rclpy = types.ModuleType('rclpy')
     rclpy.node = types.ModuleType('rclpy.node')
     rclpy.node.Node = type('Node', (), {})
+    rclpy.qos = types.ModuleType('rclpy.qos')
+    rclpy.qos.HistoryPolicy = types.SimpleNamespace(KEEP_LAST='keep_last')
+    rclpy.qos.DurabilityPolicy = types.SimpleNamespace(TRANSIENT_LOCAL='transient_local')
+    rclpy.qos.ReliabilityPolicy = types.SimpleNamespace(RELIABLE='reliable')
+    rclpy.qos.QoSProfile = type('QoSProfile', (), {
+        '__init__': lambda self, **kwargs: self.__dict__.update(kwargs),
+    })
     rclpy.ok = lambda: True
     rclpy.init = lambda *a, **k: None
     rclpy.spin = lambda *a, **k: None
     rclpy.try_shutdown = lambda *a, **k: None
     sys.modules.setdefault('rclpy', rclpy)
     sys.modules.setdefault('rclpy.node', rclpy.node)
+    sys.modules.setdefault('rclpy.qos', rclpy.qos)
 
     interfaces = types.ModuleType('rcl_interfaces')
     interfaces.msg = types.ModuleType('rcl_interfaces.msg')
@@ -1238,11 +1246,12 @@ class FleetLiveSessionContractTest(unittest.TestCase):
             reader.feed_data(identity_bytes + status + b'OK\n' + self.STARTED_TCP)
             reader.feed_eof()
             writer = _MockWriter()
-            return await node._fleet_handshake(0, session, reader, writer)
+            transport = await node._fleet_handshake(0, session, reader, writer)
+            return transport, bytes(writer.sent)
 
         loop = asyncio.new_event_loop()
         try:
-            transport_type = loop.run_until_complete(_run())
+            transport_type, sent = loop.run_until_complete(_run())
         finally:
             loop.close()
 
@@ -1251,6 +1260,8 @@ class FleetLiveSessionContractTest(unittest.TestCase):
         by_id = {row['device_id']: row for row in doc['devices']}
         self.assertEqual(by_id['esp32:aabbccddeeff']['route'], 'connected')
         self.assertIn(transport_type, ('tcp', 'udp'))
+        self.assertIn(b'SIGNAL_STATUS?\n', sent)
+        self.assertIn(b'FILTER ON\n', sent)
 
     # --- test 2 ---
     def test_session_reconnecting_does_not_cancel_siblings(self):

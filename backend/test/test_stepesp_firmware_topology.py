@@ -154,6 +154,11 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
                 ]
                 self.assertNotIn('rec.seq', network_binary)
 
+    def test_quaternion_filter_is_enabled_at_boot_for_both_roles(self):
+        for role, source in (('master', self.master), ('slave', self.slave)):
+            with self.subTest(role=role):
+                self.assertIn('static bool g_filter_on = true;', source)
+
     def test_both_nodes_use_infrastructure_mode_without_competing_soft_aps(self):
         self.assertEqual(define(self.master, 'WIFI_FORCE_SOFT_AP'), 'false')
         self.assertEqual(define(self.slave, 'WIFI_FORCE_SOFT_AP'), 'false')

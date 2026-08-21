@@ -433,7 +433,9 @@ function Wait-StepEspTcpState {
 
 function Test-StepEspIcmp {
   param([string]$HostAddress)
-  & ping.exe -n 1 -w 400 $HostAddress | Out-Null
+  # iPhone hotspot clients can answer ARP/ICMP more slowly immediately after
+  # association; 400 ms incorrectly rejected a healthy slave at .2.
+  & ping.exe -n 1 -w 1000 $HostAddress | Out-Null
   return ($LASTEXITCODE -eq 0)
 }
 
@@ -471,6 +473,11 @@ function Invoke-StepEspIdentityUntilReady {
 }
 
 $workspace = Split-Path -Parent $PSScriptRoot
+$backendRootWin = Join-Path $workspace 'backend'
+$backendRootWsl = (wsl -d $Distro -- wslpath -a $backendRootWin).Trim()
+if (-not $backendRootWsl) {
+  throw 'Could not resolve the backend source path inside WSL.'
+}
 $relayScript = Join-Path $workspace 'scripts\stepesp_tcp_udp_relay.py'
 $serialDrainScript = Join-Path $workspace 'scripts\stepesp_serial_drain.py'
 $bridgeLog = '/home/justi/stepesp_fleet_bridge.log'
@@ -483,6 +490,8 @@ $relayLog = Join-Path $workspace 'logs\stepesp_windows_relay.log'
 $relayErrorLog = Join-Path $workspace 'logs\stepesp_windows_relay.err.log'
 $serialLog = Join-Path $workspace 'logs\stepesp_master_serial.log'
 $serialErrorLog = Join-Path $workspace 'logs\stepesp_master_serial.err.log'
+$slaveSerialLog = Join-Path $workspace 'logs\stepesp_slave_serial.log'
+$slaveSerialErrorLog = Join-Path $workspace 'logs\stepesp_slave_serial.err.log'
 $guiRoot = Join-Path $workspace 'rehab-robotics-studio'
 $guiLog = Join-Path $workspace 'logs\stepesp_gui.log'
 $guiErrorLog = Join-Path $workspace 'logs\stepesp_gui.err.log'
@@ -584,24 +593,14 @@ $expectedSlaveCanonical = if ($expectedSlaveFilterIds.Count -eq 1) {
 $candidateSlaveHosts = @()
 $scanPrefix = ($wifiAddress -replace '\.\d+$', '.')
 if ($SlaveHost -eq 'auto') {
-  $responsiveStations = @()
-  for ($attempt = 0; $attempt -lt 40 -and $responsiveStations.Count -eq 0; $attempt++) {
-    Write-Host "Slave discovery attempt $($attempt + 1)/40 on ${scanPrefix}2-20"
-    $responsiveStations = @(
-      2..20 |
-        ForEach-Object { "$scanPrefix$_" } |
-        Where-Object { $_ -ne $wifiAddress -and $_ -ne $MasterHost } |
-        Where-Object {
-          & ping.exe -n 1 -w 150 $_ | Out-Null
-          $LASTEXITCODE -eq 0
-        }
-    )
-    if ($responsiveStations.Count -eq 0) { Start-Sleep -Seconds 2 }
-  }
-  if ($responsiveStations.Count -eq 0) {
-    throw "Could not discover the slave on $scanPrefix*. Power the slave, wait for it to join, then retry or pass -SlaveHost."
-  }
-  $candidateSlaveHosts = @($responsiveStations | Sort-Object -Unique)
+  # ICMP alone is not device identity. Probe the expected hotspot pool in a
+  # stable order and let the later IDENTITY exchange select the actual slave.
+  # This keeps the known .2 slave ahead of unrelated hotspot clients.
+  $candidateSlaveHosts = @(
+    2..20 |
+      ForEach-Object { "$scanPrefix$_" } |
+      Where-Object { $_ -ne $wifiAddress -and $_ -ne $MasterHost }
+  )
 } else {
   $candidateSlaveHosts = @($SlaveHost)
 }
@@ -684,14 +683,36 @@ if ($didPreflightReset) {
   Start-Sleep -Seconds 10
 }
 
+# Firmware status output uses USB CDC. Keep both ports drained before the first
+# TCP command so a full CDC buffer cannot stall IDENTITY handling.
+if (Test-Path -LiteralPath $serialDrainScript) {
+  $availableDrainPorts = [System.IO.Ports.SerialPort]::GetPortNames()
+  $drainRoutes = @(
+    [pscustomobject]@{ Port = $DiagnosticPort; Log = $serialLog; ErrorLog = $serialErrorLog }
+    [pscustomobject]@{ Port = 'COM4'; Log = $slaveSerialLog; ErrorLog = $slaveSerialErrorLog }
+  )
+  foreach ($drainRoute in $drainRoutes) {
+    if ($drainRoute.Port -and $availableDrainPorts -contains $drainRoute.Port) {
+      $serialArgs = "`"$serialDrainScript`" $($drainRoute.Port)"
+      Start-Process -FilePath python.exe -ArgumentList $serialArgs -RedirectStandardOutput $drainRoute.Log -RedirectStandardError $drainRoute.ErrorLog -WindowStyle Hidden
+    }
+  }
+  if ($drainRoutes | Where-Object { $_.Port -and $availableDrainPorts -contains $_.Port }) {
+    Write-Host 'USB serial drains active for ESP command responsiveness.'
+    Start-Sleep -Seconds 8
+  }
+} else {
+  Write-Warning "USB serial drain is missing at $serialDrainScript; continuing in Wi-Fi-only mode."
+}
+
 $pingDeadline = (Get-Date).AddMinutes(2)
 while ((Get-Date) -lt $pingDeadline) {
   [void](Lock-StepEspWifi -Quiet)
   $masterUp = Test-StepEspIcmp -HostAddress $MasterHost
-  $slaveUp = $true
+  $slaveUp = $false
   foreach ($candidateHost in $candidateSlaveHosts) {
-    if (-not (Test-StepEspIcmp -HostAddress $candidateHost)) {
-      $slaveUp = $false
+    if (Test-StepEspIcmp -HostAddress $candidateHost) {
+      $slaveUp = $true
       break
     }
   }
@@ -701,12 +722,9 @@ while ((Get-Date) -lt $pingDeadline) {
   }
   Write-Host "Waiting for ESP ICMP (master=$masterUp slave=$slaveUp) on $WifiProfile..."
   $availableNow = [System.IO.Ports.SerialPort]::GetPortNames()
-  if (-not $slaveUp -and ($availableNow -contains 'COM4')) {
-    Reset-StepEspOverUsb -PortName 'COM4'
-    Start-Sleep -Seconds 8
-  } else {
-    Start-Sleep -Seconds 2
-  }
+  # COM4 may already be deliberately owned by the serial-drain helper. Do not
+  # fight that process with repeated DTR resets during network association.
+  Start-Sleep -Seconds 2
 }
 
 if (-not $SkipGui) {
@@ -781,6 +799,10 @@ while ((Get-Date) -lt $slaveDeadline -and $slaveIdentityProbes.Count -eq 0) {
         continue
       }
       $slaveIdentityProbes += $probe
+      # One physical slave route is supported by this bench profile. Once a
+      # protocol-verified slave responds, do not spend 8 s on each unrelated
+      # iPhone hotspot address that merely answers ICMP.
+      break
     } catch {
       Write-Warning "Identity probe rejected candidate $candidateHost`: $($_.Exception.Message)"
     }
@@ -878,11 +900,7 @@ $relayArgs = ($relayArgList | ForEach-Object {
   if ($_ -match '\s') { '"{0}"' -f $_ } else { $_ }
 }) -join ' '
 $availableSerialPorts = [System.IO.Ports.SerialPort]::GetPortNames()
-if ($DiagnosticPort -and $availableSerialPorts -contains $DiagnosticPort) {
-  $serialArgs = "`"$serialDrainScript`" $DiagnosticPort"
-  Start-Process -FilePath python.exe -ArgumentList $serialArgs -RedirectStandardOutput $serialLog -RedirectStandardError $serialErrorLog -WindowStyle Hidden
-  Start-Sleep -Milliseconds 750
-} elseif ($DiagnosticPort) {
+if ($DiagnosticPort -and $availableSerialPorts -notcontains $DiagnosticPort) {
   Write-Warning "Diagnostic port $DiagnosticPort is not present; continuing in Wi-Fi-only mode."
 }
 if (Test-Path -LiteralPath $relayLog) {
@@ -895,7 +913,9 @@ if (-not $relayReady) {
 }
 Write-Host "Relay listening on $RelayPort (master) and $SlaveRelayPort (slave)."
 
-$rosEnvironment = "export ROS_DOMAIN_ID=$RosDomainId; source /opt/ros/humble/setup.bash; source $RosInstall/setup.bash; source $OpenSimInstall/setup.bash"
+$openSimPythonPath = "$OpenSimEnvironment/lib/python3.10/site-packages"
+$openSimLibraryPath = "$OpenSimEnvironment/lib"
+$rosEnvironment = "export ROS_DOMAIN_ID=$RosDomainId; export PYTHONPATH=`"${backendRootWsl}:${openSimPythonPath}:`${PYTHONPATH:-}`"; export LD_LIBRARY_PATH=`"${openSimLibraryPath}:`${LD_LIBRARY_PATH:-}`"; source /opt/ros/humble/setup.bash; source $RosInstall/setup.bash; source $OpenSimInstall/setup.bash"
 $fleetRouteObjects = [System.Collections.Generic.List[object]]::new()
 [void]$fleetRouteObjects.Add([ordered]@{
   host = $wslGateway
@@ -935,6 +955,11 @@ $modelCatalog = "$rosEnvironment; exec ros2 run rehab_robotics_bridge model_cata
 $mapping = "$rosEnvironment; exec ros2 run rehab_robotics_bridge mapping_node > $mappingLog 2>&1"
 $openSim = "export ROS_DOMAIN_ID=$RosDomainId; exec bash $openSimRunner $OpenSimModel false master_imu_topic:=/esp32/master/imu slave_imu_topic:=/esp32/slave/imu > $openSimLog 2>&1"
 
+# The readiness test below must examine this launch only.  A prior OpenSim import
+# failure in an appended log must not turn a subsequently healthy catalog into a
+# false startup failure.
+wsl -d $Distro -- bash -lc ": > '$modelCatalogLog'"
+
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $fleet -WindowStyle Hidden
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $rosbridge -WindowStyle Hidden
 try {
@@ -945,6 +970,24 @@ try {
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $modelCatalog -WindowStyle Hidden
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $mapping -WindowStyle Hidden
 Start-Process -FilePath wsl.exe -ArgumentList '-d', $Distro, '--', 'bash', '-lc', $openSim -WindowStyle Hidden
+
+$catalogReady = $false
+$catalogDeadline = (Get-Date).AddSeconds(45)
+while ((Get-Date) -lt $catalogDeadline) {
+  $catalogTail = ((wsl -d $Distro -- bash -lc "tail -n 40 '$modelCatalogLog' 2>/dev/null") -join "`n")
+  if ($catalogTail -match 'catalog ready.+[1-9][0-9]* frames') {
+    $catalogReady = $true
+    break
+  }
+  if ($catalogTail -match 'opensim bindings unavailable|frame enumeration failed|model file not found') {
+    throw "Model catalog failed and the GUI cannot map sensors. Check $modelCatalogLog."
+  }
+  Start-Sleep -Milliseconds 500
+}
+if (-not $catalogReady) {
+  throw "Model catalog did not publish a non-empty frame list. Check $modelCatalogLog."
+}
+Write-Host 'Model catalog published a non-empty model-derived frame list.'
 
 $rosbridgeReady = Wait-StepEspListenState -Ports @(9090) -TimeoutSeconds 60
 if (-not $rosbridgeReady) {
@@ -993,7 +1036,6 @@ if (-not $SkipGui) {
   # Vite dev mode cannot reliably resolve source URLs when this workspace path
   # contains '#'. Build first and serve dist so the existing folder name works.
   $guiEnv = 'set VITE_DATA_SOURCE=rosbridge&& set VITE_ROSBRIDGE_URL=ws://127.0.0.1:9090&& set VITE_ESP_RAW_TOPIC=/esp/raw/master&& set VITE_ESP_SLAVE_TOPIC=/esp/raw/slave&& '
-  $guiBuildPreview = $guiEnv + 'npm.cmd run build&& npm.cmd run preview -- --host 127.0.0.1 --port 5173 --strictPort'
   $guiPreviewOnly = $guiEnv + 'npm.cmd run preview -- --host 127.0.0.1 --port 5173 --strictPort'
   $guiDist = Join-Path $guiRoot 'dist\index.html'
   $guiStartedAt = Get-Date
@@ -1009,10 +1051,15 @@ if (-not $SkipGui) {
     Start-Process -FilePath cmd.exe -ArgumentList '/c', $Command -WorkingDirectory $guiRoot -RedirectStandardOutput $guiLog -RedirectStandardError $guiErrorLog -WindowStyle Hidden
   }
 
+  Write-Host 'Building the current GUI source before serving it.'
+  $guiBuild = Start-Process -FilePath cmd.exe -ArgumentList '/c', ($guiEnv + 'npm.cmd run build') -WorkingDirectory $guiRoot -RedirectStandardOutput $guiLog -RedirectStandardError $guiErrorLog -WindowStyle Hidden -Wait -PassThru
+  if ($guiBuild.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $guiDist)) {
+    throw "GUI build failed. Check $guiLog and $guiErrorLog; stale dist assets will not be served."
+  }
+  Repair-StepEspGuiDist
+
   if (-not (Test-StepEspHttpReady -Uri 'http://127.0.0.1:5173') -or -not (Test-StepEspCssReady)) {
-    Repair-StepEspGuiDist
-    $initialCommand = if (Test-Path -LiteralPath $guiDist) { $guiPreviewOnly } else { $guiBuildPreview }
-    Start-StepEspGuiProcess -Command $initialCommand
+    Start-StepEspGuiProcess -Command $guiPreviewOnly
   }
   while (-not $guiReady) {
     if ((Get-Date) -ge $guiDeadline) {
@@ -1033,9 +1080,8 @@ if (-not $SkipGui) {
         } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
       Repair-StepEspGuiDist
-      $restartCommand = if (Test-Path -LiteralPath $guiDist) { $guiPreviewOnly } else { $guiBuildPreview }
       $guiStartedAt = Get-Date
-      Start-StepEspGuiProcess -Command $restartCommand
+      Start-StepEspGuiProcess -Command $guiPreviewOnly
     }
     Start-Sleep -Seconds 3
   }
@@ -1059,7 +1105,7 @@ Write-Host "mapping log: $mappingLog"
 Write-Host "OpenSim status: source $OpenSimInstall/setup.bash; ROS_DOMAIN_ID=$RosDomainId ros2 topic echo /opensim/status --once --full-length"
 Write-Host "OpenSim log: $openSimLog"
 Write-Host "Relay log: $relayLog"
-if ($DiagnosticPort -and $availableSerialPorts -contains $DiagnosticPort) { Write-Host "USB diagnostic log: $serialLog" }
+if ($DiagnosticPort -and $availableSerialPorts -contains $DiagnosticPort) { Write-Host "USB diagnostic logs: $serialLog and $slaveSerialLog" }
 if (-not $SkipGui) { Write-Host "GUI logs: $guiLog and $guiErrorLog" }
 Write-Host "Stay on $activeWifiProfile while acquiring. Restore normal Wi-Fi with: .\scripts\stop_stepesp_wireless.ps1"
 } finally {

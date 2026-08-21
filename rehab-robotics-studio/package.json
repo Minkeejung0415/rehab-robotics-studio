@@ -9,9 +9,10 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/deployment/*.test.ts src/data/*.test.ts src/graph/*.test.ts",
+    "test": "tsx --test \"src/**/*.test.ts\" \"src/**/*.test.tsx\"",
     "test:frequency-panel": "npm run build && node scripts/frequency-panel-regression.mjs",
-    "test:phase19": "npm run build && node scripts/phase19-qa.mjs"
+    "test:phase19": "npm run build && node scripts/phase19-qa.mjs",
+    "test:gui-live": "node scripts/gui-live-e2e.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

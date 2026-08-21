@@ -16,6 +16,7 @@ from typing import Any, Awaitable, Callable, Mapping
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Header, String
 from rehab_robotics_interfaces.srv import IdentifyDevice
@@ -62,6 +63,13 @@ DEFAULT_MEASUREMENT_CONFIG = measurement_config(2, 250)
 FLEET_REGISTRY_TOPIC = '/esp/fleet/registry'
 FLEET_REGISTRY_SCHEMA = 'oe_esp32.fleet_registry.v1'
 
+FLEET_REGISTRY_QOS = QoSProfile(
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    reliability=ReliabilityPolicy.RELIABLE,
+)
+
 # Compatibility aliases (COMP-01 / FLEET-02): same String payload as canonical mac_ topics.
 # Typed OpenSim IMU (/esp32/{master,slave}/imu) is NOT mirrored here — those stay on
 # stream publishers / OpenSim launch consumers; fleet owns JSON raw/status aliases only.
@@ -75,7 +83,7 @@ MAPPING_CURRENT_TOPIC = '/rehab/mapping/current'
 MAX_MAPPING_DEVICES = 256
 MAX_MAPPING_LABEL_BYTES = 64
 MAX_MODEL_HASH_BYTES = 128
-SIGNAL_STATUS_QUERY = b'SIGNAL_STATUS?\\n'
+SIGNAL_STATUS_QUERY = b'SIGNAL_STATUS?\n'
 SIGNAL_STATUS_PROTOCOL = 'signal-cap-v1'
 SIGNAL_STATUS_FIELDS = frozenset({
     'protocol', 'device_id', 'accel', 'gyro', 'magnetometer', 'quaternion',
@@ -987,7 +995,7 @@ class FleetBridgeNode(Node):
         self._mapping_cache = AppliedMappingCache()
         calibration_path = str(self.get_parameter('signal_calibration_path').value or '')
         self._signal_calibrations = load_signal_calibrations(calibration_path)
-        self._pub_registry = self.create_publisher(String, FLEET_REGISTRY_TOPIC, 10)
+        self._pub_registry = self.create_publisher(String, FLEET_REGISTRY_TOPIC, FLEET_REGISTRY_QOS)
         self._mapping_subscription = self.create_subscription(
             String, MAPPING_CURRENT_TOPIC, self._on_mapping_current, 10
         )
@@ -1135,15 +1143,26 @@ class FleetBridgeNode(Node):
         writer.write(SIGNAL_STATUS_QUERY)
         await writer.drain()
         try:
-            remaining = max(0.01, min(1.0, deadline - asyncio.get_running_loop().time()))
-            status_raw = await asyncio.wait_for(reader.readline(), timeout=remaining)
-            if status_raw:
+            # The ESP emits a few boot/configuration lines on the same control
+            # socket. Wait for the identity-bound capability record rather than
+            # mistaking a preceding diagnostic line for a failed declaration.
+            for _ in range(5):
+                remaining = max(0.01, min(3.0, deadline - asyncio.get_running_loop().time()))
+                status_raw = await asyncio.wait_for(reader.readline(), timeout=remaining)
+                if not status_raw:
+                    break
+                status_line = status_raw.decode('ascii', errors='replace').rstrip('\r\n')
+                if not status_line.startswith('SIGNAL_STATUS_OK '):
+                    continue
                 session.signal_status = parse_signal_status(
-                    status_raw.decode('ascii', errors='replace').rstrip('\r\n'),
+                    status_line,
                     reported,
                     expected_capabilities=session.expected_signal_capabilities,
                 )
                 session.canonical_rejection_reason = None
+                break
+            if session.signal_status is None:
+                session.canonical_rejection_reason = 'capability_timeout'
         except asyncio.TimeoutError:
             session.canonical_rejection_reason = 'capability_timeout'
         except ValueError as exc:
@@ -1153,6 +1172,10 @@ class FleetBridgeNode(Node):
                     'capability_invalid', 'capability_expectation_mismatch',
                     'device_id_mismatch',
                 } else 'capability_invalid'
+            )
+            self.get_logger().warning(
+                f'[fleet:{index}] capability declaration rejected: '
+                f'{session.canonical_rejection_reason}'
             )
         self.on_session_bound(
             session,
@@ -1174,7 +1197,10 @@ class FleetBridgeNode(Node):
         writer.write(HANDSHAKE_START)
         await writer.drain()
         started = b''
-        for _ in range(3):
+        # Firmware may emit its configuration line and a delayed SENSORS line
+        # around REDPITAYA/START, particularly on the master after ESP-NOW
+        # peer setup. Consume bounded diagnostic noise until STARTED arrives.
+        for _ in range(10):
             remaining = max(0.1, deadline - asyncio.get_running_loop().time())
             line = await asyncio.wait_for(reader.readline(), timeout=remaining)
             if b'STARTED' in line:
@@ -1182,6 +1208,12 @@ class FleetBridgeNode(Node):
                 break
         if not started:
             raise RuntimeError(f'[fleet:{index}] ESP32 did not acknowledge START')
+
+        # The 14-channel fleet contract advertises quaternion capability. Make
+        # that true for every fresh/reconnected route instead of inheriting a
+        # role-specific firmware default that can emit an all-zero quaternion.
+        writer.write(b'FILTER ON\n')
+        await writer.drain()
 
         # Consume SENSORS line if present (non-blocking peek)
         for _ in range(5):
@@ -1379,6 +1411,11 @@ class FleetBridgeNode(Node):
                 session.canonical_rejection_reason = (
                     reason if len(reason) <= 64 else 'canonical_sample_rejected'
                 )
+                if session.canonical_rejection_count == 1:
+                    self.get_logger().warning(
+                        f'[fleet:{index}] canonical sample rejected: '
+                        f'{session.canonical_rejection_reason}'
+                    )
         else:
             session.canonical_rejection_count += 1
 

@@ -370,12 +370,30 @@ class OpenSimBridgeNode(Node):
             )
             return
 
-        assigned_list = data.get("assigned", [])
-        if not isinstance(assigned_list, list):
-            self.get_logger().warning(
-                "N-sensor mapping: 'assigned' field is not a list; ignored"
-            )
-            return
+        # Current mapping state is an atomic draft/applied snapshot keyed by
+        # full ESP identity.  OpenSim must follow *applied* assignments only;
+        # a user changing a dropdown cannot move the 3D model before Apply.
+        applied = data.get("applied_assignments")
+        if isinstance(applied, dict):
+            assigned_list = [
+                {
+                    "device_id": device_id,
+                    "segment": entry.get("segment", ""),
+                    "frame": entry.get("frame", ""),
+                }
+                for device_id, entry in applied.items()
+                if isinstance(device_id, str)
+                and isinstance(entry, dict)
+                and entry.get("state") == "assigned"
+            ]
+        else:
+            # Compatibility with the legacy assigned-list publisher.
+            assigned_list = data.get("assigned", [])
+            if not isinstance(assigned_list, list):
+                self.get_logger().warning(
+                    "N-sensor mapping: expected applied_assignments or assigned list; ignored"
+                )
+                return
 
         with self._input_lock:
             new_device_ids = {

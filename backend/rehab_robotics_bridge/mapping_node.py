@@ -381,6 +381,12 @@ class MappingStore:
             "revision": self._data.get("revision", 0),
             "assignments": copy.deepcopy(self._data.get("assignments", {})),
             "applied_revision": self._data.get("applied_revision", 0),
+            # The browser consumes one atomic current-state contract. Keep the
+            # applied snapshot alongside the editable draft so it can never
+            # relabel a 3D/IK runtime mapping with an unsaved selection.
+            "applied_assignments": copy.deepcopy(
+                self._data.get("applied_assignments", {})
+            ),
             "backup_revision": self._data.get("backup_revision", 0),
         }
 
@@ -391,7 +397,7 @@ class MappingStore:
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import HistoryPolicy, QoSProfile
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 from rehab_robotics_interfaces.srv import (
     ApplyMapping,
@@ -403,6 +409,8 @@ from rehab_robotics_interfaces.srv import (
 _MAPPING_CURRENT_QOS = QoSProfile(
     history=HistoryPolicy.KEEP_LAST,
     depth=1,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    reliability=ReliabilityPolicy.RELIABLE,
 )
 
 
@@ -443,7 +451,8 @@ class MappingNode(Node):
         self._calibration_active: bool = False
         self._lock = threading.Lock()
 
-        # Publisher: latched QoS (depth=1, KEEP_LAST mimics latching)
+        # Retained state lets a GUI that starts after ROS immediately render the
+        # saved assignments instead of waiting for the next mapping mutation.
         self._current_publisher = self.create_publisher(
             String,
             MAPPING_CURRENT_TOPIC,
@@ -500,6 +509,10 @@ class MappingNode(Node):
 
         # Publish initial state
         self._publish_current()
+        # rosbridge creates volatile subscriptions for browser clients. Replaying
+        # the compact state makes a newly opened GUI deterministic even when it
+        # joined after the retained ROS publication.
+        self._state_timer = self.create_timer(1.0, self._publish_current)
         self.get_logger().info(
             f"MappingNode started — store={store_path} "
             f"model_hash={self._store.model_hash!r} "
