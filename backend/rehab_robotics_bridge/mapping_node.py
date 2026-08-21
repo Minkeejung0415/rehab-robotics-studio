@@ -74,6 +74,10 @@ class MappingStore:
             "revision": 0,
             "assignments": {},
             "applied_revision": 0,
+            # Immutable snapshot used by the runtime/3D solver.  Editable
+            # assignments are deliberately separate so a saved-but-not-applied
+            # UI selection can never move a body segment early.
+            "applied_assignments": {},
             "backup_revision": 0,
             "hash_assignments": {},
         }
@@ -170,6 +174,9 @@ class MappingStore:
                 "assignments": copy.deepcopy(self._data.get("assignments", {})),
                 "revision": self._data.get("revision", 0),
                 "applied_revision": self._data.get("applied_revision", 0),
+                "applied_assignments": copy.deepcopy(
+                    self._data.get("applied_assignments", {})
+                ),
             }
 
         # Load stored state for new_hash, or start fresh
@@ -178,6 +185,9 @@ class MappingStore:
         self._data["assignments"] = copy.deepcopy(stored.get("assignments", {}))
         self._data["revision"] = stored.get("revision", 0)
         self._data["applied_revision"] = stored.get("applied_revision", 0)
+        self._data["applied_assignments"] = copy.deepcopy(
+            stored.get("applied_assignments", {})
+        )
         self._data["hash_assignments"] = hash_assignments
         # Note: _save() not called here — deferred to next mutation
 
@@ -337,8 +347,12 @@ class MappingStore:
                 ),
             }
 
-        # Atomic swap: persist applied_revision
+        # Atomic swap: persist the exact assignment snapshot the runtime must
+        # consume.  `revision` alone cannot prove which mapping was applied:
+        # a later editable save may have the same displayed revision in a
+        # delayed browser update while the solver must retain the old mapping.
         self._data["applied_revision"] = self._data.get("revision", 0)
+        self._data["applied_assignments"] = copy.deepcopy(assignments)
         self._save()
 
         return {
@@ -363,6 +377,9 @@ class MappingStore:
                     "assignments": copy.deepcopy(self._data.get("assignments", {})),
                     "revision": self._data.get("revision", 0),
                     "applied_revision": self._data.get("applied_revision", 0),
+                    "applied_assignments": copy.deepcopy(
+                        self._data.get("applied_assignments", {})
+                    ),
                 }
             self._data["hash_assignments"] = hash_assignments
             self._data["model_hash"] = target_hash
@@ -370,6 +387,7 @@ class MappingStore:
         self._data["assignments"] = {}
         self._data["revision"] = 0
         self._data["applied_revision"] = 0
+        self._data["applied_assignments"] = {}
         self._save()
         return "ok"
 

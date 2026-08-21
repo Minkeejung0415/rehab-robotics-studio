@@ -456,6 +456,10 @@ class MappingStoreTest(unittest.TestCase):
         self.assertEqual(result["outcome"], "applied")
         self.assertEqual(result["applied_revision"], 2)
         self.assertEqual(self.store.applied_revision, 2)
+        self.assertEqual(self.store.get_state_dict()["applied_assignments"], {
+            DEVICE_A: {"segment": "femur_r", "frame": "femur_r_imu", "state": "assigned"},
+            DEVICE_B: {"segment": "tibia_r", "frame": "tibia_r_imu", "state": "assigned"},
+        })
 
     # MAP-04: apply_candidate — invalid_frame
     def test_apply_fails_invalid_frame(self):
@@ -502,6 +506,10 @@ class MappingStoreTest(unittest.TestCase):
         self.assertEqual(second["outcome"], "incomplete")
         # applied_revision must still be 2
         self.assertEqual(self.store.applied_revision, 2)
+        self.assertEqual(self.store.get_state_dict()["applied_assignments"], {
+            DEVICE_A: {"segment": "femur_r", "frame": "femur_r_imu", "state": "assigned"},
+            DEVICE_B: {"segment": "tibia_r", "frame": "tibia_r_imu", "state": "assigned"},
+        })
 
 
 # ---------------------------------------------------------------------------

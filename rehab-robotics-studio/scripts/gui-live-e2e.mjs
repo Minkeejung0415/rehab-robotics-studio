@@ -21,6 +21,7 @@ try {
   await expectText('Model hash');
   assert.equal(await page.getByText('NO MODEL', { exact: true }).count(), 0, 'model catalog did not reach GUI');
   assert.equal(await page.locator('table tbody tr').count(), 2, 'both ESP rows must be visible');
+  await page.screenshot({ path: '../logs/gui-e2e-mapping-before.png', fullPage: true });
 
   const rows = page.locator('table tbody tr');
   await rows.nth(0).locator('select').selectOption('femur_r\u001ffemur_r_imu');
@@ -31,7 +32,9 @@ try {
   const apply = page.getByLabel('Apply mapping to runtime');
   await expectEnabled(apply, 12_000);
   await apply.click();
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(1_500);
+  await expectText('APPLIED');
+  await page.screenshot({ path: '../logs/gui-e2e-mapping-applied.png', fullPage: true });
 
   await page.getByRole('button', { name: 'Front Panel' }).click();
   await expectText('LIVE DASHBOARD');
@@ -41,6 +44,7 @@ try {
   await expectText('gx');
   await expectText('mx');
   assert.ok(await page.locator('svg').count() > 0, 'front-panel graph SVGs are missing');
+  await page.screenshot({ path: '../logs/gui-e2e-front-panel.png', fullPage: true });
 
   const record = page.locator('button[title^="Start or stop SD recording"]');
   await record.click();
@@ -53,6 +57,7 @@ try {
   await page.getByRole('button', { name: 'Block Diagram' }).click();
   await expectText('BLOCK PALETTE');
   assert.ok(await page.locator('canvas, svg').count() > 0, 'block diagram surface is missing');
+  await page.screenshot({ path: '../logs/gui-e2e-block-diagram.png', fullPage: true });
 
   assert.deepEqual(errors, [], `browser errors:\n${errors.join('\n')}`);
   console.log('GUI live E2E passed: model, two ESP rows, mapping save/apply, raw values, graphs, runtime, recording toggle, and diagram.');
