@@ -36,9 +36,15 @@ def _install_ros_stubs() -> None:
 
     interfaces = types.ModuleType('rcl_interfaces')
     interfaces.msg = types.ModuleType('rcl_interfaces.msg')
-    interfaces.msg.SetParametersResult = type('SetParametersResult', (), {})
+    interfaces.msg.SetParametersResult = type(
+        'SetParametersResult', (),
+        {'__init__': lambda self, **kw: self.__dict__.update(kw)},
+    )
+    interfaces.srv = types.ModuleType('rcl_interfaces.srv')
+    interfaces.srv.SetParameters = type('SetParameters', (), {})
     sys.modules.setdefault('rcl_interfaces', interfaces)
     sys.modules.setdefault('rcl_interfaces.msg', interfaces.msg)
+    sys.modules.setdefault('rcl_interfaces.srv', interfaces.srv)
 
     sensor_msgs = types.ModuleType('sensor_msgs')
     sensor_msgs.msg = types.ModuleType('sensor_msgs.msg')

@@ -368,10 +368,16 @@ class OpenSimVisualizerAdapter:
 
     def _make_decorations(self, sensor_id: str) -> Any:
         component_path = self._frame_mappings[sensor_id]
+        # Role names are transport details, not anatomy.  Show the mapped body
+        # segment only, so a remapped sensor never leaves a misleading
+        # "master" or "slave" label in the 3D visualizer.
+        segment_label = component_path.rsplit("/", 1)[-1]
+        if segment_label.endswith("_imu"):
+            segment_label = segment_label[:-4]
         group = self._opensim.Decorations()
         frame = self._opensim.DecorativeFrame(0.12)
         text = self._opensim.DecorativeText(
-            f"{sensor_id}: {component_path}",
+            segment_label,
         )
         if callable(getattr(text, "setScale", None)):
             text.setScale(0.035)

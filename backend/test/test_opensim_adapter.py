@@ -510,8 +510,8 @@ class OpenSimAdapterContractTests(unittest.TestCase):
         self.assertEqual(
             labels,
             [
-                "master: /bodyset/femur_r_imu",
-                "slave: /bodyset/tibia_r_imu",
+                "femur_r",
+                "tibia_r",
             ],
         )
         self.assertEqual(adapter.status()["available"], True)
@@ -847,7 +847,7 @@ class OpenSimInstalledBindingContractTests(unittest.TestCase):
             decorations.addDecoration(opensim.DecorativeFrame(0.12))
             decorations.addDecoration(
                 opensim.DecorativeText(
-                    f"master: {mappings['master']}",
+                    "femur_r",
                 ),
             )
             decorations.setTransform(transform)

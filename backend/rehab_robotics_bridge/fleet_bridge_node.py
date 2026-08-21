@@ -20,6 +20,8 @@ from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPo
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Header, String
 from std_srvs.srv import SetBool
+from rcl_interfaces.msg import SetParametersResult
+from rcl_interfaces.srv import SetParameters
 from rehab_robotics_interfaces.srv import IdentifyDevice
 
 from rehab_robotics_bridge.measurement_contract import (
@@ -1031,6 +1033,13 @@ class FleetBridgeNode(Node):
         # IdentifyDevice service routed to the correct per-session writer.
         self.create_service(IdentifyDevice, '/esp32/fleet/identify', self._identify_fleet_device)
         self.create_service(SetBool, '/esp/recording/set', self._set_recording)
+        # Keep the existing GUI control contract while wireless mode is owned
+        # by the fleet bridge rather than the old per-role bridge nodes.
+        self.create_service(
+            SetParameters,
+            '/esp_bridge_master/set_parameters',
+            self._set_master_parameters,
+        )
 
         self.get_logger().info(
             f'fleet_bridge_node routes={len(self._sessions)} '
@@ -1677,6 +1686,60 @@ class FleetBridgeNode(Node):
             return response
         response.success, response.message = normalize_recording_reply(bool(request.data), result)
         self._observe_fleet_recording_response(device_id, result)
+        return response
+
+    def _set_master_parameters(
+        self,
+        request: SetParameters.Request,
+        response: SetParameters.Response,
+    ) -> SetParameters.Response:
+        """Forward sample-rate changes through the sole active master control socket."""
+        master_id = self._manager._alias_master
+        session_index = next((
+            index for index, session in enumerate(self._sessions)
+            if (session._bound_device_id or session.expected_device_id) == master_id
+        ), None)
+        for parameter in request.parameters:
+            if parameter.name != 'sample_rate_hz':
+                response.results.append(SetParametersResult(
+                    successful=False, reason=f'unsupported parameter: {parameter.name}'
+                ))
+                continue
+            hz = int(parameter.value.integer_value)
+            if not 1 <= hz <= 1000:
+                response.results.append(SetParametersResult(
+                    successful=False, reason='sample_rate_hz must be 1..1000'
+                ))
+                continue
+            if session_index is None:
+                response.results.append(SetParametersResult(
+                    successful=False, reason='master route is not bound'
+                ))
+                continue
+            writer = self._active_writers[session_index]
+            lock = self._session_locks[session_index]
+            queue = self._control_queues[session_index]
+            if writer is None or lock is None or queue is None or writer.is_closing():
+                response.results.append(SetParametersResult(
+                    successful=False, reason='master stream is not connected'
+                ))
+                continue
+            try:
+                line = asyncio.run_coroutine_threadsafe(
+                    self._send_fleet_control_command(
+                        writer, lock, queue, f'FREQ:{hz}', f'OK FREQ:{hz}'
+                    ), self._loop,
+                ).result(timeout=8.0)
+                if line.startswith(f'OK FREQ:{hz}'):
+                    for state in self._manager.registry._devices.values():
+                        state.configured_hz = float(hz)
+                    response.results.append(SetParametersResult(successful=True, reason=''))
+                else:
+                    response.results.append(SetParametersResult(successful=False, reason=line))
+            except Exception as exc:
+                response.results.append(SetParametersResult(
+                    successful=False, reason=f'frequency command failed: {type(exc).__name__}'
+                ))
         return response
 
     async def _send_fleet_control_command(
