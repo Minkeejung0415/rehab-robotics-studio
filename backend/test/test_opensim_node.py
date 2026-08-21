@@ -1499,6 +1499,20 @@ class IkTwoNodeTests(unittest.TestCase):
         self.assertEqual(len(capture_services), 1)
         self.assertIs(capture_services[0].srv_type, _Trigger)
 
+    def test_ik02_clear_service_clears_the_mapped_calibration(self):
+        """The UI clear action targets the same applied-MAC calibration as capture."""
+        node = self._make_node()
+        node._on_mapping_current(self._mapping_msg(self._MAPPING_TWO_DEVICES))
+        self._feed_two_imu(node)
+        self.assertTrue(self._trigger(node, "/rehab/calibration/capture").success)
+
+        response = self._trigger(node, "/rehab/calibration/clear")
+
+        self.assertTrue(response.success)
+        self.assertEqual(json.loads(response.message)["outcome"], "cleared")
+        self.assertEqual(node._n_calib_state, "uncalibrated")
+        self.assertIsNone(node._n_calib_artifact)
+
     def test_ik02_status_publisher_exists_on_correct_topic(self):
         """/rehab/calibration/status publisher is created."""
         node = self._make_node()

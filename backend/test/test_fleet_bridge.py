@@ -1379,10 +1379,13 @@ class FleetLiveSessionContractTest(unittest.TestCase):
 
         # Override publish_session_raw to capture calls
         session_raw_calls: list[str] = []
-        original_pub = manager.publish_session_raw
         def _spy_raw(session, payload):
             session_raw_calls.append(payload)
         manager.publish_session_raw = _spy_raw
+        session_health_calls: list[str] = []
+        manager.publish_session_health = lambda _session, payload: session_health_calls.append(payload)
+        pair_health_calls: list[tuple[object, object]] = []
+        manager.publish_pair_health = lambda master, slave: pair_health_calls.append((master, slave))
 
         manager.on_session_bound(manager.sessions[0], 'esp32:aabbccddeeff', last_seen_us=1)
 
@@ -1393,6 +1396,7 @@ class FleetLiveSessionContractTest(unittest.TestCase):
         node._mac_imu_pubs = {}
         node._body_segments = {}
         node._health_snapshots = {}
+        node._frame_times_by_device = {}
         node._signal_calibrations = {}
         node._mapping_cache = fleet.AppliedMappingCache()
         node._mapping_cache.update({
@@ -1429,6 +1433,21 @@ class FleetLiveSessionContractTest(unittest.TestCase):
         self.assertIsNone(canonical['acquisition_time_us'])
         self.assertIsNone(canonical['acquisition_clock'])
         self.assertEqual(canonical['applied_mapping']['revision'], 0)
+        self.assertEqual(len(session_health_calls), 1)
+        health = _json.loads(session_health_calls[0])
+        self.assertEqual(health['connection_state'], 'connected')
+        self.assertEqual(health['frames_received'], 1)
+        self.assertGreater(health['observed_stream_rate_hz'], 0)
+        self.assertEqual(len(pair_health_calls), 1)
+
+    def test_fleet_mode_exposes_the_gui_recording_service(self):
+        source = (
+            Path(__file__).parents[1]
+            / 'rehab_robotics_bridge'
+            / 'fleet_bridge_node.py'
+        ).read_text(encoding='utf-8')
+        self.assertIn("'/esp/recording/set'", source)
+        self.assertIn('def _set_recording', source)
 
     # --- test 6 ---
     def test_apply_udp_drop_count_called_on_reconnect(self):

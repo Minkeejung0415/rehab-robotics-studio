@@ -1,8 +1,8 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: "individual components have to be shown in values and in graphs; values are shown but graphs are missing, and changing ESP segments is not reflected in 3D visualization"
 created: "2026-08-17"
-updated: "2026-08-17T13:25:00-07:00"
+updated: "2026-08-21T13:57:00-07:00"
 ---
 
 # Signal Graphs and 3D Remap
@@ -17,22 +17,42 @@ updated: "2026-08-17T13:25:00-07:00"
 
 ## Current Focus
 
-- hypothesis: Confirmed and fixed: canonical signal history/graph consumers were absent, and the MAC-mapped N-sensor pose both failed to reach the native adapter and could be overwritten by the later fixed-role alias callbacks.
-- test: User verifies live scrolling component graphs and physical swap-to-model correspondence after Apply and recalibration on the real ESP/OpenSim environment.
-- expecting: Every available component has a live graph; swapping the two full-MAC assignments changes which anatomical region responds, with legacy aliases unable to overwrite the mapped pose.
-- next_action: Await human verification in the real hardware/native visualizer workflow before resolving and archiving the debug session.
+- hypothesis: FleetBridge publishes valid raw and canonical samples but never updates the fleet registry's frame observations or publishes per-device/pair health, so the GUI correctly shows connected devices at 0 Hz and no pair state. Fleet mode also omits the `/esp/recording/set` service that the GUI calls.
+- test: Add the missing frame-observation, health publication, and master recording forwarding paths; assert their resulting registry, status, pair, and service behavior in focused tests before rebuilding the live WSL stack.
+- expecting: During live frames, registry observed_hz becomes positive, `/esp/status/pair` contains connected master/slave health, and `/esp/recording/set` yields a non-empty service response instead of InvalidServiceException.
+- next_action: Parent agent verifies the refreshed browser's canonical graph admission and the repaired calibrated N-sensor OpenSim path; physical visualizer motion remains the final human check.
 
 reasoning_checkpoint:
-  hypothesis: "Signal graphs are missing because no canonical history or graph consumer exists; remapped 3D motion is missing because the valid N-sensor solve terminates at JointState publication and bypasses the native adapter."
+  hypothesis: "FleetBridge does not update or publish live health while it emits samples, and does not expose the recording service expected by the GUI, causing a connected/0 Hz/pair-waiting UI and an empty recording response despite physical streaming."
   confirming_evidence:
-    - "The frontend regression fails because canonicalHistoryByMac is undefined, and static markup contains values but no per-component graph accessibility labels."
-    - "The backend regression reaches a valid solve_n result after applied full-MAC/frame mapping but node._adapter.pose_calls remains empty."
-    - "The legacy pair solve calls update_pose, while the N-sensor method contains no update_pose call."
-  falsification_test: "A pre-fix bounded history or N-sensor adapter pose call would disprove the corresponding hypothesis; neither exists under deterministic synthetic inputs."
-  fix_rationale: "Adding bounded history and rendering consumes the already-validated canonical samples without altering ingress; forwarding the already-valid N-sensor solution to the adapter connects the missing final visualization edge without changing mapping or solver semantics."
-  blind_spots: "Native OpenSim window behavior and physical sensor-to-body correspondence still require hardware/native visual verification after deterministic tests; high sensor-count render performance is not load-tested here."
+    - "Live ROS echo receives valid samples including `sample_contract` from canonical and legacy raw topics while registry rows remain connected at observed_hz 0.0."
+    - "Live ROS echo receives no `/esp/status/pair` message, and `_publish_fleet_frame` calls only `publish_session_raw`, never health/pair publication or registry observation updates."
+    - "The active rosbridge log records `InvalidServiceException: Service /esp/recording/set does not exist`, and FleetBridge registers only the Identify service."
+  falsification_test: "Existing fleet code that updates observed_hz/last_seen and publishes pair health for every accepted frame, or a live `/esp/recording/set` service in fleet mode, would disprove the hypothesis; neither exists."
+  fix_rationale: "Updating the registry and publishing the already-defined health contract at the point every accepted frame is decoded makes telemetry state share the same source as raw samples. Forwarding the existing rec-v1 command over the bound master session restores the frontend's established service contract."
+  blind_spots: "Actual firmware may reject recording commands due to unsupported SD capability; the fix guarantees a concrete backend response, but physical SD finalization requires live confirmation."
 
 ## Evidence
+
+- timestamp: 2026-08-21T13:38:00-07:00
+  checked: Live ROS topics, fleet source, and rosbridge service logs.
+  found: Both canonical and legacy raw topics carry valid `sample_contract` payloads, but the registry remains at observed_hz 0.0 and `/esp/status/pair` publishes nothing. The fleet frame path only published raw samples. Rosbridge recorded `InvalidServiceException: Service /esp/recording/set does not exist` for the GUI request.
+  implication: The active live discrepancy is a missing fleet telemetry/recording boundary, not graph parsing or relay connectivity.
+
+- timestamp: 2026-08-21T13:49:00-07:00
+  checked: Focused RED/GREEN and full fleet regression suite after fleet bridge fix.
+  found: Before the change, health publication and the recording service tests failed. After adding frame-driven health/pair publication, registry rate updates, and master rec-v1 forwarding, both pass; all 45 `backend.test.test_fleet_bridge` tests pass.
+  implication: The repaired fleet contract now shares one accepted-frame source with canonical samples and exposes the UI's existing recording service. A restart is required because the active WSL Python process loaded the old module before this edit.
+
+- timestamp: 2026-08-21T13:56:00-07:00
+  checked: Restarted physical STEP ESP / WSL ROS stack.
+  found: `/esp/status/pair` now publishes two connected health snapshots at approximately 100 Hz with `pair_available: true`; fleet registry rows report approximately 100 Hz and fresh last-seen data; canonical raw carries the contract; `/esp/recording/set` is registered and an idle stop returns `success=True, REC IDLE ...`.
+  implication: The previously disconnected live telemetry and recording-service boundaries are repaired end-to-end through the active hardware stack.
+
+- timestamp: 2026-08-21T14:00:00-07:00
+  checked: Mapped calibration, public IK status, and live browser workflow on the restarted stack.
+  found: The Toolbar had targeted legacy `/opensim/calibration/capture` rather than mapping-owned `/rehab/calibration/capture`, allowing a legacy CALIBRATED label while N-sensor IK remained uncalibrated. Valid N-sensor output was also not copied to the public IK snapshot, leaving the UI at `no_solution_yet`. After routing capture/clear to the mapped service and publishing the N solution as public status, live mapped capture returns success, `/opensim/ik_status` is valid (`reason: ok`), `/opensim/joint_states` publishes `knee_angle_r`, and `npm run test:gui-live` passes including mapping, recording, and graph workflows.
+  implication: The visible calibration, angle, and visualizer route now agrees with the actual MAC-mapped runtime rather than legacy fixed-role state.
 
 - timestamp: 2026-08-17T12:00:00-07:00
   checked: Debug knowledge base and repository/worktree state.
@@ -98,9 +118,9 @@ reasoning_checkpoint:
 
 ## Resolution
 
-- root_cause: The graph feature stopped at latest numeric canonical samples: SignalBus had no per-MAC history and SignalContractPanel had no chart consumer, so this was missing planned capability rather than a rendering regression. The applied full-MAC mapping did reach solve_n, but valid N-sensor solutions were not forwarded to VisualizerAdapter.update_pose. Additionally, FleetBridge publishes each MAC Imu before its legacy role alias, and the calibrated fixed master/slave path subsequently overwrote the same adapter with the pre-remap pose.
-- fix: Added immutable bounded 240-sample canonical histories keyed by full MAC; rendered a live MiniChart for every currently available accel, gyro, magnetometer, and quaternion component in the selected raw/SI mode; forwarded valid N-sensor visualization coordinates to the native adapter; and gave applied MAC mapping exclusive adapter-pose ownership while retaining legacy-only compatibility.
-- verification: RED tests reproduced missing history/chart markup, zero N-sensor adapter calls, and a deterministic mapped-pose overwrite from 1 to 3 adapter calls. After fixes, 142 backend tests passed (3 optional skips, 9 subtests), 118 frontend suites passed, 13 Signal Contract component tests passed, typecheck passed, and production build passed. Hardware/native visualizer confirmation is pending.
+- root_cause: The graph feature originally lacked canonical history and a graph consumer; applied full-MAC mapping originally bypassed native pose forwarding and could be overwritten by legacy aliases. The reported live regression added three separate boundaries: fleet frames did not update or publish health/pair state, fleet mode omitted the recording service, and the UI calibrated/read status through legacy fixed-role paths rather than the active mapped N-sensor route.
+- fix: Added bounded canonical history/charts; mapped pose forwarding and precedence; frame-driven fleet registry/device/pair health plus fleet recording service; mapping-owned calibration capture/clear; and public IK status synchronization with the valid N-sensor solution.
+- verification: 45 fleet tests, 163 frontend tests, and 75 OpenSim tests plus 6 subtests pass. On the physical iPhone (111) ESP stack, health is online around 100 Hz, recording returns a concrete response, mapped calibration succeeds, valid IK/joint state publishes, and live GUI E2E passes.
 - files_changed:
   - rehab-robotics-studio/src/data/signalBus.ts
   - rehab-robotics-studio/src/data/signalBus.test.ts

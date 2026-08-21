@@ -19,6 +19,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Header, String
+from std_srvs.srv import SetBool
 from rehab_robotics_interfaces.srv import IdentifyDevice
 
 from rehab_robotics_bridge.measurement_contract import (
@@ -52,6 +53,8 @@ from rehab_robotics_bridge.esp32_bridge_node import (
     parse_identity_inventory,
     validate_identify_request,
     parse_identify_reply,
+    parse_control_fields,
+    normalize_recording_reply,
 )
 
 # ICM20948 scale factors (same values as esp32_bridge_node — defined locally to avoid
@@ -1007,6 +1010,10 @@ class FleetBridgeNode(Node):
         self._active_writers: list[asyncio.StreamWriter | None] = [None] * n
         self._session_locks: list[asyncio.Lock | None] = [None] * n
         self._identify_queues: list[asyncio.Queue | None] = [None] * n
+        self._control_queues: list[asyncio.Queue | None] = [None] * n
+        self._frame_times_by_device: dict[str, deque[float]] = {}
+        self._health_snapshots: dict[str, dict[str, Any]] = {}
+        self._recording_by_device: dict[str, dict[str, Any]] = {}
         self._imu_pubs: dict[str, Any] = {}
         self._mac_imu_pubs: dict[str, Any] = {}
 
@@ -1023,6 +1030,7 @@ class FleetBridgeNode(Node):
 
         # IdentifyDevice service routed to the correct per-session writer.
         self.create_service(IdentifyDevice, '/esp32/fleet/identify', self._identify_fleet_device)
+        self.create_service(SetBool, '/esp/recording/set', self._set_recording)
 
         self.get_logger().info(
             f'fleet_bridge_node routes={len(self._sessions)} '
@@ -1260,6 +1268,14 @@ class FleetBridgeNode(Node):
                     if queue.full():
                         queue.get_nowait()
                     queue.put_nowait(text)
+                else:
+                    control_queue = self._control_queues[index]
+                    if control_queue is not None:
+                        if control_queue.full():
+                            control_queue.get_nowait()
+                        control_queue.put_nowait(text)
+                    device_id = session._bound_device_id or session.expected_device_id
+                    self._observe_fleet_recording_response(device_id, text)
                 continue
 
             # Accumulate header
@@ -1423,6 +1439,46 @@ class FleetBridgeNode(Node):
 
         self._manager.publish_session_raw(session, raw_json)
 
+        frame_times_by_device = getattr(self, '_frame_times_by_device', {})
+        history = frame_times_by_device.setdefault(device_id, deque())
+        now_s = time.monotonic()
+        history.append(now_s)
+        while history and now_s - history[0] > 5.0:
+            history.popleft()
+        observed_hz = len(history) / max(now_s - history[0], 0.01)
+        if registry_state is not None:
+            registry_state.last_seen_us = now_us
+            registry_state.observed_hz = observed_hz
+            registry_state.orientation_freshness = 'fresh'
+
+        recording_by_device = getattr(self, '_recording_by_device', {})
+        recording = recording_by_device.setdefault(device_id, {
+            'state': 'idle', 'session_id': None, 'error': None,
+            'sd_ready': None, 'saved_samples': None, 'file_byte_size': None,
+            'file_checksum': None, 'checksum_type': None, 'finalization_reason': None,
+        })
+        health = {
+            'schema': 'oe_esp32.health.v1',
+            'node_id': session.role,
+            'timestamp_us': now_us,
+            'connection_state': 'connected',
+            'reconnect_count': registry_state.reconnect_count if registry_state is not None else 0,
+            'configured_rate_hz': registry_state.configured_hz if registry_state is not None else 100.0,
+            'effective_rate_hz': registry_state.configured_hz if registry_state is not None else 100.0,
+            'observed_stream_rate_hz': observed_hz,
+            'last_frame_age_ms': 0,
+            'frames_received': frame_index,
+            'recording': dict(recording),
+        }
+        health_snapshots = getattr(self, '_health_snapshots', {})
+        health_snapshots[session.role] = health
+        self._manager.publish_session_health(
+            session, json.dumps(health, sort_keys=True, separators=(',', ':')),
+        )
+        self._manager.publish_pair_health(
+            health_snapshots.get('master'), health_snapshots.get('slave'),
+        )
+
         # Publish an identity-stable typed Imu for mapping/OpenSim and retain
         # the role alias for backward compatibility.
         role = session.role
@@ -1472,6 +1528,7 @@ class FleetBridgeNode(Node):
                     self._active_writers[index] = writer
                     self._session_locks[index] = asyncio.Lock()
                     self._identify_queues[index] = asyncio.Queue(maxsize=256)
+                    self._control_queues[index] = asyncio.Queue(maxsize=256)
                     await self._fleet_handshake(index, session, reader, writer)
                     retry_delay = self._reconnect_delay_s
                     await self._read_fleet_frames(index, session, reader)
@@ -1479,6 +1536,7 @@ class FleetBridgeNode(Node):
                     self._active_writers[index] = None
                     self._session_locks[index] = None
                     self._identify_queues[index] = None
+                    self._control_queues[index] = None
                     try:
                         writer.close()
                         await writer.wait_closed()
@@ -1571,6 +1629,109 @@ class FleetBridgeNode(Node):
         response.applied_duration_ms = int(result.get('applied_duration_ms', 0))
         response.detail = str(result.get('detail', ''))
         return response
+
+    def _set_recording(self, request: SetBool.Request, response: SetBool.Response) -> SetBool.Response:
+        """Forward the GUI's stable recording service through the bound master session."""
+        master_id = self._manager._alias_master
+        session_index = next((
+            index for index, session in enumerate(self._sessions)
+            if (session._bound_device_id or session.expected_device_id) == master_id
+        ), None)
+        if session_index is None:
+            response.success = False
+            response.message = 'master recording route is not bound'
+            return response
+        writer = self._active_writers[session_index]
+        lock = self._session_locks[session_index]
+        queue = self._control_queues[session_index]
+        if writer is None or lock is None or queue is None or writer.is_closing():
+            response.success = False
+            response.message = 'master stream is not connected'
+            return response
+        device_id = self._sessions[session_index]._bound_device_id or master_id
+        recording = self._recording_by_device.setdefault(device_id, {
+            'state': 'idle', 'session_id': None, 'error': None,
+            'sd_ready': None, 'saved_samples': None, 'file_byte_size': None,
+            'file_checksum': None, 'checksum_type': None, 'finalization_reason': None,
+        })
+        if request.data:
+            command = (
+                f'REC START sample_rate_hz=100 channels={NUM_CHANNELS} '
+                f'format=sd-bin sd_required=true requested_session={time.strftime("%Y%m%d_%H%M%S")}'
+            )
+            expected = 'REC STARTED'
+        else:
+            command = f'REC STOP session_id={recording.get("session_id") or "latest"} reason=gui_stop'
+            expected = 'REC FINALIZING'
+        try:
+            result = asyncio.run_coroutine_threadsafe(
+                self._send_fleet_control_command(writer, lock, queue, command, expected), self._loop,
+            ).result(timeout=8.0)
+        except (TimeoutError, FutureTimeoutError):
+            response.success = False
+            response.message = 'master did not answer rec-v1 recording command'
+            return response
+        except Exception as exc:
+            response.success = False
+            response.message = f'recording command failed: {str(exc).strip() or "unknown error"}'
+            return response
+        response.success, response.message = normalize_recording_reply(bool(request.data), result)
+        self._observe_fleet_recording_response(device_id, result)
+        return response
+
+    async def _send_fleet_control_command(
+        self,
+        writer: asyncio.StreamWriter,
+        lock: asyncio.Lock,
+        queue: asyncio.Queue,
+        command: str,
+        expected: str,
+    ) -> str:
+        async with lock:
+            while not queue.empty():
+                queue.get_nowait()
+            writer.write((command + '\n').encode('ascii'))
+            await writer.drain()
+            deadline = asyncio.get_running_loop().time() + 6.0
+            while True:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise TimeoutError(f'timed out waiting for {expected}')
+                line = await asyncio.wait_for(queue.get(), timeout=remaining)
+                if line.startswith(expected) or line.startswith(('REC ERR', 'ERROR ')):
+                    return line
+
+    def _observe_fleet_recording_response(self, device_id: str, line: str) -> None:
+        """Project rec-v1 control facts into the next MAC and pair health payload."""
+        recording = self._recording_by_device.setdefault(device_id, {
+            'state': 'idle', 'session_id': None, 'error': None,
+            'sd_ready': None, 'saved_samples': None, 'file_byte_size': None,
+            'file_checksum': None, 'checksum_type': None, 'finalization_reason': None,
+        })
+        fields = parse_control_fields(line)
+        if line.startswith('REC STARTED'):
+            recording.update(state='recording', session_id=fields.get('session_id'), error=None)
+        elif line.startswith('REC FINALIZING'):
+            recording.update(state='finalizing', error=None)
+        elif line.startswith('REC FINALIZED'):
+            recording.update(state='finalized', error=None)
+        elif line.startswith('REC ERR'):
+            code = fields.get('code', '')
+            if code == 'already_recording':
+                recording.update(state='recording', session_id=fields.get('session_id'), error=None)
+            elif code == 'not_recording':
+                recording.update(state='idle', error=None)
+            else:
+                recording.update(state='error', error=fields.get('detail', line))
+        for key in ('sd_ready', 'saved_samples', 'file_byte_size'):
+            if key in fields:
+                try:
+                    recording[key] = int(fields[key])
+                except ValueError:
+                    pass
+        for key in ('file_checksum', 'checksum_type', 'finalization_reason'):
+            if key in fields:
+                recording[key] = fields[key]
 
     async def _send_fleet_identify_command(
         self,

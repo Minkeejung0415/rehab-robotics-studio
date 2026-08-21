@@ -324,6 +324,11 @@ class OpenSimBridgeNode(Node):
             "/rehab/calibration/capture",
             self._on_calibration_capture_n,
         )
+        self._n_clear_service = self.create_service(
+            Trigger,
+            "/rehab/calibration/clear",
+            self._on_calibration_clear_n,
+        )
         self._n_calibration_status_publisher = self.create_publisher(
             String,
             "/rehab/calibration/status",
@@ -677,6 +682,10 @@ class OpenSimBridgeNode(Node):
             return
 
         solver_status = str(solution.reason) if solution is not None else "no_solution"
+        # Mapped N-sensor IK is the authoritative runtime solve.  Mirror it to
+        # the public status publisher instead of leaving the UI on the unused
+        # legacy pair solver's `no_solution_yet` value.
+        self._last_ik_solution = solution
         self._publish_n_ik_metadata(
             input_validity_mask=input_validity_mask,
             solver_status=solver_status,
@@ -792,6 +801,25 @@ class OpenSimBridgeNode(Node):
         response.message = json.dumps(
             {"outcome": "captured", "artifact_path": str(artifact_path)}
         )
+        return response
+
+    def _on_calibration_clear_n(
+        self,
+        _request: Trigger.Request,
+        response: Trigger.Response,
+    ) -> Trigger.Response:
+        """Clear the calibration artifact for the currently applied mapping."""
+        self._n_calib_artifact = None
+        self._n_calib_state = "uncalibrated"
+        self._last_ik_solution = None
+        try:
+            self._ik_solver.reset()
+        except Exception:
+            pass
+        self._publish_n_calibration_status()
+        self._publish_ik_status()
+        response.success = True
+        response.message = json.dumps({"outcome": "cleared"})
         return response
 
     def _check_artifact_validity(self) -> None:

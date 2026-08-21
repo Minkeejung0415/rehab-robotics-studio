@@ -637,13 +637,13 @@ describe('RosbridgeDataSource — 09-02-03 service names and ACK', () => {
 
 describe('RosbridgeDataSource — OpenSim calibration Trigger services', () => {
 
-  it('captureCalibration calls /opensim/calibration/capture as std_srvs/srv/Trigger', async () => {
+  it('captureCalibration calls the mapped N-sensor capture service as std_srvs/srv/Trigger', async () => {
     const fakeWs = new FakeWebSocket();
     const ds = makeConnectedStub(fakeWs);
     const promise = ds.captureCalibration();
     const services = fakeWs.getSentServices();
     assert.equal(services.length, 1);
-    assert.equal(services[0].service, '/opensim/calibration/capture');
+    assert.equal(services[0].service, '/rehab/calibration/capture');
     assert.equal(services[0].type, 'std_srvs/srv/Trigger');
     assert.deepEqual(services[0].args, {});
     fakeWs.respondToLatest(true, 'capturing');
@@ -652,13 +652,13 @@ describe('RosbridgeDataSource — OpenSim calibration Trigger services', () => {
     assert.equal(result.message, 'capturing');
   });
 
-  it('clearCalibration calls /opensim/calibration/clear as std_srvs/srv/Trigger', async () => {
+  it('clearCalibration calls the mapped N-sensor clear service as std_srvs/srv/Trigger', async () => {
     const fakeWs = new FakeWebSocket();
     const ds = makeConnectedStub(fakeWs);
     const promise = ds.clearCalibration();
     const services = fakeWs.getSentServices();
     assert.equal(services.length, 1);
-    assert.equal(services[0].service, '/opensim/calibration/clear');
+    assert.equal(services[0].service, '/rehab/calibration/clear');
     assert.equal(services[0].type, 'std_srvs/srv/Trigger');
     fakeWs.respondToLatest(true, 'cleared');
     const result = await promise;

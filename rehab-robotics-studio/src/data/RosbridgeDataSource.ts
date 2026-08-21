@@ -626,7 +626,7 @@ export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
   /** Begin OpenSim reference-pose capture (standing, knees extended). */
   captureCalibration(): Promise<RecordingCommandResult> {
     return this.callService(
-      '/opensim/calibration/capture',
+      '/rehab/calibration/capture',
       {},
       'std_srvs/srv/Trigger',
     );
@@ -635,7 +635,7 @@ export class RosbridgeDataSource implements DataSource, OpenSimDataSource {
   /** Clear OpenSim mounting-offset calibration → UNCALIBRATED. */
   clearCalibration(): Promise<RecordingCommandResult> {
     return this.callService(
-      '/opensim/calibration/clear',
+      '/rehab/calibration/clear',
       {},
       'std_srvs/srv/Trigger',
     );
