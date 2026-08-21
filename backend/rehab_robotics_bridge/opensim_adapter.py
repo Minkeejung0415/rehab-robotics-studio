@@ -555,7 +555,11 @@ class OpenSimVisualizerAdapter:
             self._reason = "visualizer_pose_update_failed"
             return False
         self._available = True
-        self._state_name = "ready"
+        # Streaming a new solved pose must not make an already-open native
+        # visualizer appear closed to rosbridge clients.  `open` is a durable
+        # user-visible state; `ready` is only the pre-open initialized state.
+        if self._state_name != "open":
+            self._state_name = "ready"
         self._reason = ""
         return True
 

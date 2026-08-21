@@ -7,12 +7,87 @@ model_hash, applied_revision, and device assignment identity.
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 
-__all__ = ["CalibrationArtifactStore"]
+__all__ = ["CalibrationArtifactStore", "apply_reference_pose_offsets"]
 
 _SCHEMA_VERSION = "calib.v1"
+
+
+def _unit_xyzw(values: object) -> tuple[float, float, float, float]:
+    """Validate and normalize one persisted ROS quaternion."""
+
+    if not isinstance(values, (list, tuple)) or len(values) != 4:
+        raise ValueError("calibration_reference_quaternion_invalid")
+    x, y, z, w = (float(value) for value in values)
+    norm = math.hypot(x, y, z, w)
+    if not math.isfinite(norm) or norm < 1e-12:
+        raise ValueError("calibration_reference_quaternion_invalid")
+    return (x / norm, y / norm, z / norm, w / norm)
+
+
+def _multiply_xyzw(
+    left: tuple[float, float, float, float],
+    right: tuple[float, float, float, float],
+) -> tuple[float, float, float, float]:
+    """Hamilton product for ROS-order quaternions."""
+
+    lx, ly, lz, lw = left
+    rx, ry, rz, rw = right
+    return (
+        lw * rx + lx * rw + ly * rz - lz * ry,
+        lw * ry - lx * rz + ly * rw + lz * rx,
+        lw * rz + lx * ry - ly * rx + lz * rw,
+        lw * rw - lx * rx - ly * ry - lz * rz,
+    )
+
+
+def apply_reference_pose_offsets(
+    inputs: list[tuple[str, object]],
+    artifact: dict,
+) -> list[tuple[str, tuple[float, float, float, float]]]:
+    """Express mapped IMU orientations relative to their captured pose.
+
+    At capture q_current == q_reference, so the corrected orientation is the
+    identity quaternion.  This is the N-sensor equivalent of the legacy
+    OpenSense mounting-offset correction and makes the standing capture pose
+    neutral for the model solver.
+    """
+
+    if not isinstance(artifact, dict):
+        raise ValueError("calibration_artifact_invalid")
+    references = artifact.get("reference_pose")
+    assignments = artifact.get("frame_assignments")
+    if not isinstance(references, dict) or not isinstance(assignments, dict):
+        raise ValueError("calibration_reference_missing")
+
+    reference_by_frame: dict[str, tuple[float, float, float, float]] = {}
+    for device_id, assignment in assignments.items():
+        if not isinstance(device_id, str) or not isinstance(assignment, dict):
+            continue
+        frame = assignment.get("frame")
+        reference = references.get(device_id)
+        if not isinstance(frame, str) or not isinstance(reference, dict):
+            continue
+        try:
+            reference_by_frame[frame] = _unit_xyzw((
+                reference.get("qx"), reference.get("qy"),
+                reference.get("qz"), reference.get("qw"),
+            ))
+        except (TypeError, ValueError):
+            raise ValueError("calibration_reference_quaternion_invalid") from None
+
+    corrected: list[tuple[str, tuple[float, float, float, float]]] = []
+    for frame, raw in inputs:
+        current = _unit_xyzw(raw)
+        reference = reference_by_frame.get(str(frame))
+        if reference is None:
+            raise ValueError(f"calibration_reference_missing:{frame}")
+        rx, ry, rz, rw = reference
+        corrected.append((str(frame), _multiply_xyzw(current, (-rx, -ry, -rz, rw))))
+    return corrected
 
 
 class CalibrationArtifactStore:

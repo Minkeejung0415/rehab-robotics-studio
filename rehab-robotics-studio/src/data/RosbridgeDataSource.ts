@@ -191,7 +191,7 @@ function parseOpenSimStatus(payload: unknown): OpenSimStatusSnapshot | null {
     const state = optionalString(visualizationRaw.state)?.toLowerCase();
     if (
       state === undefined
-      || !['waiting', 'opening', 'open', 'unavailable', 'failed'].includes(state)
+      || !['waiting', 'ready', 'opening', 'open', 'unavailable', 'failed'].includes(state)
     ) {
       return null;
     }

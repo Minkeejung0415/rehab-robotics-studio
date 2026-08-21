@@ -1,7 +1,7 @@
 """Dual native-IMU ROS bridge for the optional OpenSim visualizer."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import datetime
 import json
 import math
@@ -671,6 +671,7 @@ class OpenSimBridgeNode(Node):
                 source_timestamp_ns=source_ts,
                 input_age_s=input_age_s,
                 joint_names=self._ik_joint_names,
+                calibration=self._n_calib_artifact,
             )
         except Exception as exc:
             self._publish_n_ik_metadata(
@@ -681,6 +682,8 @@ class OpenSimBridgeNode(Node):
             )
             return
 
+        if solution is not None and calibration_identity:
+            solution = replace(solution, calibration_id=calibration_identity)
         solver_status = str(solution.reason) if solution is not None else "no_solution"
         # Mapped N-sensor IK is the authoritative runtime solve.  Mirror it to
         # the public status publisher instead of leaving the UI on the unused
@@ -858,6 +861,25 @@ class OpenSimBridgeNode(Node):
         message = String()
         message.data = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         self._n_calibration_status_publisher.publish(message)
+
+    def _n_calibration_status_for_public_contract(self) -> dict[str, object]:
+        """Return the calibration consumed by the active mapped IK path."""
+
+        if self._n_calib_artifact is None:
+            return self._calibration.status_dict()
+        calibration_identity = self._n_calib_store.compute_artifact_path(
+            self._n_model_hash, self._n_mapping_revision,
+        ).name
+        return {
+            "state": "CALIBRATED",
+            "reason": "",
+            "known_pose": "standing_knees_extended",
+            "sample_count": len(self._n_calib_artifact.get("device_order", [])),
+            "window_s": 0.0,
+            "calibration_id": calibration_identity,
+            "has_offsets": True,
+            "may_publish_joint_states": True,
+        }
 
     def _on_master_imu(self, message: Imu) -> None:
         self._on_imu("master", message)
@@ -1059,6 +1081,14 @@ class OpenSimBridgeNode(Node):
         return min(ages) if ages else None
 
     def _solve_and_publish_ik(self) -> None:
+        # Once a mapping is applied, MAC-keyed N-sensor IK is authoritative.
+        # Keeping this legacy pair solver active races its uncalibrated result
+        # against the mapped solver and can make the GUI intermittently lose a
+        # valid angle.
+        with self._input_lock:
+            if self._mac_inputs:
+                return
+
         master = self._sensor_states["master"]
         slave = self._sensor_states["slave"]
         if master.last_xyzw is None or slave.last_xyzw is None:
@@ -1343,7 +1373,7 @@ class OpenSimBridgeNode(Node):
             "schema": _SCHEMA,
             "visualization": visualization,
             "sensors": sensors,
-            "calibration": self._calibration.status_dict(),
+            "calibration": self._n_calibration_status_for_public_contract(),
             "ik": self._ik_status_payload(),
             "joint_angle_deg": (
                 self._last_joint_angle_deg

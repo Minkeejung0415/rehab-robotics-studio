@@ -733,7 +733,9 @@ describe('RosbridgeDataSource - typed OpenSim routing', () => {
       },
       visualization: {
         available: true,
-        state: 'open',
+        // `ready` is emitted while the native adapter streams poses before
+        // the operator explicitly opens the visualizer.
+        state: 'ready',
         reason: '',
       },
     })));
@@ -756,6 +758,7 @@ describe('RosbridgeDataSource - typed OpenSim routing', () => {
 
     assert.equal(statuses.length, 1);
     assert.equal(statuses[0].calibration?.state, 'CALIBRATED');
+    assert.equal(statuses[0].visualization?.state, 'ready');
     assert.equal(ikStatuses.length, 1);
     assert.equal(ikStatuses[0].solution_valid, true);
     assert.equal(jointStates.length, 1);

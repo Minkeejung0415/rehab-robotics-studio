@@ -14,6 +14,9 @@ import time
 from typing import Any, Sequence
 
 from rehab_robotics_bridge.opensim.calibration import CalibrationArtifact
+from rehab_robotics_bridge.opensim.n_sensor_calibration import (
+    apply_reference_pose_offsets,
+)
 from rehab_robotics_bridge.opensim.orientation_ik import (
     DEFAULT_JOINT_NAME,
     IkSolution,
@@ -577,14 +580,29 @@ class OpenSimOrientationIkSolver:
                 solve_duration_s=time.perf_counter() - started,
             )
 
+        if calibration is None:
+            return IkSolution(
+                solution_valid=False,
+                reason="calibration_required",
+                joint_names=names,
+                positions_rad=[],
+                source_timestamp_ns=source_timestamp_ns,
+                orientation_residual_rms=None,
+                orientation_residual_max=None,
+                calibration_id=None,
+                input_age_s=input_age_s,
+                solve_duration_s=time.perf_counter() - started,
+            )
+
         try:
             if self._solver is None:
                 self._build_solver()
 
             # Convert each xyzw to wxyz for OpenSim
+            corrected_inputs = apply_reference_pose_offsets(inputs, calibration)
             n_inputs = [
                 (frame, self._xyzw_to_wxyz(xyzw))
-                for frame, xyzw in inputs
+                for frame, xyzw in corrected_inputs
             ]
 
             self._time_s += 0.01

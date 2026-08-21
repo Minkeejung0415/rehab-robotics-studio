@@ -17,7 +17,10 @@ backend_root = str(Path(__file__).parents[1])
 if backend_root not in sys.path:
     sys.path.insert(0, backend_root)
 
-from rehab_robotics_bridge.opensim.n_sensor_calibration import CalibrationArtifactStore
+from rehab_robotics_bridge.opensim.n_sensor_calibration import (
+    CalibrationArtifactStore,
+    apply_reference_pose_offsets,
+)
 
 
 class CalibrationArtifactStoreBasicTests(unittest.TestCase):
@@ -45,6 +48,26 @@ class CalibrationArtifactStoreBasicTests(unittest.TestCase):
         store = CalibrationArtifactStore()
         path = store.compute_artifact_path("deadbeef1234", 0)
         self.assertEqual(path.name, "calibration_deadbeef_rev0.json")
+
+    def test_reference_pose_offsets_make_capture_pose_neutral(self):
+        """The same orientation at capture and solve must become identity."""
+        artifact = {
+            "reference_pose": {
+                "esp32:aaa": {"qx": 0.0, "qy": 0.0, "qz": 0.70710678, "qw": 0.70710678},
+            },
+            "frame_assignments": {
+                "esp32:aaa": {"frame": "femur_r_imu"},
+            },
+        }
+        corrected = apply_reference_pose_offsets(
+            [("femur_r_imu", (0.0, 0.0, 0.70710678, 0.70710678))],
+            artifact,
+        )
+        self.assertEqual(corrected[0][0], "femur_r_imu")
+        self.assertAlmostEqual(corrected[0][1][0], 0.0, places=6)
+        self.assertAlmostEqual(corrected[0][1][1], 0.0, places=6)
+        self.assertAlmostEqual(corrected[0][1][2], 0.0, places=6)
+        self.assertAlmostEqual(corrected[0][1][3], 1.0, places=6)
 
     # ------------------------------------------------------------------
     # save + load round-trip

@@ -36,15 +36,28 @@ try {
   await expectText('APPLIED');
   await page.screenshot({ path: '../logs/gui-e2e-mapping-applied.png', fullPage: true });
 
+  // The physical calibration must be created *after* the applied mapping.
+  // This exercises the same control path the operator uses and ensures the
+  // UI receives a calibrated N-sensor IK result rather than raw IMU motion.
+  await page.getByRole('button', { name: 'Calibrate' }).click();
+  await page.waitForTimeout(2_000);
+
   await page.getByRole('button', { name: 'Front Panel' }).click();
   await expectText('LIVE DASHBOARD');
   await expectText('Signal Contract');
+  await expectText('CALIBRATED');
+  await expectText('Valid');
+  const healthText = await page.locator('.health-panel').innerText();
+  assert.match(healthText, /OpenSim knee angle\s+[-+]?\d+(?:\.\d+)? deg/, 'calibrated IK knee angle is not displayed');
   await page.getByRole('button', { name: 'Show Raw Counts' }).first().click();
   await expectText('ax');
   await expectText('gx');
   await expectText('mx');
   assert.ok(await page.locator('svg').count() > 0, 'front-panel graph SVGs are missing');
   await page.screenshot({ path: '../logs/gui-e2e-front-panel.png', fullPage: true });
+
+  await page.getByRole('button', { name: 'Open visualizer' }).click();
+  await expectText('Open');
 
   const record = page.locator('button[title^="Start or stop SD recording"]');
   await record.click();
