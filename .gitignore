@@ -1,0 +1,16 @@
+# Local build and device artifacts
+.arduino-build/
+logs/
+tmp/
+**/__pycache__/
+*.py[cod]
+
+# JavaScript build dependencies and incremental metadata
+**/node_modules/
+*.tsbuildinfo
+
+# Generated frontend output (the tracked release bundle remains available in history)
+rehab-robotics-studio/dist/assets/index-*.js
+
+# Generated reports are intentionally added only when explicitly published.
+output/
