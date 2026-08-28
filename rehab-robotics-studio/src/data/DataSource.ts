@@ -1,3 +1,4 @@
+/** Data-source interface separating Studio UI from mock and rosbridge transports. */
 import type {
   CanonicalSignalRejectionReason,
   CanonicalSignalSample,

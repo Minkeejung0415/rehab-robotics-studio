@@ -1,3 +1,4 @@
+/** Pure translation from backend OpenSim status into dashboard-safe calibration labels. */
 import type { OpenSimStatusSnapshot } from '../../types/health';
 
 function display(value: string | number | null | undefined, fallback = 'Unknown'): string {

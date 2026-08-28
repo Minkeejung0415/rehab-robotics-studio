@@ -1,3 +1,4 @@
+/** Displays accepted/rejected canonical signal-contract traffic for diagnostics. */
 import { useState } from 'react';
 import { MiniChart } from '../common/MiniChart';
 import type { CanonicalSignalRejectionState, SignalSnapshot } from '../../data/signalBus';

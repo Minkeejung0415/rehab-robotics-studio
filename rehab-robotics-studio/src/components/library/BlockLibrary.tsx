@@ -1,3 +1,4 @@
+/** Searchable/drag source for registered graph blocks; definitions live in graph/blockDefinitions. */
 import { useMemo, useState } from 'react';
 import type { BlockDefinition } from '../../types/blocks';
 import type { SignalType } from '../../types/signals';

@@ -1,3 +1,4 @@
+/** Central visual tokens. Change global colors/spacing here rather than in individual panels. */
 import type { SignalType } from '../types/signals';
 import type { Category, BlockStatus } from '../types/blocks';
 import type { IndicatorLevel } from '../types/system';

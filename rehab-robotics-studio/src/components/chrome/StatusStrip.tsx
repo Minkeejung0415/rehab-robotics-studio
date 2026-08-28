@@ -1,3 +1,4 @@
+/** Persistent bottom-line summary of runtime and connection state from systemStore. */
 import { useSystemStore } from '../../state/systemStore';
 import { StatusLight } from '../common/StatusLight';
 

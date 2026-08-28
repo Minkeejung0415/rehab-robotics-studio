@@ -1,3 +1,4 @@
+/** Shared graph/block data model. Saved graph compatibility depends on these shapes. */
 import type { SignalType } from './signals';
 
 export type Category =

@@ -1,3 +1,4 @@
+/** Force front-panel presentation; runtime state decides whether live updates are meaningful. */
 import { useRuntimeStore } from '../../state/runtimeStore';
 import { signalColor } from '../../theme/tokens';
 import { useSignals } from '../../hooks/useSignals';

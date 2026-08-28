@@ -1,3 +1,4 @@
+/** Shared semantic status indicator. Use IndicatorLevel rather than component-local color rules. */
 import type { IndicatorLevel } from '../../types/system';
 import { levelColor } from '../../theme/tokens';
 

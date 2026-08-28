@@ -1,3 +1,4 @@
+/** Runtime registry for user-defined block definitions and their default parameters. */
 import { create } from 'zustand';
 import type { BlockDefinition } from '../types/blocks';
 

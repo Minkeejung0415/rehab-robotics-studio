@@ -51,6 +51,7 @@ type RosbridgeEnvelope = {
   };
 };
 
+// ── Wire-format types and UI-facing control names ───────────────────────────
 export type RecordingCommandResult = { success: boolean; message: string };
 export type ImuControlParameter =
   | 'sample_rate_hz'
@@ -59,6 +60,9 @@ export type ImuControlParameter =
   | 'accel_range_g'
   | 'gyro_range_dps';
 
+// ── ROS endpoint, topic, and timeout configuration ─────────────────────────
+// These constants are the Studio side of the ROS contract. Change a topic or
+// service only with its backend publisher/service and its parsing tests.
 const DEFAULT_URL = 'ws://127.0.0.1:9090';
 const DEFAULT_MASTER_TOPIC = '/esp/raw/master';
 const DEFAULT_SLAVE_TOPIC = '/esp/raw/slave';
@@ -68,6 +72,8 @@ const DEFAULT_OPENSIM_IK_STATUS_TOPIC = '/opensim/ik_status';
 const DEFAULT_OPENSIM_JOINT_STATES_TOPIC = '/opensim/joint_states';
 const OPEN_VISUALIZER_SERVICE = '/opensim/visualizer/open';
 const TRIGGER_SERVICE_TYPE = 'std_srvs/srv/Trigger';
+// Bounded UI wait for ROS service replies. This is not an automatic save or
+// shutdown timer; adjust here only if the backend service budget also allows it.
 const SERVICE_TIMEOUT_MS = 10_000;
 const VISUALIZER_TIMEOUT_REASON = 'No response from the OpenSim service within 10 s';
 const QUAT_SCALE = 1 / 32767;
@@ -81,7 +87,7 @@ export interface CanonicalSignalRejection {
   readonly should_announce: boolean;
 }
 
-// Phase 24: Mapping workspace topic constants
+// ── Mapping workspace topic and service contracts ───────────────────────────
 const MAPPING_CATALOG_TOPIC = '/rehab/model/catalog';
 const MAPPING_CURRENT_TOPIC = '/rehab/mapping/current';
 const FLEET_REGISTRY_TOPIC = '/esp/fleet/registry';

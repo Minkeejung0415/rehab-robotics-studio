@@ -1,3 +1,4 @@
+/** Typed UI snapshots for ROS, OpenSim, recording, and fleet health payloads. */
 export type RecordingHealth = {
   state?: string;
   session_id?: string | null;

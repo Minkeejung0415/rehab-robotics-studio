@@ -1,3 +1,4 @@
+/** Front-panel composition for live sensor, OpenSim, and health views. */
 import { useEffect, useRef } from 'react';
 import { EmgPanel } from './EmgPanel';
 import { ForcePanel } from './ForcePanel';

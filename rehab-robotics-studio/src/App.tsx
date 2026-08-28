@@ -9,6 +9,13 @@ import { PropertiesPanel } from './components/properties/PropertiesPanel';
 
 type WorkspaceTab = 'diagram' | 'panel' | 'mapping';
 
+/**
+ * Top-level shell and workspace switcher.
+ *
+ * Add a new full-screen workspace by extending WorkspaceTab, adding its tab
+ * button here, and rendering the feature component below. Shared controls
+ * belong in Toolbar/StatusStrip so all workspaces behave consistently.
+ */
 export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('diagram');
 

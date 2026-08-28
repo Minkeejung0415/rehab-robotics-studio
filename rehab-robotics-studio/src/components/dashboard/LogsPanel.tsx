@@ -1,3 +1,4 @@
+/** Read-only operator log view. Log retention is owned by systemStore. */
 import { useSystemStore } from '../../state/systemStore';
 
 export function LogsPanel() {

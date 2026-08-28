@@ -1,3 +1,4 @@
+/** Temporary notification UI. The automatic dismissal interval is defined beside its timeout below. */
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { normalizeLiveKneeReason } from '../../data/liveKneeAngle';

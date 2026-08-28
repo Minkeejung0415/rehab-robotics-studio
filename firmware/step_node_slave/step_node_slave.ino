@@ -55,6 +55,7 @@
 #include "esp_wifi.h"
 #endif
 #include <esp_timer.h>
+#include <driver/gpio.h>
 #include <SD.h>
 #include <SPI.h>
 #include <math.h>
@@ -75,7 +76,11 @@ struct IdentifyAckPacket;
 #define REPEAT_STATUS_SEC 10
 #define BOOT_DIAGNOSTICS true
 
-#define DIO_DEBOUNCE_MS 15   // stable toggle within ~20 ms @ 100 Hz
+#define DIO_DEBOUNCE_MS 15   // 10 Hz sync source has 50 ms half-period; reject ringing glitches
+#define CLOCK_SYNC_STARTUP_SAMPLES 5U
+#define CLOCK_SYNC_MAX_SAMPLE_ERROR_US 2000LL
+#define CLOCK_SYNC_MAX_STEP_US 100LL
+#define CLOCK_SYNC_FILTER_DIVISOR 8LL
 
 // Default network. Slaves join the same iPhone hotspot as the master.
 #define WIFI_SSID "iPhone (111)"
@@ -223,6 +228,8 @@ struct StreamRecord {
 #define SD_LOG_FLAG_SCHEDULED 0x0001u
 #define SD_LOG_ROLE_MASTER 1u
 #define SD_LOG_ROLE_SLAVE 2u
+// If host control drops during recording, keep writing locally for this long.
+// Change Master and Slave together; expiry finalizes the local SD session.
 #define REC_RECONNECT_GRACE_MS 90000UL
 #define SD_QUEUE_DEPTH 1024
 #define SD_WRITE_BATCH_RECORDS 256
@@ -291,7 +298,26 @@ struct {
   bool pending_raw;
   uint32_t pending_since_ms;
   uint16_t edge_count;
-} dio_state = {true, true, 0, 0};
+  int64_t last_edge_time_us;
+  bool last_edge_sync_valid;
+} dio_state = {true, true, 0, 0, 0, false};
+static bool g_dio_monitor_enabled = false;
+
+// The ISR only captures a physical edge and a local hardware clock value. It
+// never prints, allocates, or reads the ESP-NOW clock state. Foreground code
+// drains this queue and converts the timestamp to the synchronized clock.
+typedef struct {
+  int64_t local_time_us;
+  uint8_t level_high;
+} DioIsrEvent;
+
+#define DIO_ISR_QUEUE_CAPACITY 16U
+static volatile DioIsrEvent g_dio_isr_queue[DIO_ISR_QUEUE_CAPACITY];
+static volatile uint8_t g_dio_isr_read_index = 0;
+static volatile uint8_t g_dio_isr_write_index = 0;
+static volatile int64_t g_dio_isr_last_accept_us = 0;
+static volatile uint32_t g_dio_isr_overruns = 0;
+static portMUX_TYPE g_dio_isr_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static uint16_t g_sample_hz = SAMPLE_HZ_DEFAULT;
 static uint32_t g_sample_last_us = 0;
@@ -343,6 +369,60 @@ static int64_t           g_clock_offset_us        = 0;
 static bool              g_espnow_sync_received   = false;
 static uint32_t          g_espnow_last_seq        = 0;
 static volatile uint32_t g_espnow_last_rx_ms      = 0;  // last time any master packet arrived
+static int64_t           g_clock_sync_best_offset_us = 0;
+static uint32_t          g_clock_sync_sample_count = 0;
+static uint32_t          g_clock_sync_rejected = 0;
+static portMUX_TYPE      g_clock_sync_mux = portMUX_INITIALIZER_UNLOCKED;
+
+static bool clockSyncValid() {
+  portENTER_CRITICAL(&g_clock_sync_mux);
+  const bool valid = g_espnow_sync_received;
+  portEXIT_CRITICAL(&g_clock_sync_mux);
+  return valid;
+}
+
+static int64_t clockSyncOffsetUs() {
+  portENTER_CRITICAL(&g_clock_sync_mux);
+  const int64_t offset_us = g_clock_offset_us;
+  portEXIT_CRITICAL(&g_clock_sync_mux);
+  return offset_us;
+}
+
+static uint32_t clockSyncLastSequence() {
+  portENTER_CRITICAL(&g_clock_sync_mux);
+  const uint32_t sequence = g_espnow_last_seq;
+  portEXIT_CRITICAL(&g_clock_sync_mux);
+  return sequence;
+}
+
+// ESP-NOW is a one-way measurement: delayed packets make raw_offset too low.
+// Qualify startup with the least-delayed sample, then slew small corrections only.
+static void clockSyncApplySample(int64_t raw_offset_us, uint32_t packet_seq) {
+  portENTER_CRITICAL(&g_clock_sync_mux);
+  if (g_clock_sync_sample_count < CLOCK_SYNC_STARTUP_SAMPLES) {
+    if (g_clock_sync_sample_count == 0 || raw_offset_us > g_clock_sync_best_offset_us)
+      g_clock_sync_best_offset_us = raw_offset_us;
+    g_clock_sync_sample_count++;
+    if (g_clock_sync_sample_count == CLOCK_SYNC_STARTUP_SAMPLES) {
+      g_clock_offset_us = g_clock_sync_best_offset_us;
+      g_espnow_sync_received = true;
+    }
+  } else {
+    const int64_t error_us = raw_offset_us - g_clock_offset_us;
+    if (error_us > CLOCK_SYNC_MAX_SAMPLE_ERROR_US ||
+        error_us < -CLOCK_SYNC_MAX_SAMPLE_ERROR_US) {
+      g_clock_sync_rejected++;
+    } else {
+      int64_t step_us = error_us / CLOCK_SYNC_FILTER_DIVISOR;
+      if (step_us == 0 && error_us != 0) step_us = error_us > 0 ? 1 : -1;
+      if (step_us > CLOCK_SYNC_MAX_STEP_US) step_us = CLOCK_SYNC_MAX_STEP_US;
+      if (step_us < -CLOCK_SYNC_MAX_STEP_US) step_us = -CLOCK_SYNC_MAX_STEP_US;
+      g_clock_offset_us += step_us;
+    }
+  }
+  g_espnow_last_seq = packet_seq;
+  portEXIT_CRITICAL(&g_clock_sync_mux);
+}
 static volatile bool     g_espnow_rec_start_pending = false;
 static volatile bool     g_espnow_rec_stop_pending  = false;
 static char              g_espnow_requested_session[33] = {};
@@ -1070,9 +1150,7 @@ void onEspNowRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len)
   maybeRegisterMasterPeer(info);
   const SyncPacket *pkt = (const SyncPacket *)data;
   int64_t recv_us = (int64_t)esp_timer_get_time();
-  g_clock_offset_us      = (int64_t)pkt->time_us - recv_us;
-  g_espnow_sync_received = true;
-  g_espnow_last_seq      = pkt->seq;
+  clockSyncApplySample((int64_t)pkt->time_us - recv_us, pkt->seq);
   g_espnow_last_rx_ms    = millis();
 }
 void onEspNowSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status) {
@@ -1083,7 +1161,7 @@ void onEspNowSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status) {
 static int64_t recNowUs() {
   int64_t t_us = (int64_t)esp_timer_get_time();
 #if ENABLE_ESPNOW
-  if (!NODE_IS_MASTER && g_espnow_sync_received) t_us += g_clock_offset_us;
+  if (!NODE_IS_MASTER && clockSyncValid()) t_us += clockSyncOffsetUs();
 #endif
   return t_us;
 }
@@ -1217,30 +1295,85 @@ static void printBootDiagnostics() {
 #endif
 }
 
+static void printDioEdge();
+
+static void IRAM_ATTR dioEdgeIsr() {
+  const int64_t now_us = (int64_t)esp_timer_get_time();
+  const uint8_t level_high = gpio_get_level((gpio_num_t)PIN_DIO) ? 1u : 0u;
+
+  portENTER_CRITICAL_ISR(&g_dio_isr_mux);
+  if (now_us - g_dio_isr_last_accept_us < (int64_t)DIO_DEBOUNCE_MS * 1000LL) {
+    portEXIT_CRITICAL_ISR(&g_dio_isr_mux);
+    return;
+  }
+
+  const uint8_t next = (uint8_t)((g_dio_isr_write_index + 1U) % DIO_ISR_QUEUE_CAPACITY);
+  if (next == g_dio_isr_read_index) {
+    g_dio_isr_overruns++;
+    portEXIT_CRITICAL_ISR(&g_dio_isr_mux);
+    return;
+  }
+
+  g_dio_isr_queue[g_dio_isr_write_index].local_time_us = now_us;
+  g_dio_isr_queue[g_dio_isr_write_index].level_high = level_high;
+  g_dio_isr_write_index = next;
+  g_dio_isr_last_accept_us = now_us;
+  portEXIT_CRITICAL_ISR(&g_dio_isr_mux);
+}
+
+static bool popDioIsrEvent(int64_t *local_time_us, uint8_t *level_high) {
+  bool available = false;
+  portENTER_CRITICAL(&g_dio_isr_mux);
+  if (g_dio_isr_read_index != g_dio_isr_write_index) {
+    *local_time_us = g_dio_isr_queue[g_dio_isr_read_index].local_time_us;
+    *level_high = g_dio_isr_queue[g_dio_isr_read_index].level_high;
+    g_dio_isr_read_index = (uint8_t)((g_dio_isr_read_index + 1U) % DIO_ISR_QUEUE_CAPACITY);
+    available = true;
+  }
+  portEXIT_CRITICAL(&g_dio_isr_mux);
+  return available;
+}
+
+static int64_t synchronizedDioEdgeTime(int64_t local_time_us, bool *sync_valid) {
+  *sync_valid = NODE_IS_MASTER;
+#if ENABLE_ESPNOW
+  if (!NODE_IS_MASTER) {
+    int64_t offset_us = 0;
+    portENTER_CRITICAL(&g_clock_sync_mux);
+    *sync_valid = g_espnow_sync_received;
+    offset_us = g_clock_offset_us;
+    portEXIT_CRITICAL(&g_clock_sync_mux);
+    if (*sync_valid) return local_time_us + offset_us;
+  }
+#endif
+  return local_time_us;
+}
+
 static void initDio() {
   pinMode(PIN_DIO, INPUT_PULLUP);
   bool level = digitalRead(PIN_DIO);
   dio_state.stable_high = level;
   dio_state.pending_raw = level;
   dio_state.pending_since_ms = millis();
+  g_dio_isr_last_accept_us = (int64_t)esp_timer_get_time();
+  attachInterrupt(digitalPinToInterrupt(PIN_DIO), dioEdgeIsr, CHANGE);
   Serial.printf("DIO: GPIO%d (pad D0) pull-up — initial level=%d (1=idle, 0=GND)\n",
                 PIN_DIO, level ? 1 : 0);
-  Serial.println("DIO: input active for sync/commands; included as channel 13 in 14-channel OE stream");
+  Serial.println("DIO: interrupt timestamping active for sync/commands; included as channel 13 in 14-channel OE stream");
 }
 
 static void updateDio() {
-  bool raw = digitalRead(PIN_DIO);
-  uint32_t now = millis();
-  if (raw != dio_state.pending_raw) {
-    dio_state.pending_raw = raw;
-    dio_state.pending_since_ms = now;
-  }
-  if ((now - dio_state.pending_since_ms) >= (uint32_t)DIO_DEBOUNCE_MS &&
-      dio_state.pending_raw != dio_state.stable_high) {
-    dio_state.stable_high = dio_state.pending_raw;
+  int64_t local_time_us = 0;
+  uint8_t level_high = 0;
+  while (popDioIsrEvent(&local_time_us, &level_high)) {
+    dio_state.stable_high = level_high != 0;
+    dio_state.pending_raw = dio_state.stable_high;
     if (dio_state.edge_count < 0x7FFF) {
       dio_state.edge_count++;
     }
+    dio_state.last_edge_time_us = synchronizedDioEdgeTime(
+        local_time_us, &dio_state.last_edge_sync_valid);
+    if (g_dio_monitor_enabled) printDioEdge();
   }
 }
 
@@ -1248,6 +1381,34 @@ static int16_t packDioCh6() {
   uint16_t packed = (dio_state.stable_high ? 1u : 0u) |
                     ((uint32_t)(dio_state.edge_count & 0x7FFFu) << 1);
   return (int16_t)packed;
+}
+
+static void printDioStatus() {
+  const bool clock_sync_valid = NODE_IS_MASTER || clockSyncValid();
+  Serial.printf("DIO_STATUS_OK protocol=dio-sync-v1 role=%s level=%u edges=%u "
+                "edge_time_us=%lld edge_sync_valid=%u clock_sync_valid=%u\n",
+                NODE_IS_MASTER ? "master" : "slave",
+                dio_state.stable_high ? 1u : 0u,
+                (unsigned)dio_state.edge_count,
+                (long long)dio_state.last_edge_time_us,
+                dio_state.last_edge_sync_valid ? 1u : 0u,
+                clock_sync_valid ? 1u : 0u);
+}
+
+static void printDioEdge() {
+  Serial.printf("DIO_EDGE protocol=dio-sync-v1 role=%s level=%u edges=%u "
+                "edge_time_us=%lld edge_sync_valid=%u\n",
+                NODE_IS_MASTER ? "master" : "slave",
+                dio_state.stable_high ? 1u : 0u,
+                (unsigned)dio_state.edge_count,
+                (long long)dio_state.last_edge_time_us,
+                dio_state.last_edge_sync_valid ? 1u : 0u);
+}
+
+static void setDioMonitor(bool enabled) {
+  g_dio_monitor_enabled = enabled;
+  Serial.printf("DIO_MONITOR_OK protocol=dio-sync-v1 role=%s enabled=%u\n",
+                NODE_IS_MASTER ? "master" : "slave", enabled ? 1u : 0u);
 }
 
 static void icmAuxWriteByte(uint8_t slave_addr, uint8_t reg, uint8_t val) {
@@ -1415,7 +1576,7 @@ static void readMag(int16_t out[3], bool *fresh) {
 static void fillOeHeader(OeHeader *hdr) {
   int64_t t_us = (int64_t)esp_timer_get_time();
 #if ENABLE_ESPNOW
-  if (!NODE_IS_MASTER && g_espnow_sync_received) t_us += g_clock_offset_us;
+  if (!NODE_IS_MASTER && clockSyncValid()) t_us += clockSyncOffsetUs();
 #endif
   hdr->offset = (int32_t)(uint32_t)t_us;
   hdr->num_channels = NUM_CHANNELS;
@@ -1452,7 +1613,7 @@ static void sendSlaveStatus() {
   pkt.sd_ready = g_sd_ready ? 1 : 0;
   pkt.sd_recording = g_sd_recording ? 1 : 0;
   pkt.streaming = streaming ? 1 : 0;
-  pkt.sync_received = g_espnow_sync_received ? 1 : 0;
+  pkt.sync_received = clockSyncValid() ? 1 : 0;
   pkt.imu_ok = icm_ok ? 1 : 0;
   pkt.mag_ok = (mag_ok && g_have_mag) ? 1 : 0;
   pkt.quat_enabled = g_filter_on ? 1 : 0;
@@ -1467,7 +1628,7 @@ static void sendSlaveStatus() {
   pkt.generated_samples = g_generated_samples;
   pkt.saved_samples = g_sd_saved_samples;
   pkt.sd_errors = sdErrorTotal();
-  pkt.clock_offset_us = g_clock_offset_us;
+  pkt.clock_offset_us = clockSyncOffsetUs();
   pkt.start_at_time_us = g_rec_start_at_us;
   pkt.stop_at_time_us = g_rec_stop_at_us;
   pkt.ax = channels[0];
@@ -1917,9 +2078,9 @@ static bool sdRecordStart(const char *path_or_null, const char *requested_sessio
   hdr.flags = g_rec_schedule_enabled ? SD_LOG_FLAG_SCHEDULED : 0;
   hdr.scheduled_start_time_us = g_rec_start_at_us;
   hdr.scheduled_stop_time_us = g_rec_stop_at_us;
-  hdr.clock_offset_us = g_clock_offset_us;
+  hdr.clock_offset_us = clockSyncOffsetUs();
   hdr.node_role = NODE_IS_MASTER ? SD_LOG_ROLE_MASTER : SD_LOG_ROLE_SLAVE;
-  hdr.sync_valid = NODE_IS_MASTER ? 1 : (g_espnow_sync_received ? 1 : 0);
+  hdr.sync_valid = NODE_IS_MASTER ? 1 : (clockSyncValid() ? 1 : 0);
   hdr.reserved = 0;
   size_t written = 0;
   written = g_sd_file.write((uint8_t *)&hdr, sizeof(hdr));
@@ -1958,9 +2119,9 @@ static void sdRewriteHeaderMetadata() {
   hdr.flags = g_rec_schedule_enabled ? SD_LOG_FLAG_SCHEDULED : 0;
   hdr.scheduled_start_time_us = g_rec_start_at_us;
   hdr.scheduled_stop_time_us = g_rec_stop_at_us;
-  hdr.clock_offset_us = g_clock_offset_us;
+  hdr.clock_offset_us = clockSyncOffsetUs();
   hdr.node_role = NODE_IS_MASTER ? SD_LOG_ROLE_MASTER : SD_LOG_ROLE_SLAVE;
-  hdr.sync_valid = NODE_IS_MASTER ? 1 : (g_espnow_sync_received ? 1 : 0);
+  hdr.sync_valid = NODE_IS_MASTER ? 1 : (clockSyncValid() ? 1 : 0);
   hdr.reserved = 0;
   if (!g_sd_file.seek(0) || g_sd_file.write((uint8_t *)&hdr, sizeof(hdr)) != sizeof(hdr)) {
     g_sd_header_errors++;
@@ -2128,9 +2289,9 @@ static void printAcqStatus() {
   Serial.printf("ESPNOW role=%s ch=%d sync=%d offset_us=%lld last_seq=%lu\n",
                 NODE_IS_MASTER ? "master" : "slave",
                 ESPNOW_WIFI_CHANNEL,
-                g_espnow_sync_received ? 1 : 0,
-                (long long)g_clock_offset_us,
-                (unsigned long)g_espnow_last_seq);
+                clockSyncValid() ? 1 : 0,
+                (long long)clockSyncOffsetUs(),
+                (unsigned long)clockSyncLastSequence());
 #endif
 }
 
@@ -2775,6 +2936,12 @@ static void handleLine(const String &line) {
   } else if (line.startsWith("STOP")) {
     streaming = false;
     replyToHost("STOPPED\n");
+  } else if (line.equalsIgnoreCase("DIO_MONITOR ON")) {
+    setDioMonitor(true);
+  } else if (line.equalsIgnoreCase("DIO_MONITOR OFF")) {
+    setDioMonitor(false);
+  } else if (line.equalsIgnoreCase("DIO_STATUS")) {
+    printDioStatus();
   } else if (line.equalsIgnoreCase("AP?") || line.equalsIgnoreCase("WIFI?") ||
              line.equalsIgnoreCase("STATUS")) {
     printAcqStatus();
@@ -3206,7 +3373,7 @@ static void pollTcpCommands() {
     streaming = false;
     stopTcpClient();
 #if ENABLE_ESPNOW
-    if (!g_espnow_sync_received)
+    if (!clockSyncValid())
       recMarkControlDisconnected();
 #else
     recMarkControlDisconnected();
@@ -3246,7 +3413,7 @@ void loop() {
     if (!g_sd_recording) {
       const int64_t start_at = g_espnow_requested_start_at_us;
       const int64_t stop_at = g_espnow_requested_stop_at_us;
-      if (!g_espnow_sync_received) {
+      if (!clockSyncValid()) {
         recSetScheduleError("unsynced_start");
         strncpy(g_rec_state, "failed", sizeof(g_rec_state) - 1);
         Serial.println("[RELAY] REC_START rejected: no ESP-NOW clock sync");
@@ -3306,7 +3473,7 @@ void loop() {
   // The master's ESP-NOW packets (periodic sync + commands) are this slave's
   // control link. Arm the 90 s reconnect grace when they go quiet (master
   // battery died / out of range); clear it as soon as they resume.
-  if (g_espnow_sync_received) {
+  if (clockSyncValid()) {
     if ((uint32_t)(millis() - g_espnow_last_rx_ms) > MASTER_SYNC_TIMEOUT_MS)
       recMarkControlDisconnected();
     else
@@ -3323,7 +3490,7 @@ void loop() {
       streaming = false;
       stopTcpClient();
 #if ENABLE_ESPNOW
-      if (!g_espnow_sync_received)
+      if (!clockSyncValid())
         recMarkControlDisconnected();
 #else
       recMarkControlDisconnected();
@@ -3337,7 +3504,7 @@ void loop() {
       // by the master's relay would auto-finalize 90 s in even though the
       // master is alive.
 #if ENABLE_ESPNOW
-      if (!g_espnow_sync_received)
+      if (!clockSyncValid())
         recMarkControlDisconnected();
 #else
       recMarkControlDisconnected();
@@ -3365,7 +3532,7 @@ void loop() {
       Serial.println("TCP client idle before command; closing");
       stopTcpClient();
 #if ENABLE_ESPNOW
-      if (!g_espnow_sync_received)
+      if (!clockSyncValid())
         recMarkControlDisconnected();
 #else
       recMarkControlDisconnected();
@@ -3383,6 +3550,8 @@ void loop() {
   if (millis() - boot_ms < (uint32_t)BOOT_CSV_DELAY_MS) {
     return;
   }
+
+  updateDio();
 
   uint32_t now = micros();
   uint32_t loop_start_us = now;
@@ -3404,7 +3573,6 @@ void loop() {
   readMag(mag, &mag_fresh);
   profAdd((uint32_t)(micros() - prof_start_us), &g_prof_mag_sum_us, &g_prof_mag_max_us);
 
-  updateDio();
   packChannelsFromImu(imu, mag_ok ? mag : nullptr, mag_fresh);
 
   sendEspNowSync();

@@ -1,3 +1,4 @@
+/** Shared Delete/Backspace behavior for selected graph entities. */
 import { useEffect } from 'react';
 import { useGraphStore } from '../state/graphStore';
 

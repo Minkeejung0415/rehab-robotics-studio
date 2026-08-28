@@ -1,3 +1,4 @@
+/** In-memory fan-out for high-rate frames; React components subscribe through hooks/useSignals. */
 import type { CanonicalSignalSample, Frame, MotorState } from '../types/signals';
 import type { LiveKneeAngleSnapshot } from '../types/health';
 import type { CanonicalSignalRejectionMetadata } from './DataSource';

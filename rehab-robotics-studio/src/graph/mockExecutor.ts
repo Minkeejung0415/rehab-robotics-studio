@@ -1,3 +1,4 @@
+/** Mock graph evaluator used for Studio behavior without physical hardware. */
 import type { BlockInstance, EdgeDefinition, ParamValue } from '../types/blocks';
 import type { Frame, MotorState } from '../types/signals';
 import { topoSort } from './GraphModel';

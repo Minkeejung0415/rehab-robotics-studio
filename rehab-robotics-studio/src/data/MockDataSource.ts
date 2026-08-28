@@ -1,6 +1,10 @@
 import type { DataSource } from './DataSource';
 import type { Frame, ForceData, EmgData, ImuData, MotorState } from '../types/signals';
 
+/**
+ * Deterministic-in-shape browser fallback used when ROS is unavailable.
+ * It is a UI development aid, never a hardware or clinical data source.
+ */
 class MockDataSource implements DataSource {
   private timer: ReturnType<typeof setInterval> | null = null;
   private rate = 1000;
@@ -18,6 +22,8 @@ class MockDataSource implements DataSource {
 
   private restart(): void {
     this.stop();
+    // Change the 8-40 ms clamp only for mock rendering behavior; it does not
+    // alter ESP32 sampling. The requested rate still controls the target tick.
     this.timer = setInterval(() => this.tick(), Math.min(40, Math.max(8, Math.round(1000 / this.rate))));
   }
   private tick(): void {

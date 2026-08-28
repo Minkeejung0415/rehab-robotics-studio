@@ -1,3 +1,4 @@
+/** Lightweight canvas chart for high-frequency display data; keep acquisition logic outside this component. */
 import { useEffect, useRef } from 'react';
 
 export interface MiniChartProps {

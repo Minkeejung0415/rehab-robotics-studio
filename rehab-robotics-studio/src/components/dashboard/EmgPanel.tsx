@@ -1,3 +1,4 @@
+/** EMG front-panel presentation backed by the shared signal bus. */
 import { signalColor } from '../../theme/tokens';
 import { useSignals } from '../../hooks/useSignals';
 import { MiniChart } from '../common/MiniChart';

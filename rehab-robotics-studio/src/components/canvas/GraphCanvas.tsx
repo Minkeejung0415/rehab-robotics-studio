@@ -1,3 +1,7 @@
+/**
+ * Canvas interaction layer: renders graph nodes/wires and owns drag, pan,
+ * zoom, and connection gestures. Change persisted graph data in graphStore.
+ */
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import { getDef } from '../../graph/blockDefinitions';
 import { useKeyboardDelete } from '../../hooks/useKeyboardDelete';

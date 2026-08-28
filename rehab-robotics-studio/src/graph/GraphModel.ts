@@ -1,3 +1,4 @@
+/** Graph serialization/deserialization boundary. Preserve compatibility when changing saved fields. */
 import type { BlockInstance, EdgeDefinition, BlockDefinition, GraphDocument } from '../types/blocks';
 import { getDef } from './blockDefinitions';
 

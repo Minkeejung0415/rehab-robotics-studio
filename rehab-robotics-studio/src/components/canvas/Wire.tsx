@@ -1,3 +1,4 @@
+/** Draws a graph connection. Change graph edges in graphStore, not this presentation component. */
 import type { MouseEvent } from 'react';
 import type { BlockInstance, EdgeDefinition, PortDefinition } from '../../types/blocks';
 import { signalColor } from '../../theme/tokens';

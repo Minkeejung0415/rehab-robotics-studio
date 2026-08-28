@@ -1,3 +1,4 @@
+/** Motor telemetry display. It does not grant motor control authority. */
 import { signalColor } from '../../theme/tokens';
 import { useSignals } from '../../hooks/useSignals';
 import {

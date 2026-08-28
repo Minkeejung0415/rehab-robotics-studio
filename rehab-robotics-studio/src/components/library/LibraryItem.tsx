@@ -1,3 +1,4 @@
+/** One draggable block-library item. Keep block metadata in the registry, not in this view. */
 import type { DragEvent } from 'react';
 import type { BlockDefinition } from '../../types/blocks';
 import type { SignalType } from '../../types/signals';

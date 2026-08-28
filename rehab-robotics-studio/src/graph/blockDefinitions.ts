@@ -2,7 +2,7 @@ import type { BlockDefinition, PortDefinition, ParamSpec } from '../types/blocks
 import type { SignalType } from '../types/signals';
 import { getCustomDef } from '../state/blockRegistryStore';
 
-/* ----- small builders to keep the registry readable ----- */
+/* ----- Registry builders: keep every block declaration below declarative ----- */
 
 const out = (signalType: SignalType, name = 'out', id = name): PortDefinition => ({
   id,
@@ -33,6 +33,8 @@ const enumP = (
   def: string | number,
 ): ParamSpec => ({ key, label, type: 'enum', options, default: def });
 
+// UI choices for generic simulated sources. ESP32 pair limits are declared on
+// the esp32_imu block below and must agree with backend/firmware validation.
 const RATE_OPTIONS = [100, 250, 500, 1000];
 
 /**

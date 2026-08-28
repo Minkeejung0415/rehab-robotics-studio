@@ -1,3 +1,4 @@
+/** Operator-facing ROS, fleet, calibration, IK, and recording health panel. */
 import { normalizeLiveKneeReason } from '../../data/liveKneeAngle';
 import { useSystemStore } from '../../state/systemStore';
 import type {

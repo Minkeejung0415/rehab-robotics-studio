@@ -15,6 +15,8 @@ export interface PendingWire {
   y: number;
 }
 
+// Canvas geometry and persistence keys. Change these only with corresponding
+// GraphCanvas behavior and migration/compatibility considerations in mind.
 const NODE_WIDTH = 220;
 const WORKSPACE_MAX = 10_000;
 const GRAPH_ID_KEY = 'rehab-robotics:graphId';
@@ -59,7 +61,7 @@ function edge(
   return { id, sourceBlockId: s, sourcePortId: sp, targetBlockId: t, targetPortId: tp, signalType };
 }
 
-/* ----- the default graph (mirrors the Level 1 prototype) ----- */
+/* ----- Default starter graph and saved-document compatibility ----- */
 
 const DEFAULT_NODES: BlockInstance[] = [
   makeNode('B7', 'esp32_imu', 40, 40),

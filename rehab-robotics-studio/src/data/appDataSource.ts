@@ -5,14 +5,17 @@ import { LiveKneeAngleTracker, normalizeLiveKneeReason } from './liveKneeAngle';
 import { useSystemStore } from '../state/systemStore';
 import { useMappingStore } from '../state/mappingStore';
 
+// ── Source selection and application command facade ────────────────────────
 // `import.meta.env` exists in Vite, but optional access keeps the data-source
-// boundary testable in the Node test runner too.
+// boundary testable in the Node test runner too. Set VITE_DATA_SOURCE=mock to
+// develop the UI without ROS; production/default behavior uses rosbridge.
 const sourceMode = import.meta.env?.VITE_DATA_SOURCE || 'rosbridge';
 let active: DataSource = mockDataSource;
 let requestedRate = 1000;
 let running = false;
 let visualizerRequest: Promise<{ success: boolean; message: string }> | null = null;
 
+// ── ROS callback → Zustand state bridge ────────────────────────────────────
 const liveKneeAngleTracker = new LiveKneeAngleTracker({
   onTransition: (snapshot) => useSystemStore.getState().setLiveKneeAngle(snapshot),
 });
@@ -100,6 +103,7 @@ export const appDataSource: DataSource & CanonicalSignalDataSource = {
   },
 };
 
+// ── UI command functions ───────────────────────────────────────────────────
 /** Request SD recording through the master ESP32's plugin-compatible rec-v1 path. */
 export async function setHardwareRecording(on: boolean): Promise<{ success: boolean; message: string }> {
   if (active !== rosbridgeDataSource) {

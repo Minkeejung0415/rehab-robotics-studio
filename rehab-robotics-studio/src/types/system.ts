@@ -1,3 +1,4 @@
+/** Shared runtime/UI status types. Runtime transitions themselves live in runtimeStore. */
 export type RuntimeState = 'idle' | 'running' | 'paused' | 'estopped' | 'fault';
 export type IndicatorLevel = 'ok' | 'warn' | 'fault' | 'idle';
 

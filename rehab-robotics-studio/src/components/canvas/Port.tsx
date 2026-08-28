@@ -1,3 +1,4 @@
+/** Visual endpoint of a BlockNode. Keep signal compatibility rules in graph/validation. */
 import type { MouseEvent } from 'react';
 import type { PortDefinition } from '../../types/blocks';
 import { signalColor } from '../../theme/tokens';

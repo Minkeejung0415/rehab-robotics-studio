@@ -159,6 +159,78 @@ class StepEspFirmwareTopologyTests(unittest.TestCase):
             with self.subTest(role=role):
                 self.assertIn('static bool g_filter_on = true;', source)
 
+    def test_usb_dio_sync_status_uses_interrupt_timestamps_on_the_synchronized_clock(self):
+        required = (
+            'DIO_STATUS_OK protocol=dio-sync-v1',
+            'DIO_EDGE protocol=dio-sync-v1',
+            'DIO_MONITOR_OK protocol=dio-sync-v1',
+            'edge_time_us=%lld',
+            'edge_sync_valid=%u',
+            'clock_sync_valid=%u',
+            'line.equalsIgnoreCase("DIO_STATUS")',
+        )
+        for role, source in (('master', self.master), ('slave', self.slave)):
+            with self.subTest(role=role):
+                for literal in required:
+                    self.assertIn(literal, source)
+                update_body = function_body(source, 'updateDio')
+                self.assertIn('while (popDioIsrEvent(&local_time_us, &level_high))', update_body)
+                self.assertIn('synchronizedDioEdgeTime(', update_body)
+                self.assertIn('dio_state.last_edge_sync_valid', update_body)
+                self.assertIn('if (g_dio_monitor_enabled) printDioEdge();', update_body)
+
+    def test_dio_edges_are_timestamped_in_an_isr_and_published_in_foreground(self):
+        for role, source in (('master', self.master), ('slave', self.slave)):
+            with self.subTest(role=role):
+                self.assertIn('#include <driver/gpio.h>', source)
+                self.assertEqual(define(source, 'DIO_ISR_QUEUE_CAPACITY'), '16U')
+                isr_body = function_body(source, 'dioEdgeIsr')
+                self.assertIn('static void IRAM_ATTR dioEdgeIsr()', source)
+                self.assertIn('esp_timer_get_time()', isr_body)
+                self.assertIn('gpio_get_level((gpio_num_t)PIN_DIO)', isr_body)
+                self.assertIn('portENTER_CRITICAL_ISR(&g_dio_isr_mux);', isr_body)
+                self.assertIn('g_dio_isr_queue', isr_body)
+                self.assertNotIn('recNowUs()', isr_body)
+                self.assertNotIn('printDioEdge()', isr_body)
+                init_body = function_body(source, 'initDio')
+                self.assertIn('attachInterrupt(digitalPinToInterrupt(PIN_DIO), dioEdgeIsr, CHANGE);', init_body)
+                sync_body = function_body(source, 'synchronizedDioEdgeTime')
+                self.assertIn('portENTER_CRITICAL(&g_clock_sync_mux);', sync_body)
+                self.assertIn('local_time_us + offset_us', sync_body)
+
+    def test_generator_sync_filter_matches_both_roles(self):
+        self.assertEqual(define(self.master, 'DIO_DEBOUNCE_MS'), '15')
+        self.assertEqual(define(self.slave, 'DIO_DEBOUNCE_MS'), '15')
+        for role, source in (('master', self.master), ('slave', self.slave)):
+            with self.subTest(role=role):
+                loop_body = function_body(source, 'loop')
+                self.assertLess(
+                    loop_body.index('updateDio();'),
+                    loop_body.index('g_sample_last_us'),
+                )
+
+    def test_espnow_clock_sync_filters_jitter_and_snapshots_the_64_bit_offset(self):
+        """Clock corrections must not make the slave's acquisition timestamps jump."""
+        required_defines = (
+            ('CLOCK_SYNC_STARTUP_SAMPLES', '5U'),
+            ('CLOCK_SYNC_MAX_SAMPLE_ERROR_US', '2000LL'),
+            ('CLOCK_SYNC_MAX_STEP_US', '100LL'),
+            ('CLOCK_SYNC_FILTER_DIVISOR', '8LL'),
+        )
+        for role, source in (('master', self.master), ('slave', self.slave)):
+            with self.subTest(role=role):
+                for name, value in required_defines:
+                    self.assertEqual(define(source, name), value)
+                apply_body = function_body(source, 'clockSyncApplySample')
+                self.assertIn('g_clock_sync_sample_count < CLOCK_SYNC_STARTUP_SAMPLES', apply_body)
+                self.assertIn('raw_offset_us > g_clock_sync_best_offset_us', apply_body)
+                self.assertIn('error_us > CLOCK_SYNC_MAX_SAMPLE_ERROR_US', apply_body)
+                self.assertIn('g_clock_offset_us += step_us;', apply_body)
+                self.assertNotIn('g_clock_offset_us      = (int64_t)pkt->time_us', source)
+                self.assertIn('clockSyncApplySample((int64_t)pkt->time_us - recv_us, pkt->seq);', source)
+                self.assertIn('portENTER_CRITICAL(&g_clock_sync_mux);', source)
+                self.assertIn('clockSyncOffsetUs()', function_body(source, 'recNowUs'))
+
     def test_both_nodes_use_infrastructure_mode_without_competing_soft_aps(self):
         self.assertEqual(define(self.master, 'WIFI_FORCE_SOFT_AP'), 'false')
         self.assertEqual(define(self.slave, 'WIFI_FORCE_SOFT_AP'), 'false')

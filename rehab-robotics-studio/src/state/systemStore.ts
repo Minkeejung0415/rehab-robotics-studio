@@ -15,6 +15,8 @@ function timestamp(): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
 }
 
+// Log de-duplication state stays outside Zustand because it is implementation
+// bookkeeping, not UI state that needs to trigger a render.
 let logSeq = 0;
 let lastAngleLogSignature = '';
 let lastCalibrationLogSignature = '';
@@ -22,6 +24,7 @@ let lastIkLogSignature = '';
 let lastVisualizerLogSignature = '';
 
 function appendLog(logs: LogEntry[], level: LogLevel, message: string): LogEntry[] {
+  // Bound browser memory while retaining enough recent context for operators.
   return [...logs, { id: `l${logSeq++}`, t: timestamp(), level, message }].slice(-300);
 }
 
@@ -38,6 +41,7 @@ const INITIAL_STATUS: SystemStatus = {
   fault: { label: 'Fault', value: 'Clear', level: 'ok' },
 };
 
+/** Dashboard-facing source of truth for connectivity, health, and operator logs. */
 interface SystemStore {
   status: SystemStatus;
   logs: LogEntry[];

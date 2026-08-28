@@ -1,3 +1,4 @@
+/** Reusable keyboard-aware context menu; feature-specific actions are supplied by callers. */
 import { Fragment, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 

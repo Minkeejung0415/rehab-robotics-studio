@@ -22,6 +22,9 @@ const TRANSITIONS: Record<RuntimeState, RuntimeState[]> = {
   fault: ['idle'],
 };
 
+// Runtime safety boundary: edit this table before changing any Run/Pause/Stop
+// UI behavior. It is deliberately centralized so a new button cannot bypass
+// E-stop or fault recovery rules.
 function can(from: RuntimeState, to: RuntimeState): boolean {
   return TRANSITIONS[from].includes(to);
 }
@@ -46,6 +49,8 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => {
 
   return {
     state: 'idle',
+    // Studio-side default only. Hardware limits and actual applied rate are
+    // owned by the ROS bridge/firmware; see CODE-CHANGE-MAP.md before changing.
     sampleRate: 1000,
 
     run: () => {

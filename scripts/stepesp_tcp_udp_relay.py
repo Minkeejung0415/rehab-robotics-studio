@@ -18,6 +18,10 @@ import time
 from typing import Iterable, Sequence
 
 
+# ── Bounded identity/control protocol configuration ─────────────────────────
+# These limits must stay compatible with firmware identity output and the ROS
+# bridge parser. They intentionally reject malformed inventories before routes
+# are allowed to stream.
 IDENTITY_PROTOCOL = 'id-v1'
 MAX_IDENTITY_LINE_BYTES = 768
 MAX_IDENTITY_HANDSHAKE_BYTES = 16_384

@@ -1,3 +1,4 @@
+/** Reusable numeric gauge presentation. It intentionally contains no hardware or state logic. */
 import { colors } from '../../theme/tokens';
 
 interface Props { value: number; min: number; max: number; units?: string; color?: string; width?: number; height?: number; }

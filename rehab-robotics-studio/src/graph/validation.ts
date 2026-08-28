@@ -1,3 +1,4 @@
+/** Graph structural/type validation; extend this before allowing new connection patterns. */
 import type { BlockInstance, EdgeDefinition } from '../types/blocks';
 import type { LogLevel } from '../types/system';
 import { getDef } from './blockDefinitions';

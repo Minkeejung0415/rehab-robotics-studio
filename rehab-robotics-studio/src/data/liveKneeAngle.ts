@@ -1,3 +1,4 @@
+/** Safety-first tracker that exposes a knee angle only when OpenSim status and timestamps are valid. */
 import type {
   LiveKneeAngleSnapshot,
   OpenSimIkStatusSnapshot,

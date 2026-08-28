@@ -1,3 +1,4 @@
+/** Cross-store toolbar actions, including manual graph serialization for Save. */
 import { useGraphStore } from './graphStore';
 import { useSystemStore } from './systemStore';
 

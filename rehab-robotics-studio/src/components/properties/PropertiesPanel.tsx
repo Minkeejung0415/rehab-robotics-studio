@@ -1,8 +1,12 @@
-import { useEffect, useRef } from 'react';
+/** Inspector for the selected graph block; routes live ESP settings to the command facade. */
+import { useEffect, useRef, useState } from 'react';
 import { getDef } from '../../graph/blockDefinitions';
 import { useGraphStore } from '../../state/graphStore';
 import { signalColor } from '../../theme/tokens';
 import { ParamField } from './ParamField';
+import { setHardwareSampleRate } from '../../data/appDataSource';
+import { useRuntimeStore } from '../../state/runtimeStore';
+import { useSystemStore } from '../../state/systemStore';
 
 export function PropertiesPanel() {
   const selectedId = useGraphStore((s) => s.selectedId);
@@ -10,14 +14,40 @@ export function PropertiesPanel() {
   const issues = useGraphStore((s) => s.validationIssues.filter((issue) => !selectedId || issue.blockId === selectedId));
   const updateParam = useGraphStore((s) => s.updateParam);
   const renameNode = useGraphStore((s) => s.renameNode);
+  const setRuntimeSampleRate = useRuntimeStore((s) => s.setSampleRate);
   const def = node ? getDef(node.type) : undefined;
   const lastNonEmptyRef = useRef(node?.name ?? '');
+  const [pendingSampleRate, setPendingSampleRate] = useState(false);
 
   useEffect(() => {
     if (node && node.name.trim() !== '') {
       lastNonEmptyRef.current = node.name;
     }
   }, [node?.id, node?.name]);
+
+  const applyParameter = async (key: string, value: Parameters<typeof updateParam>[2]) => {
+    if (node?.type !== 'esp32_imu' || key !== 'sampleRate') {
+      updateParam(node!.id, key, value);
+      return;
+    }
+
+    const rateHz = Number(value);
+    if (!Number.isInteger(rateHz) || rateHz < 1 || rateHz > 1000) {
+      useSystemStore.getState().addLog('ERROR', 'ESP32 pair rate must be an integer between 1 and 1000 Hz');
+      return;
+    }
+
+    setPendingSampleRate(true);
+    const result = await setHardwareSampleRate(rateHz);
+    setPendingSampleRate(false);
+    if (result.success) {
+      // Keep graph and runtime state aligned only with an acknowledged device rate.
+      updateParam(node.id, 'sampleRate', rateHz);
+      updateParam(node.id, 'effectiveSampleRate', rateHz);
+      setRuntimeSampleRate(rateHz);
+    }
+    useSystemStore.getState().addLog(result.success ? 'INFO' : 'ERROR', result.message);
+  };
 
   return (
     <aside className="properties">
@@ -87,7 +117,11 @@ export function PropertiesPanel() {
                 key={param.key}
                 spec={param}
                 value={node.params[param.key] ?? param.default}
-                onChange={(value) => updateParam(node.id, param.key, value)}
+                disabled={pendingSampleRate}
+                onChange={(value) => void applyParameter(param.key, value)}
+                onCommit={node.type === 'esp32_imu' && param.key === 'sampleRate'
+                  ? (value) => void applyParameter(param.key, value)
+                  : undefined}
               />
             ))}
           </section>

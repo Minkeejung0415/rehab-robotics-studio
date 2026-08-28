@@ -1,3 +1,4 @@
+/** Global operator controls: run state, recording, calibration, save, and visualizer actions. */
 import { useRef, useState } from 'react';
 import { useRuntimeStore } from '../../state/runtimeStore';
 import { useSystemStore } from '../../state/systemStore';

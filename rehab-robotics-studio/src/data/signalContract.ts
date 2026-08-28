@@ -1,3 +1,4 @@
+/** Fail-closed parser for canonical raw ESP signal samples received from ROS. */
 import type {
   CanonicalAppliedMapping,
   CanonicalCapabilities,

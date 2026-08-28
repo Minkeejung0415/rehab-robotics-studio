@@ -1,3 +1,4 @@
+/** Renders and edits one graph block. Hardware parameter changes route through appDataSource. */
 import { useEffect, useState, type MouseEvent } from 'react';
 import type { BlockInstance, PortDefinition } from '../../types/blocks';
 import { getDef } from '../../graph/blockDefinitions';
@@ -81,20 +82,22 @@ function ImuConfigurationControl({ node }: { node: BlockInstance }) {
     graphKey: string,
   ) => {
     const isRateControl = parameter === 'sample_rate_hz' || parameter === 'effective_sample_rate_hz';
-    if (parameter === 'sample_rate_hz') {
-      // Pair Rate is the operator's requested value. Effective Rate remains
-      // unchanged until the firmware acknowledgement arrives.
-      updateParam(node.id, 'sampleRate', value);
-      setSampleRate(Number(value));
-    }
     setPendingKey(pending);
     const result = await setHardwareImuControl(parameter, value);
     setPendingKey(null);
     if (result.success && isRateControl) {
-      // Only display an effective rate after bridge + firmware acknowledgement.
+      // A Pair Rate is not applied until bridge + firmware acknowledge it.
+      // Keeping both fields at the confirmed value prevents a cosmetic GUI
+      // change from being mistaken for an ESP32 configuration change.
+      if (parameter === 'sample_rate_hz') {
+        updateParam(node.id, 'sampleRate', value);
+        setSampleRate(Number(value));
+      }
       updateParam(node.id, 'effectiveSampleRate', value);
     } else if (result.success) {
       updateParam(node.id, graphKey, value);
+    } else if (parameter === 'sample_rate_hz') {
+      setDraftRate(String(rate));
     } else if (parameter === 'effective_sample_rate_hz') {
       setDraftEffectiveRate(String(effectiveRate));
     }
